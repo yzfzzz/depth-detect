@@ -69,13 +69,20 @@ YoloDetectModel::YoloDetectModel(const std::string trtFile,
         std::cout << "Running YOLOv26 inference, output candidates num: " << OUTPUT_CANDIDATES_
                   << std::endl;
     }
-
+    auto alloc_cuda_pinned = [](size_t bytes) {
+        void * ptr = nullptr;
+        CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
+        return ptr;
+    };
+    int h_output_data_size = 0;
     // prepare output data space on host
     if (!is_need_nms_) {
-        h_output_data_.resize(yolo26_max_num_output_bbox_ * yolo26_num_box_element_);
+        h_output_data_size = yolo26_max_num_output_bbox_ * yolo26_num_box_element_;
     } else {
-        h_output_data_.resize(1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT);
+        h_output_data_size = 1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT;
     }
+    h_output_data_.reset(static_cast<float *>(alloc_cuda_pinned(h_output_data_size)));
+
     // prepare input and output space on device
     auto alloc_cuda = [](size_t bytes) {
         void * ptr = nullptr;
@@ -170,7 +177,7 @@ std::vector<Detection> YoloDetectModel::inference(const cv::Mat & img) {
         // 走yolo26推理，输出候选框较少，且已经经过nms处理，不需要再做一次nms了
         // [1 1801]
         CHECK_CUDA(
-            cudaMemcpy(h_output_data_.data(), d_buffer_[1].get(),
+            cudaMemcpy(h_output_data_.get(), d_buffer_[1].get(),
                        (yolo26_max_num_output_bbox_ * yolo26_num_box_element_) * sizeof(float),
                        cudaMemcpyDeviceToHost));
 
@@ -187,7 +194,7 @@ std::vector<Detection> YoloDetectModel::inference(const cv::Mat & img) {
         nms(d_decode_.get(), nmsThresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
         cudaStreamSynchronize(stream_);
 
-        CHECK_CUDA(cudaMemcpy(h_output_data_.data(), d_decode_.get(),
+        CHECK_CUDA(cudaMemcpy(h_output_data_.get(), d_decode_.get(),
                               (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                               cudaMemcpyDeviceToHost));
     }
@@ -201,26 +208,26 @@ std::vector<Detection> YoloDetectModel::postProcess(const cv::Mat & img) {
     if (!is_need_nms_) {
         count = std::min(yolo26_max_num_output_bbox_, MAX_NUM_OUTPUT_BBOX);
     } else {
-        count = std::min((int) h_output_data_[0], MAX_NUM_OUTPUT_BBOX);
+        count = std::min((int) h_output_data_.get()[0], MAX_NUM_OUTPUT_BBOX);
     }
     for (int i = 0; i < count; i++) {
         int       pos;
         Detection det;
         auto      get_effective_detection = [&]() {
-            memcpy(det.bbox.data(), &h_output_data_[pos], 4 * sizeof(float));
-            det.conf    = h_output_data_[pos + 4];
-            det.classId = (int) h_output_data_[pos + 5];
+            memcpy(det.bbox.data(), &h_output_data_.get()[pos], 4 * sizeof(float));
+            det.conf    = h_output_data_.get()[pos + 4];
+            det.classId = (int) h_output_data_.get()[pos + 5];
             vDetections.push_back(det);
         };
         if (!is_need_nms_) {
             pos = i * yolo26_num_box_element_;
-            if (h_output_data_[pos + 4] > confThresh_) {
+            if (h_output_data_.get()[pos + 4] > confThresh_) {
                 get_effective_detection();
             }
 
         } else {
             pos          = 1 + i * NUM_BOX_ELEMENT;
-            int keepFlag = (int) h_output_data_[pos + 6];
+            int keepFlag = (int) h_output_data_.get()[pos + 6];
             if (keepFlag == 1) {
                 get_effective_detection();
             }
@@ -258,7 +265,7 @@ void YoloDetectModel::inferenceAsync(uchar * d_image) {
         // 走yolo26推理，输出候选框较少，且已经经过nms处理，不需要再做一次nms了
         // [1 1801]
         CHECK_CUDA(
-            cudaMemcpyAsync(h_output_data_.data(), d_buffer_[1].get(),
+            cudaMemcpyAsync(h_output_data_.get(), d_buffer_[1].get(),
                             (yolo26_max_num_output_bbox_ * yolo26_num_box_element_) * sizeof(float),
                             cudaMemcpyDeviceToHost, stream_));
     } else {
@@ -272,7 +279,7 @@ void YoloDetectModel::inferenceAsync(uchar * d_image) {
         // cuda nms
         nms(d_decode_.get(), nmsThresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 
-        CHECK_CUDA(cudaMemcpyAsync(h_output_data_.data(), d_decode_.get(),
+        CHECK_CUDA(cudaMemcpyAsync(h_output_data_.get(), d_decode_.get(),
                                    (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                                    cudaMemcpyDeviceToHost, stream_));
     }
