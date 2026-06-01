@@ -61,10 +61,7 @@ class YoloDetectModel {
     unique_ptr_cuda<uchar>               d_src_data_;
     unique_ptr_cuda<uchar>               d_mid_data_;
 
-    int  OUTPUT_CANDIDATES_;           // 8400: 80 * 80 + 40 * 40 + 20 * 20
-    int  yolo26_max_num_output_bbox_;  // 暂时用于yolo26，后续可以删除
-    int  yolo26_num_box_element_;      // 暂时用于yolo26，后续可以删除
-    bool is_need_nms_ = true;
+    int OUTPUT_CANDIDATES_;  // 8400: 80 * 80 + 40 * 40 + 20 * 20
 
     int input_h_;
     int input_w_;
