@@ -194,38 +194,46 @@ std::pair<cv::Mat, cv::Mat> DepthModel::predict(const cv::Mat & image) {
 
 void DepthModel::predictAsync(uchar * d_image) {
     // 数据异步拷贝至 GPU, 并进行 cuda 前处理
-    preProcessAsync(d_image);
-
+    {
+        nvtx3::scoped_range tracker_scope("depth preprocess");
+        preProcessAsync(d_image);
+    }
+    {
+        nvtx3::scoped_range tracker_scope("depth enqueue");
 #if defined(__aarch64__) || defined(__arm__) || NV_TENSORRT_MAJOR < 10
-    // For Jetson Nano (ARM64) and older TensorRT versions
-    void * buffer_ptrs[2] = { d_buffer_[0].get(), d_buffer_[1].get() };
-    bool   status         = context_->enqueueV2(buffer_ptrs, stream_, nullptr);
+        // For Jetson Nano (ARM64) and older TensorRT versions
+        void * buffer_ptrs[2] = { d_buffer_[0].get(), d_buffer_[1].get() };
+        bool   status         = context_->enqueueV2(buffer_ptrs, stream_, nullptr);
 
 #else
-    bool status = context_->enqueueV3(stream_);
+        bool status = context_->enqueueV3(stream_);
 #endif
-    if (!status) {
-        std::cerr << "TensorRT enqueue failed!" << std::endl;
-        return;
+        if (!status) {
+            std::cerr << "TensorRT enqueue failed!" << std::endl;
+            return;
+        }
     }
 
-    // Use wrapper in op_kernel to perform reductions
-    cub_device_reduce_min(d_cub_mid_min_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
-                          d_depth_infer_min_value_.get(), input_h_ * input_w_, stream_);
-    cub_device_reduce_max(d_cub_mid_max_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
-                          d_depth_infer_max_value_.get(), input_h_ * input_w_, stream_);
+    {
+        nvtx3::scoped_range tracker_scope("depth post process");
+        // Use wrapper in op_kernel to perform reductions
+        cub_device_reduce_min(d_cub_mid_min_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
+                              d_depth_infer_min_value_.get(), input_h_ * input_w_, stream_);
+        cub_device_reduce_max(d_cub_mid_max_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
+                              d_depth_infer_max_value_.get(), input_h_ * input_w_, stream_);
 
-    normalize_colormap_resize(
-        (float *) d_buffer_[1].get(), d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(),
-        d_buffer_dst_depth_.get(), d_buffer_dst_colormap_.get(), d_depth_infer_min_value_.get(),
-        d_depth_infer_max_value_.get(), input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
+        normalize_colormap_resize(
+            (float *) d_buffer_[1].get(), d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(),
+            d_buffer_dst_depth_.get(), d_buffer_dst_colormap_.get(), d_depth_infer_min_value_.get(),
+            d_depth_infer_max_value_.get(), input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
 
-    CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_output_data_.get(), d_buffer_dst_depth_.get(),
-                               raw_img_h_ * raw_img_w_ * sizeof(uchar), cudaMemcpyDeviceToHost,
-                               stream_));
-    CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
-                               raw_img_h_ * raw_img_w_ * sizeof(uchar3), cudaMemcpyDeviceToHost,
-                               stream_));
+        CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_output_data_.get(), d_buffer_dst_depth_.get(),
+                                   raw_img_h_ * raw_img_w_ * sizeof(uchar), cudaMemcpyDeviceToHost,
+                                   stream_));
+        CHECK_CUDA(cudaMemcpyAsync(
+            host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
+            raw_img_h_ * raw_img_w_ * sizeof(uchar3), cudaMemcpyDeviceToHost, stream_));
+    }
 }
 
 void DepthModel::waitAsync() {

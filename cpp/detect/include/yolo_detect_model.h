@@ -53,6 +53,7 @@ class YoloDetectModel {
     cudaStream_t stream_;
 
     unique_ptr_pinned_cuda<float>        h_output_data_;
+    int                                  h_output_data_size_;
     std::array<unique_ptr_cuda<void>, 2> d_buffer_;
     unique_ptr_cuda<float>               d_transpose_;
     unique_ptr_cuda<float>               d_decode_;
