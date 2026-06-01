@@ -50,9 +50,9 @@ class DisplayManager {
     cv::Size display_size_;
 
   public:
-    DisplayManager(ConfigManager &     config,
-                   const std::string & window_name  = "out_frame",
-                   cv::Size            display_size = cv::Size(1280, 720 * 2));
+    DisplayManager(const ConfigManager & config,
+                   const std::string &   window_name  = "out_frame",
+                   cv::Size              display_size = cv::Size(1280, 720 * 2));
     ~DisplayManager();
 
     // 更新跟踪数据供鼠标回调使用

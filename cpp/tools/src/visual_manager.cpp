@@ -14,9 +14,9 @@ void onMouse(int event, int x, int y, int flags, void * userdata) {
     }
 }
 
-DisplayManager::DisplayManager(ConfigManager &     config,
-                               const std::string & window_name,
-                               cv::Size            display_size) :
+DisplayManager::DisplayManager(const ConfigManager & config,
+                               const std::string &   window_name,
+                               cv::Size              display_size) :
     enabled_(config.isDisplayEnabled()),
     window_name_(window_name),
     display_size_(display_size) {

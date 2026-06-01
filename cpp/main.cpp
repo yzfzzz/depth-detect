@@ -55,18 +55,18 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 }
 
 int run(char * video_path) {
-    // 读取配置文件
-    ConfigManager  config_manager("config.yaml");
+    // 读取配置文件 - 使用单例模式
+    ConfigManager & config_manager = ConfigManager::getInstance("config.yaml");
     // 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
-    IOManager      io_manager(config_manager);
-    FrameMeta      frame_meta = io_manager.Init(video_path);
+    IOManager       io_manager(config_manager);
+    FrameMeta       frame_meta = io_manager.Init(video_path);
     // 推理流水线（负责目标检测、深度估计、跟踪、运动状态判断等核心功能）
-    Pipeline       pipeline(config_manager, frame_meta);
+    Pipeline        pipeline(config_manager, frame_meta);
     // 绘制管理器（负责绘制结果）
-    DrawingManager drawing_manager(V_CLASS_NAMES);
+    DrawingManager  drawing_manager(V_CLASS_NAMES);
     // 显示管理器（负责窗口管理、显示、鼠标点击等）
-    DisplayManager display_manager(config_manager, "Detection Result",
-                                   cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
+    DisplayManager  display_manager(config_manager, "Detection Result",
+                                    cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
 
     int                num_frames = 0;
     double             total_us   = 0;

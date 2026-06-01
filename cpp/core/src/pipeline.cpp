@@ -6,7 +6,7 @@
 #include "motion_state_engine.h"
 #include "public.h"
 
-Pipeline::Pipeline(ConfigManager config_manager, FrameMeta frame_meta) :
+Pipeline::Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta) :
     config_manager_(config_manager),
     detector_(config_manager_.getYoloEnginePath(),
               frame_meta.img_w,

@@ -8,7 +8,7 @@
 #include <ostream>
 #include <thread>
 
-IOManager::IOManager(ConfigManager & config_manager) :
+IOManager::IOManager(const ConfigManager & config_manager) :
     save_mode_(config_manager.getSaveMode()),
     out_dir_(config_manager.getOutDir()) {}
 

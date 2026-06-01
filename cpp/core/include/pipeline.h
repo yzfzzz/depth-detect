@@ -8,7 +8,7 @@
 
 class Pipeline {
   public:
-    Pipeline(ConfigManager config_manager, FrameMeta frame_meta);
+    Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta);
 
     // 核心推理接口，供正常业务和 Benchmark 调用
     void process(FrameInputContext &  frame_input_context,
@@ -36,11 +36,11 @@ class Pipeline {
         return false;
     }
 
-    ConfigManager     config_manager_;
-    YoloDetectModel   detector_;
-    DepthModel        depth_model_;
-    BYTETracker       tracker_;
-    MotionStateEngine motion_state_engine_;
+    const ConfigManager & config_manager_;
+    YoloDetectModel       detector_;
+    DepthModel            depth_model_;
+    BYTETracker           tracker_;
+    MotionStateEngine     motion_state_engine_;
 
     // 跨帧缓存状态
     bool             has_cached_depth_ = false;
