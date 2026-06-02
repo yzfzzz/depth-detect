@@ -28,7 +28,7 @@ git checkout release/v1.0
 ## 🛠️ 技术栈
 
 - 💻 语言：C++14
-- 📦 构建：CMake 3.10+
+- 📦 构建：CMake 3.10
 - 🎯 推理后端：TensorRT（兼容 8.x / 10.x）
 - ⚙️ 并行/加速：CUDA、cuBLAS、cuDNN、CUB
 - 🖼️ 视觉处理：OpenCV 4.x
@@ -134,13 +134,7 @@ cd ../bin
 <a id="系统架构"></a>
 ## 📐 系统架构
 
-![产品图](./doc/arch.png)
-
-1. 数据接入层（Data Ingest）
-2. 核心调度层（Pipeline / Task Scheduler）
-3. 算法推理层（Depth 分支、Detection 分支、Tracker）
-4. 状态与交互层（MotionState/Display/IO）
-5. 基础设施层（TensorRT / CUDA / CUB）
+![架构图](./doc/arch.png)
 
 ---
 
