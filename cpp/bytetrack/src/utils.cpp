@@ -1,5 +1,6 @@
 #include "BYTETracker.h"
 #include "lapjv.h"
+#include "logger_manager.h"
 
 std::vector<STrack *> BYTETracker::jointStracks(std::vector<STrack *> & tlista,
                                                 std::vector<STrack> &   tlistb) {
@@ -254,7 +255,7 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
         n = n_rows;
     } else {
         if (!extend_cost) {
-            std::cout << "set extend_cost=True" << std::endl;
+            APP_WARN("set extend_cost=True");
             exit(0);
         }
     }
@@ -320,7 +321,7 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
 
     int ret = lapjv_internal(n, cost_ptr, x_c, y_c);
     if (ret != 0) {
-        std::cout << "Calculate Wrong!" << std::endl;
+        APP_ERROR("Calculate Wrong!");
         exit(0);
     }
 

@@ -1,30 +1,32 @@
-#ifndef CONFIG_H
-#define CONFIG_H
+#ifndef PUBLIC_H
+#define PUBLIC_H
 
+#include <cuda_fp16.h>
+#include <cuda_runtime_api.h>
+#include <NvInfer.h>
+#include <spdlog/spdlog.h>
+#include <unistd.h>
+
+#include <cmath>
+#include <nvtx3/nvtx3.hpp>
+#include <opencv2/opencv.hpp>
 #include <string>
-#include <vector>
 
-const int GPU_ID    = 0;
-const int NUM_CLASS = 80;
-
-const float NMS_THRESH  = 0.45f;
-const float CONF_THRESH = 0.25f;
-const int   MAX_NUM_OUTPUT_BBOX =
-    1000;  // assume the box outputs no more than MAX_NUM_OUTPUT_BBOX boxes that
-           // conf >= NMS_THRESH;
-const int NUM_BOX_ELEMENT = 7;  // left, top, right, bottom, confidence, class,
-                                // keepflag(whether drop when NMS)
-
-const std::string ONNX_FILE = "../onnx_model/yolov8s.onnx";
-// const std::string trtFile = "./yolov8s.plan";
-// const std::string testDataDir = "../images";  // 用于推理
-
-// for FP16 mode
-const bool        B_FP16_MODE = false;
-// for INT8 mode
-const bool        B_INT8_MODE = false;
-const std::string CACHE_FILE  = "./int8.cache";
-const std::string CALIBRATION_DATA_PATH = "../calibrator";  // 存放用于 int8 量化校准的图像
+#define CHECK_CUDA(call)                                                          \
+    do {                                                                          \
+        cudaError_t status = call;                                                \
+        if (status != cudaSuccess) {                                              \
+            auto logger = spdlog::get("app");                                     \
+            if (logger) {                                                         \
+                logger->error("CUDA error at {}:{} - {}", __FILE__, __LINE__,     \
+                              cudaGetErrorString(status));                        \
+            } else {                                                              \
+                fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__, \
+                        cudaGetErrorString(status));                              \
+            }                                                                     \
+            exit(EXIT_FAILURE);                                                   \
+        }                                                                         \
+    } while (0)
 
 const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "car",
                                               "motorcycle",    "airplane",     "bus",
@@ -54,4 +56,4 @@ const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "
                                               "vase",          "scissors",     "teddy bear",
                                               "hair drier",    "toothbrush" };
 
-#endif  // CONFIG_H
+#endif  // PUBLIC_H

@@ -1,30 +1,29 @@
 #pragma once
-#include "base.h"
 #include "BYTETracker.h"
 #include "config_manager.h"
+#include "depth_model.h"
 #include "frame.h"
-#include "infer.h"
 #include "motion_state_engine.h"
+#include "yolo_detect_model.h"
 
 class Pipeline {
   public:
-    Pipeline(ConfigManager config_manager, FrameMeta frame_meta);
+    Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta);
 
     // 核心推理接口，供正常业务和 Benchmark 调用
     void process(FrameInputContext &  frame_input_context,
                  InferOutputContext & infer_output_context);
-    void processAsync(FrameInputContext &  frame_input_context,
-                      InferOutputContext & infer_output_context);
+    void processOverlap(FrameInputContext &  frame_input_context,
+                        InferOutputContext & infer_output_context);
 
     cv::Scalar getColor(int idx) { return tracker_.getColor(idx); }
 
-    YoloDetector & getDetector() { return detector_; }
+    YoloDetectModel & getDetector() { return detector_; }
 
-    BaseDepthModel * getDepthModel() { return depth_model_.get(); }
+    DepthModel & getDepthModel() { return depth_model_; }
 
-    void postProcess(FrameInputContext &            frame_input_context,
-                     InferOutputContext &           infer_output_context,
-                     const std::vector<Detection> & res);
+    void postProcess(FrameInputContext &  frame_input_context,
+                     InferOutputContext & infer_output_context);
 
 
   private:
@@ -37,11 +36,11 @@ class Pipeline {
         return false;
     }
 
-    ConfigManager                   config_manager_;
-    YoloDetector                    detector_;
-    std::unique_ptr<BaseDepthModel> depth_model_;
-    BYTETracker                     tracker_;
-    MotionStateEngine               motion_state_engine_;
+    const ConfigManager & config_manager_;
+    YoloDetectModel       detector_;
+    DepthModel            depth_model_;
+    BYTETracker           tracker_;
+    MotionStateEngine     motion_state_engine_;
 
     // 跨帧缓存状态
     bool             has_cached_depth_ = false;

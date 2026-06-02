@@ -38,7 +38,7 @@ class PipelineBenchmark : public benchmark::Fixture {
     }
 
     virtual void TearDown(benchmark::State & state) override {
-        pipeline.reset();  // 显式释放 Pipeline，触发 YoloDetector 等的析构函数
+        pipeline.reset();  // 显式释放 Pipeline，触发 YoloDetectModel 等的析构函数
         cap.release();
     }
 };
@@ -58,7 +58,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessInference)(benchmark::State & state
     state.SetItemsProcessed(state.iterations());
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessAsyncInference)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessOverlapInference)(benchmark::State & state) {
     for (auto _ : state) {
         FrameInputContext frame_input_context(num_frames, frame_meta);
         if (!cap.read(frame_input_context.raw_img) || frame_input_context.raw_img.empty()) {
@@ -68,7 +68,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessAsyncInference)(benchmark::State & 
         num_frames++;
 
         InferOutputContext infer_output_context;
-        pipeline->processAsync(frame_input_context, infer_output_context);
+        pipeline->processOverlap(frame_input_context, infer_output_context);
     }
     state.SetItemsProcessed(state.iterations());
 }
@@ -101,8 +101,8 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, DepthOnlyInferenceAsync)(benchmark::State 
         num_frames++;
 
         // 仅调用 Depth 推理（包含预处理 + TRT），无后处理
-        pipeline->getDepthModel()->predictAsync(frame_input_context.raw_img);
-        pipeline->getDepthModel()->waitAsync();  // 同步等待推理完成
+        pipeline->getDepthModel().predictAsync(frame_input_context.raw_img);
+        pipeline->getDepthModel().waitAsync();  // 同步等待推理完成
     }
     state.SetItemsProcessed(state.iterations());
 }
@@ -121,12 +121,12 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, PostProcess)(benchmark::State & state) {
 
     // 2. 执行一次完整的异步推理，获取真实的 Detections 结果
     pipeline->getDetector().inferenceAsync(fixed_input.raw_img);
-    pipeline->getDepthModel()->predictAsync(fixed_input.raw_img);
-    pipeline->getDepthModel()->waitAsync();
+    pipeline->getDepthModel().predictAsync(fixed_input.raw_img);
+    pipeline->getDepthModel().waitAsync();
     pipeline->getDetector().waitAsync();
     fixed_detections = pipeline->getDetector().getInferResultAsync(fixed_input.raw_img);
 
-    auto depth_result         = pipeline->getDepthModel()->getPredictResultAsync();
+    auto depth_result         = pipeline->getDepthModel().getPredictResultAsync();
     fixed_output.result_depth = depth_result.first;
     fixed_output.depth_vis    = depth_result.second;
 
@@ -153,7 +153,7 @@ BENCHMARK_REGISTER_F(PipelineBenchmark, DepthOnlyInferenceAsync)
 BENCHMARK_REGISTER_F(PipelineBenchmark, ProcessInference)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100);
-BENCHMARK_REGISTER_F(PipelineBenchmark, ProcessAsyncInference)
+BENCHMARK_REGISTER_F(PipelineBenchmark, ProcessOverlapInference)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100);
 BENCHMARK_REGISTER_F(PipelineBenchmark, PostProcess)

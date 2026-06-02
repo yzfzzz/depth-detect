@@ -95,7 +95,7 @@ Sun May 24 13:42:29 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 
-root@f9a6dd113c50:/home/work/Stereo-Detection# cat Dockerfile 
+root@f9a6dd113c50:/home/work/depth-detect# cat Dockerfile 
 # CUDA Version: 12.8，Driver Version: 573.22对应的基础镜像
 FROM nvcr.io/nvidia/tensorrt:25.04-py3
 ```
@@ -179,7 +179,7 @@ cd ./bin
 <a id="开发与贡献"></a>
 ## 💬 开发与贡献
 
-- 提交 PR 前请运行 format.sh 对代码进行格式化
+- 提交 PR 前请运行 `format.sh` 对代码进行格式化
 - 确保 CI 流水线全部通过
 ![CI](./doc/ci.png)
 ---

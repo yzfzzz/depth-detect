@@ -1,11 +1,11 @@
 #include "BYTETracker.h"
 #include "cvnp/cvnp.h"
 #include "depth_anything.h"
-#include "infer.h"
 #include "lite_mono.h"
 #include "motion_state_engine.h"
 #include "STrack.h"
 #include "types.h"
+#include "yolo_detect_model.h"
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -52,28 +52,27 @@ void bind_motion_state_info_record(py::module & m) {
         });
 }
 
-// ==================== 绑定 YoloDetector ====================
+// ==================== 绑定 YoloDetectModel ====================
 void bind_yolo_detector(py::module & m) {
-    py::class_<YoloDetector>(m, "YoloDetector")
+    py::class_<YoloDetectModel>(m, "YoloDetectModel")
         .def(py::init<const std::string &, int, float, float, int>(), py::arg("trt_file"),
              py::arg("gpu_id") = 0, py::arg("nms_thresh") = 0.45f, py::arg("conf_thresh") = 0.25f,
              py::arg("num_class") = 80)
-        .def("inference", &YoloDetector::inference, py::arg("img"),
+        .def("inference", &YoloDetectModel::inference, py::arg("img"),
              "Run inference on the input image and return a list of Detection results");
 }
 
 // ==================== 绑定 depth深度检测模型 ====================
 void bind_depth_models(py::module & m) {
-    py::class_<BaseDepthModel, std::shared_ptr<BaseDepthModel>>(m, "BaseDepthModel")
-        .def("init", &BaseDepthModel::init, py::arg("engine_path"),
+    py::class_<DepthModel, std::shared_ptr<DepthModel>>(m, "DepthModel")
+        .def("init", &DepthModel::init, py::arg("engine_path"),
              "Initialize the depth model with the given engine path")
-        .def("predict", &BaseDepthModel::predict, py::arg("image"), "Run depth prediction");
+        .def("predict", &DepthModel::predict, py::arg("image"), "Run depth prediction");
 
-    py::class_<DepthAnything, BaseDepthModel, std::shared_ptr<DepthAnything>>(m, "DepthAnything")
+    py::class_<DepthAnything, DepthModel, std::shared_ptr<DepthAnything>>(m, "DepthAnything")
         .def(py::init<>());
 
-    py::class_<LiteMono, BaseDepthModel, std::shared_ptr<LiteMono>>(m, "LiteMono")
-        .def(py::init<>());
+    py::class_<LiteMono, DepthModel, std::shared_ptr<LiteMono>>(m, "LiteMono").def(py::init<>());
 }
 
 // ==================== 绑定 MotionStateEngine ====================

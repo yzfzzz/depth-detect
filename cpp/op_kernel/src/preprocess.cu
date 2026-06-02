@@ -129,6 +129,41 @@ void preprocess(const cv::Mat & srcImg,
     process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
 }
 
+void preprocess_v2(float *      dstDevData,
+                   uchar *      srcDevData,
+                   uchar *      midDevData,
+                   int          raw_img_h,
+                   int          raw_img_w,
+                   int          input_h,
+                   int          input_w,
+                   cudaStream_t stream) {
+    // calculate width and height after resize
+    int   w, h, x, y;
+    float r_w = input_w / (raw_img_w * 1.0);
+    float r_h = input_h / (raw_img_h * 1.0);
+    if (r_h > r_w) {
+        w = input_w;
+        h = r_w * raw_img_h;
+        x = 0;
+        y = (input_h - h) / 2;
+    } else {
+        w = r_h * raw_img_w;
+        h = input_h;
+        x = (input_w - w) / 2;
+        y = 0;
+    }
+
+    dim3 blockSize(32, 32);
+    dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
+                  (input_h + blockSize.y - 1) / blockSize.y);
+
+    // letterbox and resize
+    letterbox<<<gridSize, blockSize, 0, stream>>>(srcDevData, raw_img_h, raw_img_w, midDevData,
+                                                  input_h, input_w, h, w, y, x);
+    // hwc to chw / bgr to rgb / normalize
+    process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
+}
+
 __global__ void resize_mat2tensor_norm_kernel(uchar * src,
                                               float * dst,
                                               int     input_w,

@@ -2,6 +2,7 @@
 
 #include "config_manager.h"
 #include "motion_state_engine.h"
+#include "public.h"
 #include "STrack.h"
 
 #include <opencv2/core/types.hpp>
@@ -11,9 +12,6 @@
 
 // 前向声明
 class DisplayManager;
-
-// 全局变量声明（来自 config.h）
-extern const std::vector<std::string> V_CLASS_NAMES;
 
 enum Key_Input {
     ESC   = 27,
@@ -52,9 +50,9 @@ class DisplayManager {
     cv::Size display_size_;
 
   public:
-    DisplayManager(ConfigManager &     config,
-                   const std::string & window_name  = "out_frame",
-                   cv::Size            display_size = cv::Size(1280, 720 * 2));
+    DisplayManager(const ConfigManager & config,
+                   const std::string &   window_name  = "out_frame",
+                   cv::Size              display_size = cv::Size(1280, 720 * 2));
     ~DisplayManager();
 
     // 更新跟踪数据供鼠标回调使用

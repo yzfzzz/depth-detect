@@ -14,6 +14,15 @@ void preprocess(const cv::Mat & srcImg,
                 int             input_h,
                 int             input_w,
                 cudaStream_t    stream);
+
+void preprocess_v2(float *      dstDevData,
+                   uchar *      srcDevData,
+                   uchar *      midDevData,
+                   int          raw_img_h,
+                   int          raw_img_w,
+                   int          input_h,
+                   int          input_w,
+                   cudaStream_t stream);
 /*
 srcImg:     source image for inference
 dstDevData: data after preprocess (resize / bgr to rgb / hwc to chw / normalize)

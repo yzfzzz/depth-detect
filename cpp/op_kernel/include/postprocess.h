@@ -1,8 +1,6 @@
 #ifndef POSTPROCESS_H
 #define POSTPROCESS_H
 
-#include "config.h"
-
 #include <cuda_runtime.h>
 #include <opencv2/core/hal/interface.h>
 

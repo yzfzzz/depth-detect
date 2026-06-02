@@ -4,3 +4,9 @@
 [submodule "third_party/cub"]
 	path = third_party/cub
 	url = https://github.com/NVlabs/cub.git
+[submodule "model"]
+	path = model
+	url = https://github.com/yzfzzz/depth-detect-model.git
+[submodule "third_party/spdlog"]
+	path = third_party/spdlog
+	url = https://github.com/gabime/spdlog.git

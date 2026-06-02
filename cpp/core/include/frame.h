@@ -1,6 +1,10 @@
 #pragma once
-#include "motion_state_engine.h"
+#include "public.h"
 
+#include <memory.h>
+#include <opencv2/core/hal/interface.h>
+
+#include <cstddef>
 #include <opencv2/opencv.hpp>
 #include <unordered_map>
 #include <vector>
@@ -23,6 +27,9 @@ struct FrameMeta {
     FrameSource frame_source;
 };
 
+struct MotionStateInfoRecord;
+class STrack;
+
 struct InferOutputContext {
     std::vector<STrack>                            tracked_objects;
     cv::Mat                                        result_depth;
@@ -39,10 +46,18 @@ struct FrameInputContext {
                 std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
                     .count();
         }
+        img_size   = meta.img_h * meta.img_w * 3;
+        void * ptr = nullptr;
+        CHECK_CUDA(cudaMalloc(&ptr, img_size));
+        d_raw_img_.reset(static_cast<uchar *>(ptr));
     }
 
-    int       frame_id;
-    FrameMeta meta;
-    double    timestamp;
-    cv::Mat   raw_img;
+    void setFrameID(int id) { frame_id = id; }
+
+    int                    frame_id;
+    FrameMeta              meta;
+    double                 timestamp;
+    unique_ptr_cuda<uchar> d_raw_img_;
+    cv::Mat                raw_img;
+    size_t                 img_size;
 };

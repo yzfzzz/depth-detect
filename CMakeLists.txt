@@ -1,15 +1,29 @@
 cmake_minimum_required(VERSION 3.10)
+project(depth_detection VERSION 1.0.0 LANGUAGES CXX CUDA)
 
-project(depth_detection)
+# ==================== Build Type ====================
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
-add_definitions(-std=c++14)
-add_definitions(-DAPI_EXPORTS)
+# ==================== Language Standards ====================
 set(CMAKE_CXX_STANDARD 14)
-# set(CMAKE_BUILD_TYPE Debug)
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(CMAKE_CUDA_STANDARD 14)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_EXTENSIONS OFF)
+
+# ==================== Global Flags ====================
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/bin)
 
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+add_definitions(-DAPI_EXPORTS)
+
+# ==================== Options ====================
 option(ENABLE_TIMER "Enable function timing" ON)
 if(ENABLE_TIMER)
     message(STATUS "Enabling function timing")
@@ -22,238 +36,322 @@ if(ENABLE_JESTON_MEM_MANAGED)
     add_definitions(-DENABLE_JESTON_MEM_MANAGED)
 endif()
 
-# ==================== Platform Detect ====================
-# 可选值: AUTO / NANO2GB / TX2 / X86_64
+option(ENABLE_BENCHMARK "Build benchmark tests" OFF)
+option(ENABLE_PYBIND "Build python pybind module" OFF)
+
+# ==================== Platform Detection ====================
 set(TARGET_PLATFORM "AUTO" CACHE STRING "Build target platform")
 set_property(CACHE TARGET_PLATFORM PROPERTY STRINGS AUTO NANO2GB TX2 X86_64)
+set(TARGET_CUDA_ARCHS "" CACHE STRING "CUDA architectures. Examples: 53, 62, native, 75;86")
+
+function(detect_jetson_platform out_platform)
+    set(_platform X86_64)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        set(_jetson_hint "")
+        if(EXISTS "/proc/device-tree/model")
+            file(READ "/proc/device-tree/model" _model_raw)
+            string(APPEND _jetson_hint " ${_model_raw}")
+        endif()
+        if(EXISTS "/etc/nv_tegra_release")
+            file(READ "/etc/nv_tegra_release" _tegra_release_raw)
+            string(APPEND _jetson_hint " ${_tegra_release_raw}")
+        endif()
+        string(TOLOWER "${_jetson_hint}" _jetson_hint_lc)
+        if(_jetson_hint_lc MATCHES "quill|tx2|t186")
+            set(_platform TX2)
+        elseif(_jetson_hint_lc MATCHES "nano|p3448|t210")
+            set(_platform NANO2GB)
+        else()
+            set(_platform TX2)
+        endif()
+    endif()
+    set(${out_platform} "${_platform}" PARENT_SCOPE)
+endfunction()
 
 if(TARGET_PLATFORM STREQUAL "AUTO")
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    set(_jetson_hint "")
-    set(_jetson_hint_lc "")
+    detect_jetson_platform(DETECTED_PLATFORM)
+    set(TARGET_PLATFORM "${DETECTED_PLATFORM}")
+endif()
 
-    if(EXISTS "/proc/device-tree/model")
-      execute_process(
-        COMMAND sh -c "tr -d '\\000' < /proc/device-tree/model"
-        OUTPUT_VARIABLE _jetson_model_raw
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-      )
-      string(APPEND _jetson_hint " ${_jetson_model_raw}")
-    endif()
-
-    if(EXISTS "/etc/nv_tegra_release")
-      file(READ "/etc/nv_tegra_release" _tegra_release_raw)
-      string(APPEND _jetson_hint " ${_tegra_release_raw}")
-    endif()
-
-    string(TOLOWER "${_jetson_hint}" _jetson_hint_lc)
-
-    # TX2 关键字: quill / tx2 / t186
-    if(_jetson_hint_lc MATCHES "quill|tx2|t186")
-      set(TARGET_PLATFORM "TX2")
-    # Nano 关键字: nano / p3448 / t210
-    elseif(_jetson_hint_lc MATCHES "nano|p3448|t210")
-      set(TARGET_PLATFORM "NANO2GB")
-    else()
-      # 未识别型号时，ARM64 默认按 TX2 处理
-      set(TARGET_PLATFORM "TX2")
-    endif()
-  else()
-    set(TARGET_PLATFORM "X86_64")
-  endif()
+set(IS_JETSON OFF)
+if(TARGET_PLATFORM STREQUAL "TX2" OR TARGET_PLATFORM STREQUAL "NANO2GB")
+    set(IS_JETSON ON)
 endif()
 
 message(STATUS "TARGET_PLATFORM = ${TARGET_PLATFORM}")
+message(STATUS "IS_JETSON = ${IS_JETSON}")
 
-# ==================== Platform Config ====================
-set(IS_JETSON OFF)
+# ==================== CUDA Architecture ====================
+if(TARGET_CUDA_ARCHS STREQUAL "")
+    if(TARGET_PLATFORM STREQUAL "NANO2GB")
+        set(TARGET_CUDA_ARCHS 53)
+    elseif(TARGET_PLATFORM STREQUAL "TX2")
+        set(TARGET_CUDA_ARCHS 62)
+    else()
+        set(TARGET_CUDA_ARCHS 120)
+    endif()
+endif()
+set(CUDA_ARCH_FLAGS "")
+foreach(ARCH ${TARGET_CUDA_ARCHS})
+    list(APPEND CUDA_ARCH_FLAGS "-gencode=arch=compute_${ARCH},code=sm_${ARCH}")
+endforeach()
+if(POLICY CMP0104)
+    # 将用户设置的架构列表（如 "90" 或 "53;62"）赋给标准属性
+    set(CMAKE_CUDA_ARCHITECTURES ${TARGET_CUDA_ARCHS})
+endif()
+message(STATUS "CUDA_ARCH_FLAGS = ${CUDA_ARCH_FLAGS}")
 
-if(TARGET_PLATFORM STREQUAL "NANO2GB")
-  set(IS_JETSON ON)
-  set(CUDA_ARCH "-gencode arch=compute_53,code=sm_53")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -mtune=cortex-a57")
-  if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
-    set(CMAKE_BUILD_PARALLEL_LEVEL 2)
-  endif()
-  set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -maxrregcount=32")
-  message(STATUS "Jetson Nano 2GB config enabled")
-
-elseif(TARGET_PLATFORM STREQUAL "TX2")
-  set(IS_JETSON ON)
-  set(CUDA_ARCH "-gencode arch=compute_62,code=sm_62")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -mtune=cortex-a57")
-  if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
-    set(CMAKE_BUILD_PARALLEL_LEVEL 4)
-  endif()
-  message(STATUS "Jetson TX2 config enabled")
-
-elseif(TARGET_PLATFORM STREQUAL "X86_64")
-  # 按需增删架构
-  set(CUDA_ARCH "-gencode arch=compute_120,code=sm_120")
-  if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
-    set(CMAKE_BUILD_PARALLEL_LEVEL 16)
-  endif()
-  message(STATUS "x86_64 config enabled")
-
+# ==================== Compiler Options ====================
+if(IS_JETSON)
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:-O3>
+        $<$<COMPILE_LANGUAGE:CXX>:-march=native>
+        $<$<COMPILE_LANGUAGE:CXX>:-mtune=cortex-a57>
+    )
+    if(TARGET_PLATFORM STREQUAL "NANO2GB")
+        list(APPEND CUDA_ARCH_FLAGS "-maxrregcount=32")
+    endif()
 else()
-  message(FATAL_ERROR "Unknown TARGET_PLATFORM: ${TARGET_PLATFORM}")
+    add_compile_options(
+        $<$<COMPILE_LANGUAGE:CXX>:-O3>
+    )
 endif()
 
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_ARCH_FLAGS} --use_fast_math")
 
-
-include_directories("/usr/include/eigen3")
-
-# include and link dirs of cuda and tensorrt, you need adapt them if yours are different
-# ============= cuda ============
-find_package(CUDA REQUIRED)
-include_directories(/usr/local/cuda/include)
-link_directories(/usr/local/cuda/lib64)
-
-# CUDA compilation options
-set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} ${CUDA_ARCH}")
-set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3 --use_fast_math")
-
-# ============= tensorrt ============
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-  message(STATUS "Embed_platform on - Jetson")
-  include_directories(/usr/include/aarch64-linux-gnu)
-  include_directories(${PROJECT_SOURCE_DIR}/third_party/cub)
-  link_directories(/usr/lib/aarch64-linux-gnu)
-  
-  # Jetson specific TensorRT path detection
-  if(EXISTS "/usr/local/TensorRT")
-    include_directories(/usr/local/TensorRT/include)
-    link_directories(/usr/local/TensorRT/lib)
-  endif()
-else()
-  message(STATUS "Embed_platform off - x86_64")
-  include_directories(/usr/include/x86_64-linux-gnu)
-  link_directories(/usr/lib/x86_64-linux-gnu)
-endif()
-
-# ============ opencv ============
-find_package(OpenCV)
-include_directories(${OpenCV_INCLUDE_DIRS})
-
-set(CPP_SOURCE_DIR ${PROJECT_SOURCE_DIR}/cpp)
-include_directories(${CPP_SOURCE_DIR}/include)
-
-# =========== bytetrack lib ===========
-include_directories(${CPP_SOURCE_DIR}/bytetrack/include)
-file(GLOB_RECURSE BYTETRACK_SRCS ${CPP_SOURCE_DIR}/bytetrack/src/*.cpp)
-add_library(bytetrack SHARED ${BYTETRACK_SRCS})
-target_link_libraries(bytetrack ${OpenCV_LIBS})
-
-# =========== cuda operator library ===========
-include_directories(${CPP_SOURCE_DIR}/op_kernel/include)
-file(GLOB_RECURSE CUDA_KERNEL_SRCS ${CPP_SOURCE_DIR}/op_kernel/src/*.cu)
-cuda_add_library(op_kernel SHARED ${CUDA_KERNEL_SRCS})
-
-# Jetson specific optimizations
-if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-  # Add FP16 support option
-  target_compile_definitions(op_kernel PRIVATE ENABLE_FP16=1)
-endif()
-
-target_link_libraries(op_kernel cudart nvinfer nvonnxparser ${OpenCV_LIBS})
-
-# ============= yolo lib =============
-include_directories(${CPP_SOURCE_DIR}/detect/include)
-file(GLOB_RECURSE YOLO_SRCS ${CPP_SOURCE_DIR}/detect/src/*.cpp ${CPP_SOURCE_DIR}/detect/src/*.cu)
-add_library(yolo_infer SHARED ${YOLO_SRCS})
-target_link_libraries(yolo_infer op_kernel ${OpenCV_LIBS})
-
-# ============= depth lib =============
-include_directories(${CPP_SOURCE_DIR}/depth/include)
-file(GLOB_RECURSE DEPTH_SRCS ${CPP_SOURCE_DIR}/depth/src/*.cpp ${CPP_SOURCE_DIR}/depth/src/*.cu)
-cuda_add_library(depth SHARED ${DEPTH_SRCS})
-target_link_libraries(depth op_kernel cudart nvinfer ${OpenCV_LIBS})
-
-# ============= core lib =============
-include_directories(${CPP_SOURCE_DIR}/core/include)
-file(GLOB_RECURSE CORE_SRCS ${CPP_SOURCE_DIR}/core/src/*.cpp)
-add_library(core SHARED ${CORE_SRCS})
-target_link_libraries(core yolo_infer depth ${OpenCV_LIBS})
-
-# ============= tools lib =============
-include_directories(${CPP_SOURCE_DIR}/tools/include)
-file(GLOB_RECURSE TOOL_SRCS ${CPP_SOURCE_DIR}/tools/src/*.cpp)
-add_library(tools SHARED ${TOOL_SRCS})
-target_link_libraries(tools ${OpenCV_LIBS})
-
-# ======== main execute file ========
+# ==================== Dependencies ====================
+find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
-add_executable(main ${CPP_SOURCE_DIR}/main.cpp)
-target_link_libraries(main core bytetrack tools yaml-cpp)
+
+# TensorRT
+set(TENSORRT_HINT_DIRS 
+    /usr/local/TensorRT 
+    /usr/lib/aarch64-linux-gnu 
+    /usr/lib/x86_64-linux-gnu 
+    /usr/lib
+)
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES include)
+find_library(TENSORRT_NVINFER_LIBRARY NAMES nvinfer HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
+find_library(TENSORRT_NVONNXPARSER_LIBRARY NAMES nvonnxparser HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
+
+find_library(CUDA_CUDART_LIBRARY NAMES cudart 
+    HINTS ${CUDA_TOOLKIT_ROOT_DIR} 
+    /usr/local/cuda
+    PATH_SUFFIXES lib lib64
+)
+if(NOT CUDA_CUDART_LIBRARY)
+    message(FATAL_ERROR "libcudart not found! Ensure CUDA is installed and CUDA_TOOLKIT_ROOT_DIR is set.")
+endif()
+
+if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_NVINFER_LIBRARY OR NOT TENSORRT_NVONNXPARSER_LIBRARY)
+    message(FATAL_ERROR "TensorRT not found. Please check your TensorRT installation or TENSORRT_HINT_DIRS.")
+endif()
+
+# yaml-cpp target compatibility
+if(TARGET yaml-cpp::yaml-cpp)
+    set(YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+else()
+    set(YAML_CPP_TARGET yaml-cpp)
+endif()
+list(APPEND YAML_CPP_TARGET dl)
+
+# ==================== Helper Function ====================
+set(PROJECT_CPP_DIR ${PROJECT_SOURCE_DIR}/cpp)
+set(PROJECT_CUB_DIR ${PROJECT_SOURCE_DIR}/third_party/cub)
+add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/spdlog)
+find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3)
+if(NOT EIGEN3_INCLUDE_DIR)
+    message(FATAL_ERROR "Eigen3 not found, please install: sudo apt install libeigen3-dev")
+endif()
+
+if(IS_JETSON)
+    # 动态搜索 Nsight Systems 下的 nvtx3 头文件路径，适配不同版本号
+    set(NVTX3_INCLUDE_DIR "")
+    file(GLOB _nsight_dirs LIST_DIRECTORIES true "/opt/nvidia/nsight-systems/*/target-linux-tegra-armv8/nvtx/include")
+    if(_nsight_dirs)
+        list(GET _nsight_dirs 0 _first_nsight_dir)
+        set(NVTX3_INCLUDE_DIR "${_first_nsight_dir}")
+        message(STATUS "Found NVTX3 in Nsight Systems: ${NVTX3_INCLUDE_DIR}")
+    else()
+        # 如果在 Nsight 中未找到，回退到标准 CUDA 路径搜索
+        find_path(NVTX3_INCLUDE_DIR NAMES nvtx3/nvtx3.hpp
+            HINTS 
+            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+            /usr/local/cuda/include
+        )
+        if(NVTX3_INCLUDE_DIR)
+            message(STATUS "Found NVTX3 in CUDA Toolkit: ${NVTX3_INCLUDE_DIR}")
+        else()
+            message(WARNING "nvtx3/nvtx3.hpp not found. NVTX profiling features might be disabled.")
+        endif()
+    endif()
+endif()
+
+
+function(configure_common_includes target)
+    target_include_directories(${target} PRIVATE 
+        ${PROJECT_CPP_DIR}/include 
+        ${OpenCV_INCLUDE_DIRS} 
+        ${TENSORRT_INCLUDE_DIR}
+        ${EIGEN3_INCLUDE_DIR}
+        ${CUDA_INCLUDE_DIRS}
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        ${NVTX3_INCLUDE_DIR}
+    )
+    if(IS_JETSON)
+        target_include_directories(${target} PRIVATE ${PROJECT_CUB_DIR})
+    endif()
+endfunction()
+
+# ==================== Libraries ====================
+file(GLOB_RECURSE UTILS_SRCS ${PROJECT_CPP_DIR}/utils/src/*.cpp)
+add_library(utils SHARED ${UTILS_SRCS})
+configure_common_includes(utils)
+target_include_directories(utils PUBLIC ${PROJECT_CPP_DIR}/utils/include)
+target_link_libraries(utils PUBLIC spdlog::spdlog ${YAML_CPP_TARGET})
+target_link_libraries(utils PRIVATE ${TENSORRT_NVINFER_LIBRARY})
+
+# bytetrack
+file(GLOB_RECURSE BYTETRACK_SRCS ${PROJECT_CPP_DIR}/bytetrack/src/*.cpp)
+add_library(bytetrack SHARED ${BYTETRACK_SRCS})
+configure_common_includes(bytetrack)
+target_include_directories(bytetrack PUBLIC ${PROJECT_CPP_DIR}/bytetrack/include)
+target_link_libraries(bytetrack PRIVATE utils ${OpenCV_LIBS})
+
+# op_kernel
+file(GLOB_RECURSE OP_KERNEL_SRCS ${PROJECT_CPP_DIR}/op_kernel/src/*.cu)
+add_library(op_kernel SHARED ${OP_KERNEL_SRCS})
+configure_common_includes(op_kernel)
+target_include_directories(op_kernel PUBLIC ${PROJECT_CPP_DIR}/op_kernel/include)
+set_target_properties(op_kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+if(IS_JETSON)
+    target_compile_definitions(op_kernel PRIVATE ENABLE_FP16=1)
+endif()
+target_link_libraries(op_kernel PRIVATE 
+    ${CUDA_CUDART_LIBRARY}   
+    ${TENSORRT_NVINFER_LIBRARY} 
+    ${TENSORRT_NVONNXPARSER_LIBRARY} 
+    ${OpenCV_LIBS}
+)
+
+# yolo_infer
+file(GLOB_RECURSE YOLO_SRCS 
+    ${PROJECT_CPP_DIR}/detect/src/*.cpp 
+    ${PROJECT_CPP_DIR}/detect/src/*.cu
+)
+add_library(yolo_infer SHARED ${YOLO_SRCS})
+configure_common_includes(yolo_infer)
+target_include_directories(yolo_infer PUBLIC ${PROJECT_CPP_DIR}/detect/include)
+set_target_properties(yolo_infer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(yolo_infer PRIVATE op_kernel utils ${OpenCV_LIBS})
+
+# depth
+file(GLOB_RECURSE DEPTH_SRCS 
+    ${PROJECT_CPP_DIR}/depth/src/*.cpp 
+    ${PROJECT_CPP_DIR}/depth/src/*.cu
+)
+add_library(depth SHARED ${DEPTH_SRCS})
+configure_common_includes(depth)
+target_include_directories(depth PUBLIC ${PROJECT_CPP_DIR}/depth/include)
+set_target_properties(depth PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(depth PRIVATE 
+    op_kernel 
+    utils
+    ${CUDA_CUDART_LIBRARY}   
+    ${TENSORRT_NVINFER_LIBRARY} 
+    ${OpenCV_LIBS}
+)
+
+# core
+file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
+add_library(core SHARED ${CORE_SRCS})
+configure_common_includes(core)
+target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
+target_link_libraries(core PUBLIC  yolo_infer depth utils ${OpenCV_LIBS})
+
+# tools
+file(GLOB_RECURSE TOOL_SRCS ${PROJECT_CPP_DIR}/tools/src/*.cpp)
+add_library(tools SHARED ${TOOL_SRCS})
+configure_common_includes(tools)
+target_include_directories(tools PUBLIC ${PROJECT_CPP_DIR}/tools/include ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
+target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS})
+
+# ==================== Main Executable ====================
+add_executable(main ${PROJECT_CPP_DIR}/main.cpp)
+configure_common_includes(main)
+target_link_libraries(main PRIVATE core bytetrack tools utils ${CUDA_CUDART_LIBRARY})
 
 # ==================== Google Benchmark ====================
-option(ENABLE_BENCHMARK "Build benchmark tests" ON)
-
 if(ENABLE_BENCHMARK)
     message(STATUS "Building benchmark tests")
-    # find Google benchmark
     find_package(benchmark REQUIRED)
-    set(BENCHMARK_SRCS ${PROJECT_SOURCE_DIR}/benchmark/)
-    # test pipeline benchmark
-    add_executable(test_pipeline ${BENCHMARK_SRCS}/test_pipeline.cpp)
-    target_link_libraries(test_pipeline PRIVATE 
-        core bytetrack yolo_infer depth tools yaml-cpp benchmark::benchmark
-    )
-    message(STATUS "Registered benchmark: test_pipeline")
-    # test depth preprocess benchmark
-    add_executable(test_depth_preprocess ${BENCHMARK_SRCS}/test_depth_preprocess.cpp)
-    target_link_libraries(test_depth_preprocess PRIVATE
-        core bytetrack yolo_infer depth tools yaml-cpp benchmark::benchmark
-    )
-    message(STATUS "Registered benchmark: test_depth_preprocess")
-    # test jetson memory management benchmark
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-      add_executable(test_jeston_mem_manager ${BENCHMARK_SRCS}/test_jeston_mem_manager.cpp)
-      target_link_libraries(test_jeston_mem_manager PRIVATE
-          core bytetrack yolo_infer depth tools yaml-cpp benchmark::benchmark
-      )
-      message(STATUS "Registered benchmark: test_jeston_mem_manager")
-    endif()
     
-
+    add_executable(test_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_pipeline.cpp)
+    configure_common_includes(test_pipeline)
+    target_link_libraries(test_pipeline PRIVATE 
+        core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+    )
+    
+    add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
+    configure_common_includes(test_depth_preprocess)
+    target_link_libraries(test_depth_preprocess PRIVATE 
+        core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+    )
+    
+    if(IS_JETSON)
+        add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)
+        configure_common_includes(test_jeston_mem_manager)
+        target_link_libraries(test_jeston_mem_manager PRIVATE 
+            core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+        )
+    endif()
 else()
-  message(STATUS "ENABLE_BENCHMARK=OFF")
+    message(STATUS "ENABLE_BENCHMARK=OFF")
 endif()
 
-# ==================== pybind11 (Jetson 禁用) ====================
-option(ENABLE_PYBIND "Build python pybind module" OFF)
+# ==================== pybind11 (Jetson Disabled) ====================
 if(IS_JETSON)
-  set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
+    set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
 endif()
 
 if(ENABLE_PYBIND)
-  find_package(pybind11 REQUIRED)
-  add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
-  pybind11_add_module(depth_detection ${CPP_SOURCE_DIR}/python_wrapper/depth_detect_py.cpp)
-  target_include_directories(depth_detection PRIVATE
-      ${CPP_SOURCE_DIR}/core/include
-      ${CPP_SOURCE_DIR}/detect/include
-      ${CPP_SOURCE_DIR}/bytetrack/include
-      ${CPP_SOURCE_DIR}/depth/include
-      ${CPP_SOURCE_DIR}/tools/include
-  )
-  target_link_libraries(depth_detection PRIVATE
-      ${OpenCV_LIBS}
-      ${CUDA_LIBRARIES}
-      ${TRT_LIBRARIES}
-      cvnp
-      bytetrack
-      yolo_infer
-      depth
-      core
-      tools
-      yaml-cpp
-  )
-  set_target_properties(depth_detection PROPERTIES
-      LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-      RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-  )
+    find_package(pybind11 REQUIRED)
+    add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
+    
+    pybind11_add_module(depth_detection ${PROJECT_CPP_DIR}/python_wrapper/depth_detect_py.cpp)
+    target_include_directories(depth_detection PRIVATE
+        ${PROJECT_CPP_DIR}/core/include
+        ${PROJECT_CPP_DIR}/detect/include
+        ${PROJECT_CPP_DIR}/bytetrack/include
+        ${PROJECT_CPP_DIR}/depth/include
+        ${PROJECT_CPP_DIR}/tools/include
+        ${PROJECT_CPP_DIR}/include
+        ${TENSORRT_INCLUDE_DIR}
+        ${OpenCV_INCLUDE_DIRS}
+    )
+    if(IS_JETSON)
+        target_include_directories(depth_detection PRIVATE ${PROJECT_CUB_DIR})
+    endif()
+    
+    target_link_libraries(depth_detection PRIVATE
+        ${OpenCV_LIBS}
+        ${CUDA_CUDART_LIBRARY}  
+        ${TENSORRT_NVINFER_LIBRARY}
+        ${TENSORRT_NVONNXPARSER_LIBRARY}
+        cvnp
+        bytetrack
+        yolo_infer
+        depth
+        core
+        tools
+        utils
+        ${YAML_CPP_TARGET}
+    )
+    
+    set_target_properties(depth_detection PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
+        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
+    )
 else()
-  message(STATUS "ENABLE_PYBIND=OFF")
+    message(STATUS "ENABLE_PYBIND=OFF")
 endif()
