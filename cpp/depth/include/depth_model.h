@@ -4,6 +4,7 @@
 #include "public.h"
 
 #include <cuda_runtime_api.h>
+#include <logger_manager.h>
 #include <NvInfer.h>
 #include <opencv2/core/hal/interface.h>
 

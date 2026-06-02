@@ -1,5 +1,6 @@
 #include "yolo_detect_model.h"
 
+#include "logger_manager.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
@@ -100,10 +101,10 @@ void YoloDetectModel::getEngine() {
         std::vector<char> engineString(fsize);
         engineFile.read(engineString.data(), fsize);
         if (engineString.size() == 0) {
-            std::cout << "Failed getting serialized engine!" << std::endl;
+            APP_ERROR("Failed getting serialized engine!");
             return;
         }
-        std::cout << "Succeeded getting serialized engine!" << std::endl;
+        APP_INFO("Succeeded getting serialized engine!");
 
         runtime_.reset(nvinfer1::createInferRuntime(g_logger_));
         engine_.reset(runtime_->deserializeCudaEngine(engineString.data(), fsize));
@@ -121,12 +122,12 @@ void YoloDetectModel::getEngine() {
                "Input dimensions must be positive! Check engine binding or dynamic shape setting.");
 
         if (engine_ == nullptr) {
-            std::cout << "Failed loading engine!" << std::endl;
+            APP_ERROR("Failed loading engine!");
             return;
         }
-        std::cout << "Succeeded loading engine!" << std::endl;
+        APP_INFO("Succeeded loading engine!");
     } else {
-        std::cerr << "Failed loading engine file: " << trtFile_ << std::endl;
+        APP_ERROR("Failed loading engine file: {}", trtFile_);
     }
 }
 

@@ -1,6 +1,7 @@
 #include "visual_manager.h"
 
 #include "config_manager.h"
+#include "logger_manager.h"
 
 // 全局鼠标回调函数
 void onMouse(int event, int x, int y, int flags, void * userdata) {
@@ -24,7 +25,7 @@ DisplayManager::DisplayManager(const ConfigManager & config,
         cv::namedWindow(window_name_, cv::WINDOW_NORMAL);
         cv::resizeWindow(window_name_, display_size_.width, display_size_.height);
         cv::setMouseCallback(window_name_, onMouse, this);
-        std::cout << "DisplayManager initialized" << std::endl;
+        APP_INFO("DisplayManager initialized");
     }
 }
 

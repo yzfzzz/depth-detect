@@ -1,6 +1,7 @@
 #ifndef INFER_H
 #define INFER_H
 
+#include "logger_manager.h"
 #include "memory.h"
 #include "public.h"
 
