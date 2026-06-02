@@ -149,6 +149,7 @@ jobs:
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
           docker run --rm -v "${{ github.workspace }}":/work -w /work "$IMAGE" bash -lc "\
+            git submodule update --init --recursive && \
             mkdir -p build && \
             cd build && \
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
