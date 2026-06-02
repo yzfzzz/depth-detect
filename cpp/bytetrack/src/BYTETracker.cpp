@@ -1,4 +1,5 @@
 #include "BYTETracker.h"
+
 #include "logger_manager.h"
 
 BYTETracker::BYTETracker(int frame_rate, int track_buffer) {

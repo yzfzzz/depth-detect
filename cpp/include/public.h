@@ -12,20 +12,20 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 
-#define CHECK_CUDA(call)                                                              \
-    do {                                                                              \
-        cudaError_t status = call;                                                    \
-        if (status != cudaSuccess) {                                                  \
-            auto logger = spdlog::get("app");                                         \
-            if (logger) {                                                             \
-                logger->error("CUDA error at {}:{} - {}", __FILE__, __LINE__,         \
-                              cudaGetErrorString(status));                            \
-            } else {                                                                  \
-                fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__,     \
-                        cudaGetErrorString(status));                                  \
-            }                                                                         \
-            exit(EXIT_FAILURE);                                                       \
-        }                                                                             \
+#define CHECK_CUDA(call)                                                          \
+    do {                                                                          \
+        cudaError_t status = call;                                                \
+        if (status != cudaSuccess) {                                              \
+            auto logger = spdlog::get("app");                                     \
+            if (logger) {                                                         \
+                logger->error("CUDA error at {}:{} - {}", __FILE__, __LINE__,     \
+                              cudaGetErrorString(status));                        \
+            } else {                                                              \
+                fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__, \
+                        cudaGetErrorString(status));                              \
+            }                                                                     \
+            exit(EXIT_FAILURE);                                                   \
+        }                                                                         \
     } while (0)
 
 const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "car",
