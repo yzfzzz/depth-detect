@@ -1,5 +1,4 @@
 #pragma once
-#include "motion_state_engine.h"
 #include "public.h"
 
 #include <memory.h>
@@ -27,6 +26,9 @@ struct FrameMeta {
 
     FrameSource frame_source;
 };
+
+struct MotionStateInfoRecord;
+class STrack;
 
 struct InferOutputContext {
     std::vector<STrack>                            tracked_objects;

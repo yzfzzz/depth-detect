@@ -29,6 +29,10 @@ class ConfigManager {
     float       getKfProcessNoiseCov() const;
     float       getKfMeasurementNoiseCov() const;
 
+    bool        isLogFileSaveEnabled() const;
+    bool        isLogConsoleOutputEnabled() const;
+    std::string getLogLevel() const;
+
   private:
     explicit ConfigManager(const std::string & config_path);
 
@@ -49,8 +53,9 @@ class ConfigManager {
     float kf_process_noise_cov_;
     float kf_measurement_noise_cov_;
 
-    // Implementation
-    void initialize();
+    bool        log_file_save_;
+    bool        log_console_output_;
+    std::string log_level_;
 };
 
 // Implementation
@@ -77,6 +82,11 @@ inline ConfigManager::ConfigManager(const std::string & config_path) {
     kf_process_noise_cov_ = config_["motion_state_engine"]["kf_process_noise_cov"].as<float>(2e-2f);
     kf_measurement_noise_cov_ =
         config_["motion_state_engine"]["kf_measurement_noise_cov"].as<float>(5e-2f);
+
+    // 日志配置
+    log_file_save_      = config_["logger"]["save_file"].as<bool>(true);
+    log_console_output_ = config_["logger"]["console_output"].as<bool>(true);
+    log_level_          = config_["logger"]["log_level"].as<std::string>("info");
 }
 
 inline std::string ConfigManager::getYoloEnginePath() const {
@@ -129,4 +139,16 @@ inline float ConfigManager::getKfProcessNoiseCov() const {
 
 inline float ConfigManager::getKfMeasurementNoiseCov() const {
     return kf_measurement_noise_cov_;
+}
+
+inline bool ConfigManager::isLogFileSaveEnabled() const {
+    return log_file_save_;
+}
+
+inline bool ConfigManager::isLogConsoleOutputEnabled() const {
+    return log_console_output_;
+}
+
+inline std::string ConfigManager::getLogLevel() const {
+    return log_level_;
 }
