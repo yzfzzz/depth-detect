@@ -26,7 +26,7 @@ void LoggerManager::createLogsDirectory() {
         std::string cmd  = "mkdir -p " + path;
         system(cmd.c_str());
     } catch (const std::exception & e) {
-        std::cerr << "Failed to create logs directory: " << e.what() << std::endl;
+        fprintf(stderr, "Failed to create logs directory: %s\n", e.what());
     }
 }
 
@@ -70,7 +70,7 @@ LoggerManager::LoggerManager(const ConfigManager & config) {
             file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
             sinks.push_back(file_sink);
         } catch (const spdlog::spdlog_ex & ex) {
-            std::cerr << "File sink creation failed: " << ex.what() << std::endl;
+            fprintf(stderr, "File sink creation failed: %s\n", ex.what());
         }
 
         // latest.log文件（始终覆盖）
@@ -81,7 +81,7 @@ LoggerManager::LoggerManager(const ConfigManager & config) {
             latest_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
             sinks.push_back(latest_sink);
         } catch (const spdlog::spdlog_ex & ex) {
-            std::cerr << "Latest sink creation failed: " << ex.what() << std::endl;
+            fprintf(stderr, "Latest sink creation failed: %s\n", ex.what());
         }
     }
 

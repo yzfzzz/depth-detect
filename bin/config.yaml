@@ -2,13 +2,13 @@ display_manager:
   is_display: true    # 是否启用本机的 GUI 交互窗口
 
 yolo:
-  yolo_engine: "/home/work/Stereo-Detection/model/engine/yolov8s_s640_ws1024_fp16.engine"
+  yolo_engine: "/home/work/Stereo-Detection/modelV2/engine/yolov8s_s640_ws1024_fp16.engine"
   yolo_nms_thresh: 0.4    # YOLO NMS阈值 (下采样截断遮挡框)
   yolo_conf_thresh: 0.25
 
 depth:
   depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
-  depth_engine: "/home/work/Stereo-Detection/model/engine/lite_mono-8m_op12_s640_ws-all_fp16.engine"
+  depth_engine: "/home/work/Stereo-Detection/modelV2/engine/lite_mono-8m_op12_s640_ws-all_fp16.engine"
 
 motion_state_engine:      # 目标追踪与状态转换引擎
   velocity_threshold: 20      # 判断趋近/远离的速度触发线
@@ -19,3 +19,7 @@ motion_state_engine:      # 目标追踪与状态转换引擎
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
   save_mode: video        # 保存输出: video / images / both / none
+logger:
+  save_file: true         # 是否保存日志文件到logs文件夹
+  console_output: true    # 是否在终端显示日志
+  log_level: info         # 日志级别: trace / debug / info / warn / err / critical

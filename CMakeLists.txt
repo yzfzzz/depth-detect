@@ -216,7 +216,7 @@ file(GLOB_RECURSE BYTETRACK_SRCS ${PROJECT_CPP_DIR}/bytetrack/src/*.cpp)
 add_library(bytetrack SHARED ${BYTETRACK_SRCS})
 configure_common_includes(bytetrack)
 target_include_directories(bytetrack PUBLIC ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(bytetrack PRIVATE ${OpenCV_LIBS})
+target_link_libraries(bytetrack PRIVATE utils ${OpenCV_LIBS})
 
 # op_kernel
 file(GLOB_RECURSE OP_KERNEL_SRCS ${PROJECT_CPP_DIR}/op_kernel/src/*.cu)

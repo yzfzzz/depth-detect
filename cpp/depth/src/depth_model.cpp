@@ -1,6 +1,7 @@
 #include "depth_model.h"
 
 #include "cub_utils.h"
+#include "logger_manager.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
@@ -43,7 +44,7 @@ void DepthModel::init(const std::string & engine_path, int img_w, int img_h, boo
 
     std::ifstream engineStream(engine_path, std::ios::binary);
     if (!engineStream.is_open()) {
-        std::cerr << "Failed to open engine file: " << engine_path << std::endl;
+        APP_ERROR("Failed to open engine file: {}", engine_path);
         return;
     }
     engineStream.seekg(0, std::ios::end);
@@ -177,7 +178,7 @@ std::pair<cv::Mat, cv::Mat> DepthModel::predict(const cv::Mat & image) {
     void * buffer_ptrs[2] = { d_buffer_[0].get(), d_buffer_[1].get() };
     bool   status         = context_->executeV2(buffer_ptrs);
     if (!status) {
-        std::cerr << "TensorRT enqueueV3 failed!" << std::endl;
+        APP_ERROR("TensorRT enqueueV3 failed!");
         return {};
     }
 
@@ -209,7 +210,7 @@ void DepthModel::predictAsync(uchar * d_image) {
         bool status = context_->enqueueV3(stream_);
 #endif
         if (!status) {
-            std::cerr << "TensorRT enqueue failed!" << std::endl;
+            APP_ERROR("TensorRT enqueue failed!");
             return;
         }
     }

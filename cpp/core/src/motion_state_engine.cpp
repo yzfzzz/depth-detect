@@ -1,5 +1,7 @@
 #include "motion_state_engine.h"
 
+#include "logger_manager.h"
+
 #include <cstdio>
 #include <iostream>
 #include <opencv2/core/operations.hpp>
@@ -118,7 +120,7 @@ float MotionStateEngine::getObjectDepth(cv::Mat depth, const STrack & track, cv:
     if (!depth.empty()) {
         cv::resize(depth, depth, image_size);
     } else {
-        std::cerr << "[DEBUG] depth_map is empty!" << std::endl;
+        APP_WARN("depth_map is empty!");
         return 0.0f;
     }
 

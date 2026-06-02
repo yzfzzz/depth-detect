@@ -157,7 +157,7 @@ std::vector<Detection> YoloDetectModel::inference(const cv::Mat & img) {
     void * bingding_buffers[2] = { d_buffer_[0].get(), d_buffer_[1].get() };
     bool   status              = context_->executeV2(bingding_buffers);
     if (!status) {
-        std::cerr << "TensorRT enqueueV3 failed!" << std::endl;
+        APP_ERROR("TensorRT enqueueV3 failed!");
         return {};
     }
 
@@ -220,7 +220,7 @@ void YoloDetectModel::inferenceAsync(uchar * d_image) {
 #endif
 
         if (!status) {
-            std::cerr << "TensorRT enqueue failed!" << std::endl;
+            APP_ERROR("TensorRT enqueue failed!");
             return;
         }
     }

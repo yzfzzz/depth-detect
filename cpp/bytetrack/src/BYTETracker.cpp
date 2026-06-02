@@ -1,4 +1,5 @@
 #include "BYTETracker.h"
+#include "logger_manager.h"
 
 BYTETracker::BYTETracker(int frame_rate, int track_buffer) {
     track_thresh_ = 0.5;
@@ -7,7 +8,7 @@ BYTETracker::BYTETracker(int frame_rate, int track_buffer) {
 
     frame_id_      = 0;
     max_time_lost_ = int(frame_rate / 30.0 * track_buffer);
-    std::cout << "Init ByteTrack!" << std::endl;
+    APP_INFO("Init ByteTrack!");
 }
 
 BYTETracker::~BYTETracker() {}

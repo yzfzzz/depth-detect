@@ -38,12 +38,12 @@ DisplayManager::~DisplayManager() {
 float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
     // 调试：检查深度图状态
     if (depth_map_.empty()) {
-        std::cout << "[DEBUG] depth_map is empty!" << std::endl;
+        APP_DEBUG("depth_map is empty!");
         return 0.0f;
     }
 
-    std::cout << "[DEBUG] depth_map: size=" << depth_map_.size() << ", type=" << depth_map_.type()
-              << ", channels=" << depth_map_.channels() << std::endl;
+    APP_DEBUG("depth_map: size={}, type={}, channels={}", depth_map_.size(), depth_map_.type(),
+              depth_map_.channels());
 
     const int num_samples = 64;  // 采样点数（5x5网格）
     float     sum_depth   = 0.0f;
@@ -92,8 +92,7 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
                 depth = static_cast<float>(depth_map_.at<uchar>(y, x));
             } else {
                 // 处理其他类型
-                std::cout << "[DEBUG] Unsupported depth map type: " << depth_map_.type()
-                          << std::endl;
+                APP_DEBUG("Unsupported depth map type: {}", depth_map_.type());
             }
 
             if (depth == 0) {
@@ -105,8 +104,7 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
         }
     }
 
-    std::cout << "[DEBUG] Samples: total=" << num_samples << ", valid=" << valid_count
-              << ", zero=" << zero_count << std::endl;
+    APP_DEBUG("Samples: total={}, valid={}, zero={}", num_samples, valid_count, zero_count);
 
     return (valid_count > 0) ? (sum_depth / valid_count) : 0.0f;
 }
@@ -119,13 +117,12 @@ void DisplayManager::printTargetInfo(const STrack & track) const {
     // 使用多点采样计算深度均值
     float depth = computeMeanDepth(tlwh);
 
-    std::cout << "\n=== Target Info ===" << std::endl;
-    std::cout << "Class: " << V_CLASS_NAMES[class_id] << std::endl;
-    std::cout << "Track ID: " << track_id << std::endl;
-    std::cout << "Depth (mean of 25 samples): " << depth << std::endl;
-    std::cout << "BBox: [" << tlwh[0] << ", " << tlwh[1] << ", " << tlwh[0] + tlwh[2] << ", "
-              << tlwh[1] + tlwh[3] << "]" << std::endl;
-    std::cout << "==================\n" << std::endl;
+    APP_INFO("\n=== Target Info ===");
+    APP_INFO("Class: {}", V_CLASS_NAMES[class_id]);
+    APP_INFO("Track ID: {}", track_id);
+    APP_INFO("Depth (mean of 25 samples): {}", depth);
+    APP_INFO("BBox: [{}, {}, {}, {}]", tlwh[0], tlwh[1], tlwh[0] + tlwh[2], tlwh[1] + tlwh[3]);
+    APP_INFO("==================");
 }
 
 void DisplayManager::handleMouseClick(int x, int y) {
@@ -141,7 +138,7 @@ void DisplayManager::handleMouseClick(int x, int y) {
             return;
         }
     }
-    std::cout << "No target clicked" << std::endl;
+    APP_WARN("No target clicked");
 }
 
 void DisplayManager::updateData(const std::vector<STrack> & tracks, const cv::Mat & depth_map) {
@@ -160,20 +157,20 @@ int DisplayManager::handleKey(int key) {
     }
 
     if (key == Key_Input::SPACE) {
-        std::cout << "Paused, press SPACE to continue..." << std::endl;
+        APP_INFO("Paused, press SPACE to continue...");
         while (true) {
             char pause_key = cv::waitKey(0);
             if (pause_key == Key_Input::SPACE) {
-                std::cout << "Resuming..." << std::endl;
+                APP_INFO("Resuming...");
                 break;
             } else if (pause_key == Key_Input::ESC) {  // ESC键退出
-                std::cout << "User exited" << std::endl;
+                APP_INFO("User exited");
                 return Key_Input::ESC;
             }
         }
         return 0;
     } else if (key == Key_Input::ESC) {  // ESC键退出
-        std::cout << "User exited" << std::endl;
+        APP_INFO("User exited");
         return Key_Input::ESC;
     }
     return key;

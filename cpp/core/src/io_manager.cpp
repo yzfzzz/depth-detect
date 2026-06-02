@@ -1,6 +1,7 @@
 #include "io_manager.h"
 
 #include "frame.h"
+#include "logger_manager.h"
 #include "public.h"
 
 #include <cstdlib>  // For system()
@@ -19,7 +20,7 @@ FrameMeta IOManager::Init(const std::string & video_path) {
     }
     bool flag = openVideoSource(video_path);
     if (!flag) {
-        std::cerr << "Failed to open video source: " << video_path << std::endl;
+        APP_ERROR("Failed to open video source: {}", video_path);
     }
     FrameMeta frame_meta = getVideoFrameMeta();
 
@@ -30,8 +31,7 @@ FrameMeta IOManager::Init(const std::string & video_path) {
                            frame_meta.fps, cv::Size(frame_meta.img_w, frame_meta.img_h));
 
         if (!video_writer_.isOpened()) {
-            std::cerr << "[Error] Failed to initialize VideoWriter at " << video_save_path
-                      << std::endl;
+            APP_ERROR("Failed to initialize VideoWriter at {}", video_save_path);
         }
     }
     return frame_meta;
@@ -66,14 +66,14 @@ void IOManager::makeDir(const std::string & path) {
     std::string cmd = "mkdir -p " + path;
     int         ret = system(cmd.c_str());
     if (ret != 0) {
-        std::cerr << "[Warning] Could not execute mkdir completely." << std::endl;
+        APP_WARN("Could not execute mkdir completely.");
     }
 }
 
 bool IOManager::openVideoSource(const std::string & video_path) {
     video_capture_.open(video_path);
     if (!video_capture_.isOpened()) {
-        std::cerr << "Failed to open video: " << video_path << std::endl;
+        APP_ERROR("Failed to open video: {}", video_path);
         return false;
     }
     is_first_frame_ = true;
@@ -82,7 +82,7 @@ bool IOManager::openVideoSource(const std::string & video_path) {
         frame_interval_ms_ = 1000.0 / fps;
     }
     long total_frames_num = static_cast<long>(video_capture_.get(cv::CAP_PROP_FRAME_COUNT));
-    std::cout << "Total frames: " << total_frames_num << std::endl;
+    APP_INFO("Total frames: {}", total_frames_num);
     return true;
 }
 
@@ -94,7 +94,7 @@ void IOManager::closeVideoSource() {
 
 FrameMeta IOManager::getVideoFrameMeta() const {
     if (!video_capture_.isOpened()) {
-        std::cerr << "Warning: Video source not opened, returning default FrameMeta" << std::endl;
+        APP_WARN("Video source not opened, returning default FrameMeta");
         return FrameMeta(0, 0, 0, FrameSource::VIDEO);
     }
     return FrameMeta(video_capture_.get(cv::CAP_PROP_FRAME_WIDTH),

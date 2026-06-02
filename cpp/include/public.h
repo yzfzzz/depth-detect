@@ -21,8 +21,8 @@
                 logger->error("CUDA error at {}:{} - {}", __FILE__, __LINE__,         \
                               cudaGetErrorString(status));                            \
             } else {                                                                  \
-                std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << " - " \
-                          << cudaGetErrorString(status) << std::endl;                 \
+                fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__,     \
+                        cudaGetErrorString(status));                                  \
             }                                                                         \
             exit(EXIT_FAILURE);                                                       \
         }                                                                             \
