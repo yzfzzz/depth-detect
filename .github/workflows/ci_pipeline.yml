@@ -149,6 +149,7 @@ jobs:
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
           docker run --rm -v "${{ github.workspace }}":/work -w /work "$IMAGE" bash -lc "\
+            git config --global --add safe.directory /work && \  
             git submodule update --init --recursive && \
             mkdir -p build && \
             cd build && \
