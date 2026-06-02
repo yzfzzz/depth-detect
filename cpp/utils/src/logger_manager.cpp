@@ -22,9 +22,12 @@ std::string LoggerManager::getDateLogFilePath() {
 
 void LoggerManager::createLogsDirectory() {
     try {
-        std::string path = "logs";
-        std::string cmd  = "mkdir -p " + path;
-        system(cmd.c_str());
+        std::string path   = "logs";
+        std::string cmd    = "mkdir -p " + path;
+        int         result = system(cmd.c_str());
+        if (result != 0) {
+            fprintf(stderr, "Failed to create logs directory, system() returned: %d\n", result);
+        }
     } catch (const std::exception & e) {
         fprintf(stderr, "Failed to create logs directory: %s\n", e.what());
     }
