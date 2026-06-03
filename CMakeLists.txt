@@ -234,27 +234,19 @@ target_link_libraries(op_kernel PRIVATE
     ${OpenCV_LIBS}
 )
 
-# yolo_infer
-file(GLOB_RECURSE YOLO_SRCS 
-    ${PROJECT_CPP_DIR}/detect/src/*.cpp 
-    ${PROJECT_CPP_DIR}/detect/src/*.cu
+# inference model
+file(GLOB_RECURSE INFERENCE_SRCS 
+    ${PROJECT_CPP_DIR}/inference/infer_models/src/*.cpp 
+    ${PROJECT_CPP_DIR}/inference/infer_backend/src/*.cpp 
 )
-add_library(yolo_infer SHARED ${YOLO_SRCS})
-configure_common_includes(yolo_infer)
-target_include_directories(yolo_infer PUBLIC ${PROJECT_CPP_DIR}/detect/include)
-set_target_properties(yolo_infer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(yolo_infer PRIVATE op_kernel utils ${OpenCV_LIBS})
-
-# depth
-file(GLOB_RECURSE DEPTH_SRCS 
-    ${PROJECT_CPP_DIR}/depth/src/*.cpp 
-    ${PROJECT_CPP_DIR}/depth/src/*.cu
+add_library(inference SHARED ${INFERENCE_SRCS})
+configure_common_includes(inference)
+target_include_directories(inference PUBLIC 
+    ${PROJECT_CPP_DIR}/inference/infer_models/include 
+    ${PROJECT_CPP_DIR}/inference/infer_backend/include
 )
-add_library(depth SHARED ${DEPTH_SRCS})
-configure_common_includes(depth)
-target_include_directories(depth PUBLIC ${PROJECT_CPP_DIR}/depth/include)
-set_target_properties(depth PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(depth PRIVATE 
+set_target_properties(inference PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(inference PRIVATE 
     op_kernel 
     utils
     ${CUDA_CUDART_LIBRARY}   
@@ -262,12 +254,14 @@ target_link_libraries(depth PRIVATE
     ${OpenCV_LIBS}
 )
 
+
+
 # core
 file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
 add_library(core SHARED ${CORE_SRCS})
 configure_common_includes(core)
 target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(core PUBLIC  yolo_infer depth utils ${OpenCV_LIBS})
+target_link_libraries(core PUBLIC  inference utils ${OpenCV_LIBS})
 
 # tools
 file(GLOB_RECURSE TOOL_SRCS ${PROJECT_CPP_DIR}/tools/src/*.cpp)
@@ -289,20 +283,20 @@ if(ENABLE_BENCHMARK)
     add_executable(test_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_pipeline.cpp)
     configure_common_includes(test_pipeline)
     target_link_libraries(test_pipeline PRIVATE 
-        core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+        core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
     )
     
     add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
     configure_common_includes(test_depth_preprocess)
     target_link_libraries(test_depth_preprocess PRIVATE 
-        core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+        core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
     )
     
     if(IS_JETSON)
         add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)
         configure_common_includes(test_jeston_mem_manager)
         target_link_libraries(test_jeston_mem_manager PRIVATE 
-            core bytetrack yolo_infer depth tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+            core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
         )
     endif()
 else()
@@ -340,8 +334,7 @@ if(ENABLE_PYBIND)
         ${TENSORRT_NVONNXPARSER_LIBRARY}
         cvnp
         bytetrack
-        yolo_infer
-        depth
+        inference
         core
         tools
         utils

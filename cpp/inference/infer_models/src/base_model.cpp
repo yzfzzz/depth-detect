@@ -1,0 +1,78 @@
+#include "base_model.h"
+
+#include "tensorrt_backend.h"
+
+#include <cuda_runtime_api.h>
+
+#include <fstream>
+
+BaseModel::BaseModel() : initialized_(false), stream_(0) {}
+
+BaseModel::~BaseModel() {
+    if (stream_ != 0) {
+        CHECK_CUDA(cudaStreamSynchronize(stream_));
+        CHECK_CUDA(cudaStreamDestroy(stream_));
+    }
+}
+
+void BaseModel::init(const std::string & model_path, int raw_img_w, int raw_img_h) {
+    model_path_ = model_path;
+    raw_img_w_  = raw_img_w;
+    raw_img_h_  = raw_img_h;
+}
+
+bool BaseModel::isGPUAvailable() {
+    int         device_count = 0;
+    cudaError_t error        = cudaGetDeviceCount(&device_count);
+    return error == cudaSuccess && device_count > 0;
+}
+
+std::unique_ptr<InferenceBackend> BaseModel::createBackend() {
+    // 优先尝试 TensorRT（如果 GPU 可用且用户偏好 GPU）
+    if (isGPUAvailable()) {
+        APP_INFO("GPU detected, attempting to use TensorRT backend...");
+        // TODO: 需要自动检测gpu id
+        auto trt_backend = std::make_unique<TensorRTBackend>(0);
+
+        if (trt_backend->loadModel(model_path_)) {
+            APP_INFO("TensorRT backend initialized successfully");
+
+            // 创建 CUDA 流
+            CHECK_CUDA(cudaSetDevice(0));
+            CHECK_CUDA(cudaStreamCreate(&stream_));
+            APP_INFO("CUDA stream created successfully");
+
+            return trt_backend;
+        } else {
+            APP_ERROR("Failed to initialize TensorRT backend, falling back to ONNX Runtime");
+        }
+    }
+    return nullptr;
+}
+
+bool BaseModel::initInferenceBackend() {
+    if (initialized_) {
+        APP_WARN("Model already initialized");
+        return true;
+    }
+
+    // 检查模型文件是否存在
+    std::ifstream file(model_path_);
+    if (!file.good()) {
+        APP_ERROR("Model file not found: {}", model_path_);
+        return false;
+    }
+    file.close();
+
+    // 创建后端
+    backend_ = createBackend();
+    if (!backend_) {
+        APP_ERROR("Failed to create inference backend");
+        return false;
+    }
+
+    initialized_ = true;
+    APP_INFO("Model initialized successfully with backend: {}",
+             backendTypeToString(backend_->getBackendType()));
+    return true;
+}

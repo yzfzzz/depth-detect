@@ -8,11 +8,6 @@
 
 Pipeline::Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta) :
     config_manager_(config_manager),
-    detector_(config_manager_.getYoloEnginePath(),
-              frame_meta.img_w,
-              frame_meta.img_h,
-              config_manager_.getYoloNmsThresh(),
-              config_manager_.getYoloConfThresh()),
     tracker_(30, 30),  // 假设fps=30，或从config读取
     motion_state_engine_(config_manager_.getMotionVelocityThreshold(),
                          config_manager_.getMotionAccelerationThreshold(),
@@ -26,36 +21,38 @@ Pipeline::Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta) :
     }
     depth_model_.init(config_manager_.getDepthEnginePath(), frame_meta.img_w, frame_meta.img_h,
                       is_normalize);
+    detector_.init(config_manager_.getYoloEnginePath(), frame_meta.img_w, frame_meta.img_h,
+                   config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80);
 }
 
 // 同步
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
-    bool do_depth = (!has_cached_depth_) ||
-                    ((frame_input_context.frame_id - 1) % config_manager_.getDepthInterval() == 0);
+    // bool do_depth = (!has_cached_depth_) ||
+    //                 ((frame_input_context.frame_id - 1) % config_manager_.getDepthInterval() == 0);
 
-    if (do_depth) {
-        auto depth_infer_result = depth_model_.predict(frame_input_context.raw_img);
+    // if (do_depth) {
+    //     auto depth_infer_result = depth_model_.runInference(frame_input_context.raw_img, );
 
-        infer_output_context.result_depth = depth_infer_result.first;
-        infer_output_context.depth_vis    = depth_infer_result.second;
-        has_cached_depth_                 = true;
-    } else {
-        infer_output_context.result_depth = cached_depth_;
-        infer_output_context.depth_vis    = cached_depth_vis_;
-    }
+    //     infer_output_context.result_depth = depth_infer_result.first;
+    //     infer_output_context.depth_vis    = depth_infer_result.second;
+    //     has_cached_depth_                 = true;
+    // } else {
+    //     infer_output_context.result_depth = cached_depth_;
+    //     infer_output_context.depth_vis    = cached_depth_vis_;
+    // }
 
-    std::vector<Detection> res = detector_.inference(frame_input_context.raw_img);
-    postProcess(frame_input_context, infer_output_context);
+    // std::vector<Detection> res = detector_.runInference(frame_input_context.raw_img);
+    // postProcess(frame_input_context, infer_output_context);
 }
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
-    detector_.inferenceAsync(frame_input_context.d_raw_img_.get());
+    detector_.runInferenceAsync(frame_input_context.d_raw_img_.get());
     bool do_depth = (!has_cached_depth_) ||
                     ((frame_input_context.frame_id - 1) % config_manager_.getDepthInterval() == 0);
     if (do_depth) {
-        depth_model_.predictAsync(frame_input_context.d_raw_img_.get());
+        depth_model_.runInferenceAsync(frame_input_context.d_raw_img_.get());
     }
     detector_.waitAsync();
     {
