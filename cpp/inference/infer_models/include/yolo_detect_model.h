@@ -14,11 +14,7 @@ struct Detection {
     int                  classId;
 };
 
-/**
- * @brief YOLO 目标检测模型
- * 
- * 继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
- */
+// YOLO 目标检测模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class YoloDetectModel : public BaseModel {
   public:
     void init(const std::string & model_path,
@@ -28,29 +24,26 @@ class YoloDetectModel : public BaseModel {
               float               conf_thresh,
               int                 num_class);
 
-    /**
-     * @brief 同步推理
-     */
-    std::vector<Detection> runInference(void * input_data, void * output_data);
+    // 同步推理
+    bool runInference(FrameInputContext &  frame_input_context,
+                      InferOutputContext & infer_output_context) override;
 
-    /**
-     * @brief 异步推理
-     */
-    void                   runInferenceAsync(uchar * d_image);
-    void                   waitAsync();
-    std::vector<Detection> getInferResultAsync(const cv::Mat & img);
+    // 异步推理
+    bool runInferenceAsync(FrameInputContext &  frame_input_context,
+                           InferOutputContext & infer_output_context) override;
+    void waitAsync();
 
   private:
-    void preProcess(const cv::Mat & input, void * output) override;
-    void postProcess(void * output, void * results) override;
+    // BaseModel 接口实现
+    // opencv 预处理和后处理（用于 ONNX Runtime）
+    void cvMatPreProcess(FrameInputContext & frame_input_context) override;
+    void cvMatPostProcess(FrameInputContext &  frame_input_context,
+                          InferOutputContext & infer_output_context) override;
+    // CUDA 预处理和后处理（用于 TensorRT）
+    void cudaPreProcess(FrameInputContext & frame_input_context) override;
+    void cudaPostProcess(FrameInputContext &  frame_input_context,
+                         InferOutputContext & infer_output_context) override;
 
-    void cudaPreProcess(uchar * input) override;
-    void cudaPostProcess() override;
-
-    /**
-     * @brief 后处理检测结果
-     */
-    std::vector<Detection> postProcessDetections(const cv::Mat & img);
 
   private:
     int   num_class_;
@@ -66,6 +59,9 @@ class YoloDetectModel : public BaseModel {
     unique_ptr_pinned_cuda<float>        h_output_data_;
 
     int output_candidates_;
+
+  public:
+      
 
     // 常量
     static constexpr int MAX_NUM_OUTPUT_BBOX = 1000;

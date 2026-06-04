@@ -91,54 +91,13 @@ void YoloDetectModel::init(const std::string & model_path,
     APP_INFO("YOLO model initialized successfully");
 }
 
-// 获取输入输出维度
-
-void YoloDetectModel::preProcess(const cv::Mat & input, void * output) {
-    // TODO
-    APP_INFO("Preprocessing input image for YOLO model...");
+void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+    preprocess_v2(static_cast<float *>(d_buffer_[0].get()), frame_input_context.d_raw_img_.get(),
+                  d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 }
 
-void YoloDetectModel::postProcess(void * output, void * results) {
-    // TODO
-    APP_INFO("Postprocessing output for YOLO model...");
-}
-
-std::vector<Detection> YoloDetectModel::runInference(void * input_data, void * output_data) {
-    APP_INFO("Running synchronous inference for YOLO model...");
-    return {};
-}
-
-std::vector<Detection> YoloDetectModel::postProcessDetections(const cv::Mat & img) {
-    std::vector<Detection> vDetections;
-    int count = std::min(static_cast<int>(h_output_data_.get()[0]), MAX_NUM_OUTPUT_BBOX);
-
-    for (int i = 0; i < count; i++) {
-        int pos      = 1 + i * NUM_BOX_ELEMENT;
-        int keepFlag = static_cast<int>(h_output_data_.get()[pos + 6]);
-
-        if (keepFlag == 1) {
-            Detection det;
-            memcpy(det.bbox.data(), &h_output_data_.get()[pos], 4 * sizeof(float));
-            det.conf    = h_output_data_.get()[pos + 4];
-            det.classId = static_cast<int>(h_output_data_.get()[pos + 5]);
-            vDetections.push_back(det);
-        }
-    }
-
-    // 缩放 bbox 到原始图像尺寸
-    for (auto & det : vDetections) {
-        scale_bbox(img, det.bbox.data(), input_w_, input_h_);
-    }
-
-    return vDetections;
-}
-
-void YoloDetectModel::cudaPreProcess(uchar * input) {
-    preprocess_v2(static_cast<float *>(d_buffer_[0].get()), input, d_mid_data_.get(), raw_img_h_,
-                  raw_img_w_, input_h_, input_w_, stream_);
-}
-
-void YoloDetectModel::cudaPostProcess() {
+void YoloDetectModel::cudaPostProcess(FrameInputContext &  frame_input_context,
+                                      InferOutputContext & infer_output_context) {
     // 转置
     transpose(static_cast<float *>(d_buffer_[1].get()), d_transpose_.get(), output_candidates_,
               num_class_ + 4, stream_);
@@ -154,20 +113,37 @@ void YoloDetectModel::cudaPostProcess() {
     CHECK_CUDA(cudaMemcpyAsync(h_output_data_.get(), d_decode_.get(),
                                (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                                cudaMemcpyDeviceToHost, stream_));
+    feed_infer_output_callback_data_.frame_input_context_ptr  = &frame_input_context;
+    feed_infer_output_callback_data_.infer_output_context_ptr = &infer_output_context;
+    feed_infer_output_callback_data_.h_infer_output_data =
+        static_cast<void *>(h_output_data_.get());
+    cudaStreamAddCallback(stream_, streamCallbackAdapter, &feed_infer_output_callback_data_, 0);
 }
 
-void YoloDetectModel::runInferenceAsync(uchar * d_image) {
+bool YoloDetectModel::runInferenceAsync(FrameInputContext &  frame_input_context,
+                                        InferOutputContext & infer_output_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
-        return;
+        return false;
     }
 
     // 异步预处理
-    cudaPreProcess(d_image);
+    cudaPreProcess(frame_input_context);
     // 异步推理
     backend_->runInferenceAsync(d_buffer_[0].get(), d_buffer_[1].get(), stream_);
     // 异步后处理
-    cudaPostProcess();
+    cudaPostProcess(frame_input_context, infer_output_context);
+    return true;
+}
+
+bool YoloDetectModel::runInference(FrameInputContext &  frame_input_context,
+                                   InferOutputContext & infer_output_context) {
+    if (!isBackendInitialized()) {
+        APP_ERROR("Model not initialized");
+        return false;
+    }
+    APP_INFO("Running synchronous inference for YOLO model...");
+    return false;
 }
 
 void YoloDetectModel::waitAsync() {
@@ -176,7 +152,11 @@ void YoloDetectModel::waitAsync() {
     }
 }
 
-std::vector<Detection> YoloDetectModel::getInferResultAsync(const cv::Mat & img) {
-    std::vector<Detection> results = postProcessDetections(img);
-    return results;
+void YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
+    APP_INFO("Running CPU pre-processing for YOLO model...");
+}
+
+void YoloDetectModel::cvMatPostProcess(FrameInputContext &  frame_input_context,
+                                       InferOutputContext & infer_output_context) {
+    APP_INFO("Running CPU post-processing for YOLO model...");
 }

@@ -1,12 +1,14 @@
 #include "depth_model.h"
 
 #include "cub_utils.h"
+#include "frame.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
 
 #include <cstring>
 #include <fstream>
+#include <memory>
 
 DepthModel::DepthModel() {}
 
@@ -144,13 +146,9 @@ bool DepthModel::init(const std::string & model_path,
 
 //     return input_tensor;
 // }
-// cpu版本推理链路
-void DepthModel::preProcess(const cv::Mat & input, void * output) {
-    // TODO
-    APP_INFO("Preprocessing input image for Depth model...");
-}
 
-std::pair<cv::Mat, cv::Mat> DepthModel::runInference(void * input_data, void * output_data) {
+bool DepthModel::runInference(FrameInputContext &  frame_input_context,
+                              InferOutputContext & infer_output_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
         return {};
@@ -158,39 +156,38 @@ std::pair<cv::Mat, cv::Mat> DepthModel::runInference(void * input_data, void * o
 
     // TODO: 实现同步推理逻辑
     APP_INFO("Running synchronous inference for Depth model...");
-    return {};
-}
-
-void DepthModel::postProcess(void * output, void * results) {
-    // TODO
-    APP_INFO("Postprocessing output for Depth model...");
+    return false;
 }
 
 // GPU 版本推理链路
-void DepthModel::cudaPreProcess(uchar * input) {
-    depthPreprocess(input, (float *) d_buffer_[0].get(), raw_img_w_, raw_img_h_, input_w_, input_h_,
-                    d_mean_.get(), d_std_.get(), stream_);
+void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+    depthPreprocess(frame_input_context.d_raw_img_.get(), (float *) d_buffer_[0].get(), raw_img_w_,
+                    raw_img_h_, input_w_, input_h_, d_mean_.get(), d_std_.get(), stream_);
 }
 
-void DepthModel::runInferenceAsync(uchar * d_image) {
+bool DepthModel::runInferenceAsync(FrameInputContext &  frame_input_context,
+                                   InferOutputContext & infer_output_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
-        return;
+        return false;
     }
 
     if (backend_->getBackendType() == BackendType::TENSORRT) {
         // 异步预处理
-        cudaPreProcess(d_image);
+        preProcess(frame_input_context);
         // 异步推理
         backend_->runInferenceAsync(d_buffer_[0].get(), d_buffer_[1].get(), stream_);
         // 异步后处理
-        cudaPostProcess();
-    } else {
-        APP_WARN("Async inference not supported for ONNX Runtime backend");
+        postProcess(frame_input_context, infer_output_context);
+        return true;
     }
+    APP_WARN("Async inference not supported for ONNX Runtime backend");
+    return false;
 }
 
-void DepthModel::cudaPostProcess() {
+void DepthModel::cudaPostProcess(FrameInputContext &  frame_input_context,
+                                 InferOutputContext & infer_output_context) {
+    
     // Use wrapper in op_kernel to perform reductions
     cub_device_reduce_min(d_cub_mid_min_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
                           d_depth_infer_min_value_.get(), input_h_ * input_w_, stream_);
@@ -208,6 +205,14 @@ void DepthModel::cudaPostProcess() {
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
                                raw_img_h_ * raw_img_w_ * sizeof(uchar3), cudaMemcpyDeviceToHost,
                                stream_));
+    feed_infer_output_callback_data_.frame_input_context_ptr  = &frame_input_context;
+    feed_infer_output_callback_data_.infer_output_context_ptr = &infer_output_context;
+    DepthInferOutputSet * depth_infer_set_ptr                 = new DepthInferOutputSet();
+    depth_infer_set_ptr->depth_output_data               = host_pinned_depth_output_data_.get();
+    depth_infer_set_ptr->depth_colormap_data             = host_pinned_depth_colormap_data_.get();
+    feed_infer_output_callback_data_.h_infer_output_data = static_cast<void *>(depth_infer_set_ptr);
+    CHECK_CUDA(cudaStreamAddCallback(stream_, streamCallbackAdapter,
+                                     &feed_infer_output_callback_data_, 0));
 }
 
 void DepthModel::waitAsync() {
@@ -216,16 +221,11 @@ void DepthModel::waitAsync() {
     }
 }
 
-std::pair<cv::Mat, cv::Mat> DepthModel::getPredictResultAsync() {
-    if (backend_->getBackendType() == BackendType::TENSORRT) {
-        auto depth_output =
-            cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
-        auto depth_colormap =
-            cv::Mat(raw_img_h_, raw_img_w_, CV_8UC3, host_pinned_depth_colormap_data_.get());
-        std::pair<cv::Mat, cv::Mat> result = std::make_pair(depth_output, depth_colormap);
-        return result;
-    } else {
-        APP_ERROR("Async result retrieval not supported for ONNX Runtime backend");
-        return {};
-    }
+void DepthModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
+    APP_INFO("Running CPU pre-processing for Depth model...");
+}
+
+void DepthModel::cvMatPostProcess(FrameInputContext &  frame_input_context,
+                                  InferOutputContext & infer_output_context) {
+    APP_INFO("Running CPU post-processing for Depth model...");
 }

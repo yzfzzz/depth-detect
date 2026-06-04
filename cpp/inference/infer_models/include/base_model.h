@@ -1,5 +1,6 @@
 #pragma once
 
+#include "frame.h"
 #include "inference_backend.h"
 #include "logger_manager.h"
 #include "memory.h"
@@ -12,123 +13,118 @@
 #include <string>
 #include <vector>
 
-/**
- * @brief 推理模型基类
- * 
- * 提供统一的模型接口，支持多后端（TensorRT/ONNX Runtime）
- * 自动检测 GPU 可用性并选择合适的后端
- */
+// 推理模型基类，提供统一的模型接口，支持多后端（TensorRT/ONNX Runtime），自动检测 GPU 可用性并选择合适的后端
 class BaseModel {
   public:
-    /**
-     * @brief 构造函数
-     */
     BaseModel();
     virtual ~BaseModel();
 
-    /**
-     * @brief 初始化模型
-     * @return 是否初始化成功
-     */
+    // 初始化模型
     virtual bool initInferenceBackend();
 
-    /**
-     * @brief 获取后端类型
-     */
+    // 获取后端类型
     BackendType getBackendType() const {
         return backend_ ? backend_->getBackendType() : BackendType::NONE;
     }
 
-    /**
-     * @brief 检查模型是否已初始化
-     */
+    // 检查模型是否已初始化
     bool isBackendInitialized() const { return initialized_; }
 
-    /**
-     * @brief 获取输入维度
-     */
+    // 获取输入维度
     std::vector<int> getInputDims() const {
         return backend_ ? backend_->getInputDims() : std::vector<int>{};
     }
 
-    /**
-     * @brief 获取输出维度
-     */
+    // 获取输出维度
     std::vector<int> getOutputDims() const {
         return backend_ ? backend_->getOutputDims() : std::vector<int>{};
     }
 
-    /**
-     * @brief 获取输入数据大小（字节）
-     */
+    // 获取输入数据大小（字节）
     size_t getInputSize() const { return backend_ ? backend_->getInputSize() : 0; }
 
-    /**
-     * @brief 获取输出数据大小（字节）
-     */
+    // 获取输出数据大小（字节）
     size_t getOutputSize() const { return backend_ ? backend_->getOutputSize() : 0; }
 
-    /**
-     * @brief 获取 CUDA 流
-     */
+    // 获取 CUDA 流
     cudaStream_t getStream() const { return stream_; }
 
-    /**
-     * @brief 同步流
-     */
+    // 同步流
     void synchronizeStream() const {
         if (stream_ != 0) {
             CHECK_CUDA(cudaStreamSynchronize(stream_));
         }
     }
   protected:
-    /**
-     * @brief 创建后端（子类可重写以自定义后端选择逻辑）
-     */
+    // 创建后端（子类可重写以自定义后端选择逻辑）
     virtual std::unique_ptr<InferenceBackend> createBackend();
 
-    /**
-     * @brief 检查 GPU 是否可用
-     */
+    // 检查 GPU 是否可用
     static bool isGPUAvailable();
 
     // 子类必须实现的部分
   public:
     virtual void init(const std::string & model_path, int raw_img_w, int raw_img_h);
-    /**
-     * @brief 预处理（子类必须实现）
-     */
-    virtual void preProcess(const cv::Mat & input, void * output) = 0;  // cpu
-    virtual void cudaPreProcess(uchar * input)                    = 0;  // cuda
 
-    /**
-     * @brief 后处理（子类必须实现）
-     */
-    virtual void postProcess(void * output, void * results) = 0;  //cpu
-    virtual void cudaPostProcess()                          = 0;  //gpu
-
-    /**
-     * @brief 执行异步推理（供子类调用）
-     */
-    bool runInferenceAsync(void * input_data, void * output_data) {
-        if (!backend_) {
-            APP_ERROR("Backend not initialized");
-            return false;
+    // 预处理路由（根据后端类型调用不同的预处理方法）
+    virtual void preProcess(FrameInputContext & frame_input_context) {
+        if (backend_->getBackendType() == BackendType::TENSORRT) {
+            cudaPreProcess(frame_input_context);
+        } else {
+            cvMatPreProcess(frame_input_context);
         }
-        return backend_->runInferenceAsync(input_data, output_data, stream_);
     }
 
-    /**
-     * @brief 执行同步推理（供子类调用）
-     */
-    bool runInference(void * input_data, void * output_data) {
-        if (!backend_) {
-            APP_ERROR("Backend not initialized");
-            return false;
+    virtual void cvMatPreProcess(FrameInputContext & frame_input_context) {}
+
+    virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
+
+    // 后处理路由（根据后端类型调用不同的后处理方法）
+    virtual void postProcess(FrameInputContext &  frame_input_context,
+                             InferOutputContext & infer_output_context) {
+        if (backend_->getBackendType() == BackendType::TENSORRT) {
+            cudaPostProcess(frame_input_context, infer_output_context);
+        } else {
+            cvMatPostProcess(frame_input_context, infer_output_context);
         }
-        return backend_->runInference(input_data, output_data);
     }
 
+    virtual void cvMatPostProcess(FrameInputContext &  frame_input_context,
+                                  InferOutputContext & infer_output_context) {
+        APP_ERROR(
+            "CPU post-processing not implemented for base model, please implement in derived "
+            "class.");
+    };
+
+    virtual void cudaPostProcess(FrameInputContext &  frame_input_context,
+                                 InferOutputContext & infer_output_context) {
+        APP_ERROR(
+            "GPU post-processing not implemented for base model, please implement in derived "
+            "class.");
+    }  //gpu
+
+    // 执行异步推理（供子类调用）
+    virtual bool runInferenceAsync(FrameInputContext &  frame_input_context,
+                                   InferOutputContext & infer_output_context) {
+        APP_ERROR(
+            "Asynchronous inference not implemented for base model, please implement in derived "
+            "class.");
+        return false;
+    }
+
+    // 执行同步推理（供子类调用）
+    virtual bool runInference(FrameInputContext &  frame_input_context,
+                              InferOutputContext & infer_output_context) {
+        APP_ERROR(
+            "Synchronous inference not implemented for base model, please implement in derived "
+            "class.");
+        return false;
+    }
+
+    void setFeedInferOutputCallback(
+        std::function<void(FrameInputContext &, InferOutputContext &, void *)> cb) {
+        feed_infer_output_callback_data_.callback = &cb;
+    }
 
   protected:
     // 原始图像分辨率
@@ -143,4 +139,23 @@ class BaseModel {
 
     std::unique_ptr<InferenceBackend> backend_;
     cudaStream_t                      stream_;  // 由 BaseModel 管理
+
+  public:
+    struct FeedInferOutputCallbackData {
+        std::function<void(FrameInputContext &, InferOutputContext &, void *)> * callback;
+        FrameInputContext *  frame_input_context_ptr;
+        InferOutputContext * infer_output_context_ptr;
+        void *               h_infer_output_data;
+    };
+
+    static void CUDART_CB streamCallbackAdapter(cudaStream_t stream,
+                                                cudaError_t  status,
+                                                void *       userData) {
+        auto * data = static_cast<FeedInferOutputCallbackData *>(userData);
+        (*data->callback)(*data->frame_input_context_ptr, *data->infer_output_context_ptr,
+                          data->h_infer_output_data);
+    }
+
+    FeedInferOutputCallbackData feed_infer_output_callback_data_;
+    bool                        is_feed_infer_output_callback_set_ = false;
 };

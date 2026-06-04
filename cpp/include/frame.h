@@ -29,8 +29,10 @@ struct FrameMeta {
 
 struct MotionStateInfoRecord;
 class STrack;
+class Detection;
 
 struct InferOutputContext {
+    std::vector<Detection>                         detections;
     std::vector<STrack>                            tracked_objects;
     cv::Mat                                        result_depth;
     cv::Mat                                        depth_vis;

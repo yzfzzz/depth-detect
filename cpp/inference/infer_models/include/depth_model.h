@@ -4,48 +4,45 @@
 #include "memory.h"
 #include "public.h"
 
+#include <opencv2/core/hal/interface.h>
+
 #include <memory>
 #include <opencv2/opencv.hpp>
 #include <vector>
 
-/**
- * @brief 深度估计模型
- * 
- * 继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
- */
+struct DepthInferOutputSet {
+    uchar *  depth_output_data;
+    uchar3 * depth_colormap_data;
+};
+
+// 深度估计模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class DepthModel : public BaseModel {
   public:
     DepthModel();
     ~DepthModel() override;
 
-    /**
-     * @brief 初始化模型
-     */
+    // 初始化模型
     bool init(const std::string & model_path, int raw_img_w, int raw_img_h, bool is_normalize);
 
-    /**
-     * @brief 同步推理
-     */
-    std::pair<cv::Mat, cv::Mat> runInference(void * input_data, void * output_data);
+    // 同步推理
+    bool runInference(FrameInputContext &  frame_input_context,
+                      InferOutputContext & infer_output_context) override;
 
-    /**
-     * @brief 异步推理
-     */
-    void                        runInferenceAsync(uchar * d_image);
-    void                        waitAsync();
-    std::pair<cv::Mat, cv::Mat> getPredictResultAsync();
+    // 异步推理
+    bool runInferenceAsync(FrameInputContext &  frame_input_context,
+                           InferOutputContext & infer_output_context) override;
+    void waitAsync();
 
   private:
     // BaseModel 接口实现
-    void preProcess(const cv::Mat & input, void * output) override;
-    void postProcess(void * output, void * results) override;
-    void cudaPreProcess(uchar * input) override;
-    void cudaPostProcess() override;
-
-    /**
-     * @brief CPU 预处理（用于 ONNX Runtime）
-     */
-    std::vector<float> preProcessCPU(const cv::Mat & image);
+    // opencv 预处理和后处理（用于 ONNX Runtime）
+    void cvMatPreProcess(FrameInputContext & frame_input_context) override;
+    void cvMatPostProcess(FrameInputContext &  frame_input_context,
+                          InferOutputContext & infer_output_context) override;
+    // CUDA 预处理和后处理（用于 TensorRT）
+    void cudaPreProcess(FrameInputContext & frame_input_context) override;
+    void cudaPostProcess(FrameInputContext &  frame_input_context,
+                         InferOutputContext & infer_output_context) override;
 
   private:
     bool is_normalize_;
