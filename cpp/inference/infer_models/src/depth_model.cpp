@@ -51,9 +51,6 @@ bool DepthModel::init(const std::string & model_path,
 
     // 初始化 CUDA 资源（如果使用 TensorRT）
     if (backend_->getBackendType() == BackendType::TENSORRT) {
-        CHECK_CUDA(cudaSetDevice(0));
-        CHECK_CUDA(cudaStreamCreate(&stream_));
-
         // 分配 GPU 内存
         auto alloc_cuda = [](size_t bytes) {
             void * ptr = nullptr;
