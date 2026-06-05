@@ -54,70 +54,10 @@ void Pipeline::process(FrameInputContext &  frame_input_context,
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
-    const std::vector<int> detect_input_dims   = detector_.getInputDims();
-    const int              MAX_NUM_OUTPUT_BBOX = detector_.MAX_NUM_OUTPUT_BBOX;
-    const int              NUM_BOX_ELEMENT     = detector_.NUM_BOX_ELEMENT;
-    detector_.setFeedInferOutputCallback([detect_input_dims, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT](
-                                             FrameInputContext &  frame_input_context,
-                                             InferOutputContext & infer_output_context,
-                                             void *               detect_output_data) {
-        APP_INFO("detector_.setFeedInferOutputCallback");
-        float *                detect_output_data_float = static_cast<float *>(detect_output_data);
-        std::vector<Detection> vDetections;
-        int count = std::min(static_cast<int>(detect_output_data_float[0]), MAX_NUM_OUTPUT_BBOX);
+    detector_.runInferenceAsync(frame_input_context);
+    depth_model_.runInferenceAsync(frame_input_context);
 
-        for (int i = 0; i < count; i++) {
-            int pos      = 1 + i * NUM_BOX_ELEMENT;
-            int keepFlag = static_cast<int>(detect_output_data_float[pos + 6]);
-
-            if (keepFlag == 1) {
-                Detection det;
-                memcpy(det.bbox.data(), &detect_output_data_float[pos], 4 * sizeof(float));
-                det.conf    = detect_output_data_float[pos + 4];
-                det.classId = static_cast<int>(detect_output_data_float[pos + 5]);
-                vDetections.push_back(det);
-            }
-        }
-        int input_w = detect_input_dims[3];
-        int input_h = detect_input_dims[2];
-
-        // 缩放 bbox 到原始图像尺寸
-        for (auto & det : vDetections) {
-            std::array<float, 4> bbox  = det.bbox;
-            float                r_w   = input_w / (frame_input_context.raw_img.cols * 1.0);
-            float                r_h   = input_h / (frame_input_context.raw_img.rows * 1.0);
-            float                r     = std::min(r_w, r_h);
-            float                pad_h = (input_h - r * frame_input_context.raw_img.rows) / 2;
-            float                pad_w = (input_w - r * frame_input_context.raw_img.cols) / 2;
-
-            bbox[0] = (bbox[0] - pad_w) / r;
-            bbox[1] = (bbox[1] - pad_h) / r;
-            bbox[2] = (bbox[2] - pad_w) / r;
-            bbox[3] = (bbox[3] - pad_h) / r;
-        }
-        infer_output_context.detections = vDetections;
-    });
-
-    depth_model_.setFeedInferOutputCallback([](FrameInputContext &  frame_input_context,
-                                               InferOutputContext & infer_output_context,
-                                               void *               depth_output_data) {
-        DepthInferOutputSet * depth_infer_set =
-            static_cast<DepthInferOutputSet *>(depth_output_data);
-
-        APP_INFO("test depth_model_.setFeedInferOutputCallback depth");
-        infer_output_context.result_depth =
-            cv::Mat(frame_input_context.meta.img_h, frame_input_context.meta.img_w, CV_8UC1,
-                    depth_infer_set->depth_output_data);
-        infer_output_context.depth_vis =
-            cv::Mat(frame_input_context.meta.img_h, frame_input_context.meta.img_w, CV_8UC3,
-                    depth_infer_set->depth_colormap_data);
-        delete depth_infer_set;
-    });
-
-    detector_.runInferenceAsync(frame_input_context, infer_output_context);
-    depth_model_.runInferenceAsync(frame_input_context, infer_output_context);
-
-    detector_.waitAsync();
+    detector_.getInferOutputResult(infer_output_context);
     {
         nvtx3::scoped_range    byte_tracker_scope("byte tracker process");
         std::vector<Detection> res = infer_output_context.detections;
@@ -133,7 +73,7 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
         infer_output_context.tracked_objects = tracker_.update(objects);
     }
 
-    depth_model_.waitAsync();
+    depth_model_.getInferOutputResult(infer_output_context);
 
     this->postProcess(frame_input_context, infer_output_context);
 }

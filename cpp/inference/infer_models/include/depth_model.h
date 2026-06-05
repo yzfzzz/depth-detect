@@ -25,24 +25,21 @@ class DepthModel : public BaseModel {
     bool init(const std::string & model_path, int raw_img_w, int raw_img_h, bool is_normalize);
 
     // 同步推理
-    bool runInference(FrameInputContext &  frame_input_context,
-                      InferOutputContext & infer_output_context) override;
+    bool runInference(FrameInputContext & frame_input_context) override;
 
     // 异步推理
-    bool runInferenceAsync(FrameInputContext &  frame_input_context,
-                           InferOutputContext & infer_output_context) override;
-    void waitAsync();
+    bool runInferenceAsync(FrameInputContext & frame_input_context) override;
+    void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
   private:
     // BaseModel 接口实现
     // opencv 预处理和后处理（用于 ONNX Runtime）
     void cvMatPreProcess(FrameInputContext & frame_input_context) override;
-    void cvMatPostProcess(FrameInputContext &  frame_input_context,
-                          InferOutputContext & infer_output_context) override;
+    void cvMatPostProcess(FrameInputContext & frame_input_context) override;
     // CUDA 预处理和后处理（用于 TensorRT）
     void cudaPreProcess(FrameInputContext & frame_input_context) override;
-    void cudaPostProcess(FrameInputContext &  frame_input_context,
-                         InferOutputContext & infer_output_context) override;
+    void cudaPostProcess(FrameInputContext & frame_input_context) override;
+
 
   private:
     bool is_normalize_;

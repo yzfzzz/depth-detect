@@ -96,8 +96,7 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
                   d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 }
 
-void YoloDetectModel::cudaPostProcess(FrameInputContext &  frame_input_context,
-                                      InferOutputContext & infer_output_context) {
+void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // 转置
     transpose(static_cast<float *>(d_buffer_[1].get()), d_transpose_.get(), output_candidates_,
               num_class_ + 4, stream_);
@@ -113,15 +112,9 @@ void YoloDetectModel::cudaPostProcess(FrameInputContext &  frame_input_context,
     CHECK_CUDA(cudaMemcpyAsync(h_output_data_.get(), d_decode_.get(),
                                (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                                cudaMemcpyDeviceToHost, stream_));
-    feed_infer_output_callback_data_.frame_input_context_ptr  = &frame_input_context;
-    feed_infer_output_callback_data_.infer_output_context_ptr = &infer_output_context;
-    feed_infer_output_callback_data_.h_infer_output_data =
-        static_cast<void *>(h_output_data_.get());
-    cudaStreamAddCallback(stream_, streamCallbackAdapter, &feed_infer_output_callback_data_, 0);
 }
 
-bool YoloDetectModel::runInferenceAsync(FrameInputContext &  frame_input_context,
-                                        InferOutputContext & infer_output_context) {
+bool YoloDetectModel::runInferenceAsync(FrameInputContext & frame_input_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
         return false;
@@ -132,12 +125,41 @@ bool YoloDetectModel::runInferenceAsync(FrameInputContext &  frame_input_context
     // 异步推理
     backend_->runInferenceAsync(d_buffer_[0].get(), d_buffer_[1].get(), stream_);
     // 异步后处理
-    cudaPostProcess(frame_input_context, infer_output_context);
+    cudaPostProcess(frame_input_context);
     return true;
 }
 
-bool YoloDetectModel::runInference(FrameInputContext &  frame_input_context,
-                                   InferOutputContext & infer_output_context) {
+void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+    waitAsync();
+    std::vector<Detection> vDetections;
+    int count = std::min(static_cast<int>(h_output_data_.get()[0]), MAX_NUM_OUTPUT_BBOX);
+
+    for (int i = 0; i < count; i++) {
+        int pos      = 1 + i * NUM_BOX_ELEMENT;
+        int keepFlag = static_cast<int>(h_output_data_.get()[pos + 6]);
+
+        if (keepFlag == 1) {
+            Detection det;
+            memcpy(det.bbox.data(), &h_output_data_.get()[pos], 4 * sizeof(float));
+            det.conf    = h_output_data_.get()[pos + 4];
+            det.classId = static_cast<int>(h_output_data_.get()[pos + 5]);
+            float r_w   = input_w_ / (raw_img_w_ * 1.0);
+            float r_h   = input_h_ / (raw_img_h_ * 1.0);
+            float r     = std::min(r_w, r_h);
+            float pad_h = (input_h_ - r * raw_img_h_) / 2;
+            float pad_w = (input_w_ - r * raw_img_w_) / 2;
+            det.bbox[0] = (det.bbox[0] - pad_w) / r;
+            det.bbox[1] = (det.bbox[1] - pad_h) / r;
+            det.bbox[2] = (det.bbox[2] - pad_w) / r;
+            det.bbox[3] = (det.bbox[3] - pad_h) / r;
+            vDetections.push_back(det);
+        }
+    }
+
+    infer_output_context.detections = vDetections;
+}
+
+bool YoloDetectModel::runInference(FrameInputContext & frame_input_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
         return false;
@@ -146,17 +168,10 @@ bool YoloDetectModel::runInference(FrameInputContext &  frame_input_context,
     return false;
 }
 
-void YoloDetectModel::waitAsync() {
-    if (stream_ != 0) {
-        cudaStreamSynchronize(stream_);
-    }
-}
-
 void YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
     APP_INFO("Running CPU pre-processing for YOLO model...");
 }
 
-void YoloDetectModel::cvMatPostProcess(FrameInputContext &  frame_input_context,
-                                       InferOutputContext & infer_output_context) {
+void YoloDetectModel::cvMatPostProcess(FrameInputContext & frame_input_context) {
     APP_INFO("Running CPU post-processing for YOLO model...");
 }

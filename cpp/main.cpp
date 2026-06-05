@@ -25,6 +25,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      DrawingManager &               drawing_manager,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us) {
+    if (infer_output_context.tracked_objects.size() <= 0) {
+        APP_WARN("tracked_objects size is 0, skip drawing!");
+    }
     for (int i = 0; i < infer_output_context.tracked_objects.size(); i++) {
         auto & track = infer_output_context.tracked_objects[i];
         if (track.tlwh_[2] * track.tlwh_[3] <= 20) {

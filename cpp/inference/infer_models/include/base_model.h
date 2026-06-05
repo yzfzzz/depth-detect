@@ -62,6 +62,12 @@ class BaseModel {
     // 检查 GPU 是否可用
     static bool isGPUAvailable();
 
+    void waitAsync() {
+        if (stream_ != 0) {
+            CHECK_CUDA(cudaStreamSynchronize(stream_));
+        }
+    }
+
     // 子类必须实现的部分
   public:
     virtual void init(const std::string & model_path, int raw_img_w, int raw_img_h);
@@ -80,32 +86,28 @@ class BaseModel {
     virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
 
     // 后处理路由（根据后端类型调用不同的后处理方法）
-    virtual void postProcess(FrameInputContext &  frame_input_context,
-                             InferOutputContext & infer_output_context) {
+    virtual void postProcess(FrameInputContext & frame_input_context) {
         if (backend_->getBackendType() == BackendType::TENSORRT) {
-            cudaPostProcess(frame_input_context, infer_output_context);
+            cudaPostProcess(frame_input_context);
         } else {
-            cvMatPostProcess(frame_input_context, infer_output_context);
+            cvMatPostProcess(frame_input_context);
         }
     }
 
-    virtual void cvMatPostProcess(FrameInputContext &  frame_input_context,
-                                  InferOutputContext & infer_output_context) {
+    virtual void cvMatPostProcess(FrameInputContext & frame_input_context) {
         APP_ERROR(
             "CPU post-processing not implemented for base model, please implement in derived "
             "class.");
     };
 
-    virtual void cudaPostProcess(FrameInputContext &  frame_input_context,
-                                 InferOutputContext & infer_output_context) {
+    virtual void cudaPostProcess(FrameInputContext & frame_input_context) {
         APP_ERROR(
             "GPU post-processing not implemented for base model, please implement in derived "
             "class.");
     }  //gpu
 
     // 执行异步推理（供子类调用）
-    virtual bool runInferenceAsync(FrameInputContext &  frame_input_context,
-                                   InferOutputContext & infer_output_context) {
+    virtual bool runInferenceAsync(FrameInputContext & frame_input_context) {
         APP_ERROR(
             "Asynchronous inference not implemented for base model, please implement in derived "
             "class.");
@@ -113,17 +115,17 @@ class BaseModel {
     }
 
     // 执行同步推理（供子类调用）
-    virtual bool runInference(FrameInputContext &  frame_input_context,
-                              InferOutputContext & infer_output_context) {
+    virtual bool runInference(FrameInputContext & frame_input_context) {
         APP_ERROR(
             "Synchronous inference not implemented for base model, please implement in derived "
             "class.");
         return false;
     }
 
-    void setFeedInferOutputCallback(
-        std::function<void(FrameInputContext &, InferOutputContext &, void *)> cb) {
-        feed_infer_output_callback_data_.callback = &cb;
+    virtual void getInferOutputResult(InferOutputContext & infer_output_context) {
+        APP_ERROR(
+            "getInferOutput not implemented for base model, please implement in derived class if "
+            "using asynchronous inference.");
     }
 
   protected:
@@ -139,23 +141,4 @@ class BaseModel {
 
     std::unique_ptr<InferenceBackend> backend_;
     cudaStream_t                      stream_;  // 由 BaseModel 管理
-
-  public:
-    struct FeedInferOutputCallbackData {
-        std::function<void(FrameInputContext &, InferOutputContext &, void *)> * callback;
-        FrameInputContext *  frame_input_context_ptr;
-        InferOutputContext * infer_output_context_ptr;
-        void *               h_infer_output_data;
-    };
-
-    static void CUDART_CB streamCallbackAdapter(cudaStream_t stream,
-                                                cudaError_t  status,
-                                                void *       userData) {
-        auto * data = static_cast<FeedInferOutputCallbackData *>(userData);
-        (*data->callback)(*data->frame_input_context_ptr, *data->infer_output_context_ptr,
-                          data->h_infer_output_data);
-    }
-
-    FeedInferOutputCallbackData feed_infer_output_callback_data_;
-    bool                        is_feed_infer_output_callback_set_ = false;
 };

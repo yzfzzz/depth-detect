@@ -147,8 +147,7 @@ bool DepthModel::init(const std::string & model_path,
 //     return input_tensor;
 // }
 
-bool DepthModel::runInference(FrameInputContext &  frame_input_context,
-                              InferOutputContext & infer_output_context) {
+bool DepthModel::runInference(FrameInputContext & frame_input_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
         return {};
@@ -165,8 +164,7 @@ void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
                     raw_img_h_, input_w_, input_h_, d_mean_.get(), d_std_.get(), stream_);
 }
 
-bool DepthModel::runInferenceAsync(FrameInputContext &  frame_input_context,
-                                   InferOutputContext & infer_output_context) {
+bool DepthModel::runInferenceAsync(FrameInputContext & frame_input_context) {
     if (!isBackendInitialized()) {
         APP_ERROR("Model not initialized");
         return false;
@@ -178,16 +176,14 @@ bool DepthModel::runInferenceAsync(FrameInputContext &  frame_input_context,
         // 异步推理
         backend_->runInferenceAsync(d_buffer_[0].get(), d_buffer_[1].get(), stream_);
         // 异步后处理
-        postProcess(frame_input_context, infer_output_context);
+        postProcess(frame_input_context);
         return true;
     }
     APP_WARN("Async inference not supported for ONNX Runtime backend");
     return false;
 }
 
-void DepthModel::cudaPostProcess(FrameInputContext &  frame_input_context,
-                                 InferOutputContext & infer_output_context) {
-    
+void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // Use wrapper in op_kernel to perform reductions
     cub_device_reduce_min(d_cub_mid_min_.get(), cub_bytes_, (float *) d_buffer_[1].get(),
                           d_depth_infer_min_value_.get(), input_h_ * input_w_, stream_);
@@ -205,27 +201,21 @@ void DepthModel::cudaPostProcess(FrameInputContext &  frame_input_context,
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
                                raw_img_h_ * raw_img_w_ * sizeof(uchar3), cudaMemcpyDeviceToHost,
                                stream_));
-    feed_infer_output_callback_data_.frame_input_context_ptr  = &frame_input_context;
-    feed_infer_output_callback_data_.infer_output_context_ptr = &infer_output_context;
-    DepthInferOutputSet * depth_infer_set_ptr                 = new DepthInferOutputSet();
-    depth_infer_set_ptr->depth_output_data               = host_pinned_depth_output_data_.get();
-    depth_infer_set_ptr->depth_colormap_data             = host_pinned_depth_colormap_data_.get();
-    feed_infer_output_callback_data_.h_infer_output_data = static_cast<void *>(depth_infer_set_ptr);
-    CHECK_CUDA(cudaStreamAddCallback(stream_, streamCallbackAdapter,
-                                     &feed_infer_output_callback_data_, 0));
 }
 
-void DepthModel::waitAsync() {
-    if (stream_ != 0) {
-        CHECK_CUDA(cudaStreamSynchronize(stream_));
-    }
+void DepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+    waitAsync();
+    infer_output_context.result_depth =
+        cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
+    infer_output_context.depth_vis =
+        cv::Mat(raw_img_h_, raw_img_w_, CV_8UC3, host_pinned_depth_colormap_data_.get());
 }
+
 
 void DepthModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
     APP_INFO("Running CPU pre-processing for Depth model...");
 }
 
-void DepthModel::cvMatPostProcess(FrameInputContext &  frame_input_context,
-                                  InferOutputContext & infer_output_context) {
+void DepthModel::cvMatPostProcess(FrameInputContext & frame_input_context) {
     APP_INFO("Running CPU post-processing for Depth model...");
 }
