@@ -24,7 +24,7 @@ class BaseModel {
 
     // 获取后端类型
     BackendType getBackendType() const {
-        return backend_ ? backend_->getBackendType() : BackendType::NONE;
+        return backend_ ? backend_->getBackendType() : BackendType::Unkown;
     }
 
     // 检查模型是否已初始化
@@ -70,31 +70,31 @@ class BaseModel {
 
     // 子类必须实现的部分
   public:
-    virtual void init(const std::string & model_path, int raw_img_w, int raw_img_h);
+    virtual void init(std::map<std::string, std::string> model_path, int raw_img_w, int raw_img_h);
 
     // 预处理路由（根据后端类型调用不同的预处理方法）
-    virtual void preProcess(FrameInputContext & frame_input_context) {
-        if (backend_->getBackendType() == BackendType::TENSORRT) {
-            cudaPreProcess(frame_input_context);
-        } else {
-            cvMatPreProcess(frame_input_context);
-        }
-    }
+    // virtual void preProcess(FrameInputContext & frame_input_context) {
+    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
+    //         cudaPreProcess(frame_input_context);
+    //     } else {
+    //         cvMatPreProcess(frame_input_context);
+    //     }
+    // }
 
     virtual void cvMatPreProcess(FrameInputContext & frame_input_context) {}
 
     virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
 
     // 后处理路由（根据后端类型调用不同的后处理方法）
-    virtual void postProcess(FrameInputContext & frame_input_context) {
-        if (backend_->getBackendType() == BackendType::TENSORRT) {
-            cudaPostProcess(frame_input_context);
-        } else {
-            cvMatPostProcess(frame_input_context);
-        }
-    }
+    // virtual void postProcess(FrameInputContext & frame_input_context) {
+    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
+    //         cudaPostProcess(frame_input_context);
+    //     } else {
+    //         cvMatPostProcess(frame_input_context);
+    //     }
+    // }
 
-    virtual void cvMatPostProcess(FrameInputContext & frame_input_context) {
+    virtual void cvMatPostProcess(InferOutputContext & infer_output_context) {
         APP_ERROR(
             "CPU post-processing not implemented for base model, please implement in derived "
             "class.");
@@ -115,7 +115,8 @@ class BaseModel {
     }
 
     // 执行同步推理（供子类调用）
-    virtual bool runInference(FrameInputContext & frame_input_context) {
+    virtual bool runInference(FrameInputContext &  frame_input_context,
+                              InferOutputContext & infer_output_context) {
         APP_ERROR(
             "Synchronous inference not implemented for base model, please implement in derived "
             "class.");
@@ -134,10 +135,10 @@ class BaseModel {
     int raw_img_h_;
 
     // 模型输入分辨率
-    int         input_h_;
-    int         input_w_;
-    std::string model_path_;
-    bool        initialized_ = false;
+    int                                input_h_;
+    int                                input_w_;
+    std::map<std::string, std::string> model_path_;
+    bool                               initialized_ = false;
 
     std::unique_ptr<InferenceBackend> backend_;
     cudaStream_t                      stream_;  // 由 BaseModel 管理

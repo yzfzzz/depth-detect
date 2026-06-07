@@ -1,5 +1,6 @@
 #include "base_model.h"
 
+#include "onnxruntime_backend.h"
 #include "tensorrt_backend.h"
 
 #include <cuda_runtime_api.h>
@@ -15,7 +16,7 @@ BaseModel::~BaseModel() {
     }
 }
 
-void BaseModel::init(const std::string & model_path, int raw_img_w, int raw_img_h) {
+void BaseModel::init(std::map<std::string, std::string> model_path, int raw_img_w, int raw_img_h) {
     model_path_ = model_path;
     raw_img_w_  = raw_img_w;
     raw_img_h_  = raw_img_h;
@@ -31,22 +32,31 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend() {
     // 优先尝试 TensorRT（如果 GPU 可用且用户偏好 GPU）
     if (isGPUAvailable()) {
         APP_INFO("GPU detected, attempting to use TensorRT backend...");
-        // TODO: 需要自动检测gpu id
-        auto trt_backend = std::make_unique<TensorRTBackend>(0);
-
-        if (trt_backend->loadModel(model_path_)) {
-            APP_INFO("TensorRT backend initialized successfully");
-
-            // 创建 CUDA 流
-            CHECK_CUDA(cudaSetDevice(0));
-            CHECK_CUDA(cudaStreamCreate(&stream_));
-            APP_INFO("CUDA stream created successfully");
-
-            return trt_backend;
-        } else {
-            APP_ERROR("Failed to initialize TensorRT backend, falling back to ONNX Runtime");
+        auto it = model_path_.find("engine");
+        if (it != model_path_.end()) {
+            // TODO: 需要自动检测gpu id
+            auto trt_backend = std::make_unique<TensorRTBackend>(0);
+            if (trt_backend->loadModel(it->second)) {
+                APP_INFO("TensorRT backend initialized successfully");
+                // 创建 CUDA 流
+                CHECK_CUDA(cudaSetDevice(0));
+                CHECK_CUDA(cudaStreamCreate(&stream_));
+                APP_INFO("CUDA stream created successfully");
+                return trt_backend;
+            }
+        }
+        APP_WARN("TensorRT engine path not found, falling back to ONNX Runtime");
+    }
+    auto it = model_path_.find("onnx");
+    if (it != model_path_.end()) {
+        auto onnx_backend = std::make_unique<OnnxRuntimeBackend>();
+        if (onnx_backend->loadModel(it->second)) {
+            APP_INFO("ONNX Runtime CPU backend initialized successfully");
+            return onnx_backend;
         }
     }
+    APP_ERROR("ONNX Runtime CPU backend path not found in {}, failed to initialize any backend",
+              it->second);
     return nullptr;
 }
 
@@ -57,12 +67,14 @@ bool BaseModel::initInferenceBackend() {
     }
 
     // 检查模型文件是否存在
-    std::ifstream file(model_path_);
-    if (!file.good()) {
-        APP_ERROR("Model file not found: {}", model_path_);
-        return false;
+    for (auto & [type, path] : model_path_) {
+        std::ifstream file(path);
+        if (!file.good()) {
+            APP_ERROR("Model file not found: type={}, path: {}", type, path);
+            return false;
+        }
+        file.close();
     }
-    file.close();
 
     // 创建后端
     backend_ = createBackend();
