@@ -17,15 +17,16 @@ struct Detection {
 // YOLO 目标检测模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class YoloDetectModel : public BaseModel {
   public:
-    void init(const std::string & model_path,
-              int                 raw_img_w,
-              int                 raw_img_h,
-              float               nms_thresh,
-              float               conf_thresh,
-              int                 num_class);
+    void init(std::map<std::string, std::string> model_path,
+              int                                raw_img_w,
+              int                                raw_img_h,
+              float                              nms_thresh,
+              float                              conf_thresh,
+              int                                num_class);
 
     // 同步推理
-    bool runInference(FrameInputContext & frame_input_context) override;
+    bool runInference(FrameInputContext &  frame_input_context,
+                      InferOutputContext & infer_output_context) override;
 
     // 异步推理
     bool runInferenceAsync(FrameInputContext & frame_input_context) override;
@@ -36,7 +37,7 @@ class YoloDetectModel : public BaseModel {
     // BaseModel 接口实现
     // opencv 预处理和后处理（用于 ONNX Runtime）
     void cvMatPreProcess(FrameInputContext & frame_input_context) override;
-    void cvMatPostProcess(FrameInputContext & frame_input_context) override;
+    void cvMatPostProcess(InferOutputContext & infer_output_context) override;
     // CUDA 预处理和后处理（用于 TensorRT）
     void cudaPreProcess(FrameInputContext & frame_input_context) override;
     void cudaPostProcess(FrameInputContext & frame_input_context) override;
@@ -60,4 +61,8 @@ class YoloDetectModel : public BaseModel {
     // 常量
     static constexpr int MAX_NUM_OUTPUT_BBOX = 1000;
     static constexpr int NUM_BOX_ELEMENT     = 7;
+
+  public:
+    std::vector<float> onnx_output_data_;
+    std::vector<float> onnx_input_tensor_;
 };
