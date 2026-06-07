@@ -26,7 +26,7 @@ class TensorRTBackend : public InferenceBackend {
     size_t           getInputSize() const override;
     size_t           getOutputSize() const override;
 
-    BackendType getBackendType() const override { return BackendType::TENSORRT; }
+    BackendType getBackendType() const override { return BackendType::TensorRT; }
 
     bool isAvailable() const override;
 

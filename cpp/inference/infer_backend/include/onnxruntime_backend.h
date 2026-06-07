@@ -24,7 +24,7 @@ class OnnxRuntimeBackend : public InferenceBackend {
     size_t           getInputSize() const override;
     size_t           getOutputSize() const override;
 
-    BackendType getBackendType() const override { return BackendType::ONNX_CPU; }
+    BackendType getBackendType() const override { return BackendType::OnnxRuntime; }
 
     bool isAvailable() const override;
 

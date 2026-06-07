@@ -8,16 +8,16 @@
 #include <vector>
 
 enum class BackendType {
-    TENSORRT,  // TensorRT(GPU)
-    ONNX_CPU,  // ONNX Runtime(CPU)
-    NONE,
+    TensorRT,     // TensorRT(GPU)
+    OnnxRuntime,  // ONNX Runtime(CPU)
+    Unkown,
 };
 
 static inline std::string backendTypeToString(BackendType type) {
     switch (type) {
-        case BackendType::TENSORRT:
+        case BackendType::TensorRT:
             return "TensorRT";
-        case BackendType::ONNX_CPU:
+        case BackendType::OnnxRuntime:
             return "ONNX Runtime (CPU)";
         default:
             return "Unknown";
