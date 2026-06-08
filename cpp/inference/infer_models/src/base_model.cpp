@@ -53,7 +53,7 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
     // 优先尝试 TensorRT（如果 GPU 可用且用户偏好 GPU）
     APP_INFO("Checking for GPU availability: {}", isGPUAvailable() ? "Yes" : "No");
     APP_INFO("GPU preference: {}", use_gpu ? "Yes" : "No");
-    if (isGPUAvailable() && use_gpu) {
+    if (use_gpu && isGPUAvailable()) {
         auto it = model_path.find("engine");
         if (it != model_path.end()) {
             // TODO: 需要自动检测gpu id

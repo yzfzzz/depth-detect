@@ -58,9 +58,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     return out_frame;
 }
 
-int run(char * video_path) {
+int run(char * video_path, char * config_path) {
     // 读取配置文件 - 使用单例模式
-    ConfigManager & config_manager = ConfigManager::getInstance("config.yaml");
+    ConfigManager & config_manager = ConfigManager::getInstance(config_path);
     // 初始化日志系统
     LoggerManager::getInstance(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
@@ -152,12 +152,12 @@ int run(char * video_path) {
 }
 
 int main(int argc, char * argv[]) {
-    if (argc != 2) {
+    if (argc != 3) {
         APP_ERROR("arguments not right!");
-        APP_ERROR("Usage: ./main [video path]");
-        APP_ERROR("Example: ./main ./videos/demo.mp4");
+        APP_ERROR("Usage: ./main [video path] [config yaml path]");
+        APP_ERROR("Example: ./main ./videos/demo.mp4 ./config.yaml");
         return -1;
     }
 
-    return run(argv[1]);
+    return run(argv[1], argv[2]);
 }
