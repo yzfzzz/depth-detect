@@ -1,4 +1,4 @@
-name: 🚀 CI Pipeline Compile Check
+name: 🚀 CI Pipeline
 
 on:
   push:
@@ -160,6 +160,7 @@ jobs:
             cd build && \
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
             make -j\$(nproc) && \
+            cp ./*.so ../bin/ && \
             echo "✅ Compilation successful"
           "
       - name: List build artifacts
@@ -205,6 +206,8 @@ jobs:
             "$IMAGE" bash -lc "
               cd bin && \
               chmod +x ./main && \
+              export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
               echo '🚀 Running ./main ../data/car.avi ./ci_config.yaml' && \
-              timeout 2400 ./main ../data/car.avi ./ci_config.yaml || echo '⚠️ Run exited or timed out'
+              ./main ../data/car.avi ./ci_config.yaml && \
+              echo '🎉 Test successful'
             "
