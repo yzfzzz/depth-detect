@@ -211,3 +211,10 @@ jobs:
               ./main ../data/car.avi ./ci_config.yaml && \
               echo '🎉 Test successful'
             "
+      - name: Upload run logs
+        if: success() || failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: depth-detect-run-logs-${{ needs.detect_changes.outputs.image_tag }}
+          path: bin/latest.log
+          retention-days: 7
