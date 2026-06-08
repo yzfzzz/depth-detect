@@ -7,6 +7,8 @@ on:
       - '.github/workflows/**'
       - 'cpp/**'
       - 'benchmark/**'
+      - 'format.sh'
+      - 'start.sh'
     branches: [ main, develop, V2.*, V1.*, feat/*, fixbug/* ]
   pull_request:
     branches: [ main, develop, V2.*, V1.* ]
@@ -15,6 +17,8 @@ on:
       - '.github/workflows/**'
       - 'cpp/**'
       - 'benchmark/**'
+      - 'format.sh'
+      - 'start.sh'
   workflow_dispatch:
 
 permissions:
@@ -42,6 +46,8 @@ jobs:
               - 'Dockerfile'
               - '.github/workflows/**'
               - 'cpp/**'
+              - 'format.sh'
+              - 'start.sh'
             compile:
               - 'cpp/**'
               - '.github/workflows/**'
