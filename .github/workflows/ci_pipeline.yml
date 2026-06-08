@@ -148,9 +148,8 @@ jobs:
       - name: Run compile inside image
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
-          docker run --rm -v "${{ github.workspace }}":/work -w /work "$IMAGE" bash -lc "\
-            git config --global --add safe.directory /work && \  
-            git submodule update --init --recursive && \
+          docker run --rm -v "${{ github.workspace }}":/home/depth-detect/work -w /home/depth-detect/work "$IMAGE" bash -lc "\
+            chmod +x ./start.sh && ./start.sh && \
             mkdir -p build && \
             cd build && \
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
