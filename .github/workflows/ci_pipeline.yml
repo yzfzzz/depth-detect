@@ -161,6 +161,7 @@ jobs:
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
             make -j\$(nproc) && \
             cp ./*.so ../bin/ && \
+            cp ../third_party/onnxruntime/lib/libonnxruntime.so ../bin/ && \
             echo "✅ Compilation successful"
           "
       - name: List build artifacts
