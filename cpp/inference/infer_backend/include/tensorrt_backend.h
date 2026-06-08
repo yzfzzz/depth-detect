@@ -23,8 +23,8 @@ class TensorRTBackend : public InferenceBackend {
     bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
     std::vector<int> getInputDims() const override;
     std::vector<int> getOutputDims() const override;
-    size_t           getInputSize() const override;
-    size_t           getOutputSize() const override;
+    size_t           getInputByteSize() const override;
+    size_t           getOutputByteSize() const override;
 
     BackendType getBackendType() const override { return BackendType::TensorRT; }
 
@@ -48,8 +48,8 @@ class TensorRTBackend : public InferenceBackend {
     // 维度信息
     std::vector<int> input_dims_;
     std::vector<int> output_dims_;
-    size_t           input_size_;
-    size_t           output_size_;
+    size_t           input_byte_size_;
+    size_t           output_byte_size_;
 
     // Tensor 名称
     std::string input_tensor_name_;

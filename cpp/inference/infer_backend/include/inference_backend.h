@@ -45,10 +45,10 @@ class InferenceBackend {
     virtual std::vector<int> getOutputDims() const = 0;
 
     // 获取输入数据大小（字节）
-    virtual size_t getInputSize() const = 0;
+    virtual size_t getInputByteSize() const = 0;
 
     // 获取输出数据大小（字节）
-    virtual size_t getOutputSize() const = 0;
+    virtual size_t getOutputByteSize() const = 0;
 
     // 获取后端类型
     virtual BackendType getBackendType() const = 0;

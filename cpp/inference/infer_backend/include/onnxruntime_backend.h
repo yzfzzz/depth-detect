@@ -21,8 +21,8 @@ class OnnxRuntimeBackend : public InferenceBackend {
     bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
     std::vector<int> getInputDims() const override;
     std::vector<int> getOutputDims() const override;
-    size_t           getInputSize() const override;
-    size_t           getOutputSize() const override;
+    size_t           getInputByteSize() const override;
+    size_t           getOutputByteSize() const override;
 
     BackendType getBackendType() const override { return BackendType::OnnxRuntime; }
 
@@ -36,8 +36,8 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     std::vector<int64_t> input_dims_;
     std::vector<int64_t> output_dims_;
-    size_t               input_size_;
-    size_t               output_size_;
+    size_t               input_byte_size_;
+    size_t               output_byte_size_;
 
     std::string input_name_;
     std::string output_name_;
