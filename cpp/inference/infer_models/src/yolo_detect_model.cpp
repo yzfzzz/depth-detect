@@ -14,34 +14,18 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            int                                raw_img_h,
                            float                              nms_thresh,
                            float                              conf_thresh,
-                           int                                num_class) {
-    model_path_  = model_path;
-    raw_img_w_   = raw_img_w;
-    raw_img_h_   = raw_img_h;
+                           int                                num_class,
+                           bool                               use_gpu) {
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
     nms_thresh_  = nms_thresh;
     conf_thresh_ = conf_thresh;
     num_class_   = num_class;
-    // 初始化基类
-    if (!initInferenceBackend()) {
-        APP_ERROR("Failed to initialize base model");
-        return;
-    }
-
-    // 获取输入输出维度
-    auto input_dims  = getInputDims();
-    auto output_dims = getOutputDims();
-
-    // 设置输入尺寸
-    input_h_ = input_dims[2];
-    input_w_ = input_dims[3];
-
-    APP_INFO("YOLO model input size: {}x{}", input_w_, input_h_);
 
     // 计算输出候选框数量（YOLOv8 输出格式: [1, num_class+4, candidates]）
-    output_candidates_ = output_dims[2];
+    output_candidates_ = getOutputDims()[2];
 
     // 计算输出数据总大小
-    size_t output_size = getOutputSize() / sizeof(float);
+    size_t output_size = getOutputByteSize() / sizeof(float);
 
     APP_INFO("YOLO model output candidates: {}", output_candidates_);
     APP_INFO("YOLO model output size: {}", output_size);
@@ -58,7 +42,7 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
         // 格式: [count, bbox1, bbox2, ...]
         // 每个 bbox: [x1, y1, x2, y2, conf, class_id, keep_flag]
 
-        h_output_data_.reset(
+        h_infer_out_pinned_.reset(
             static_cast<float *>(alloc_cuda_pinned(h_output_data_size * sizeof(float))));
 
         // 定义分配设备内存的 lambda 函数
@@ -69,11 +53,11 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
         };
 
         // 准备设备输入输出缓冲区
-        // d_buffer_[0]: 输入缓冲区 [1, 3, H, W]
-        d_buffer_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
+        // d_infer_io_[0]: 输入缓冲区 [1, 3, H, W]
+        d_infer_io_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
 
-        // d_buffer_[1]: 输出缓冲区 [1, num_class+4, candidates]
-        d_buffer_[1].reset(alloc_cuda(output_size));
+        // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
+        d_infer_io_[1].reset(alloc_cuda(output_size));
 
         // 转置缓冲区（用于后处理）
         d_transpose_.reset(static_cast<float *>(alloc_cuda(output_size)));
@@ -92,20 +76,20 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 
     } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         // ONNX Runtime CPU 后端，准备主机输出数据空间
-        onnx_output_data_.resize(output_size);
+        h_infer_out_.resize(output_size);
     }
 
     APP_INFO("YOLO model initialized successfully");
 }
 
 void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
-    preprocess_v2(static_cast<float *>(d_buffer_[0].get()), frame_input_context.d_raw_img_.get(),
+    preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
                   d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 }
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // 转置
-    transpose(static_cast<float *>(d_buffer_[1].get()), d_transpose_.get(), output_candidates_,
+    transpose(static_cast<float *>(d_infer_io_[1].get()), d_transpose_.get(), output_candidates_,
               num_class_ + 4, stream_);
 
     // 解码
@@ -116,40 +100,25 @@ void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     nms(d_decode_.get(), nms_thresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 
     // 拷贝到主机
-    CHECK_CUDA(cudaMemcpyAsync(h_output_data_.get(), d_decode_.get(),
+    CHECK_CUDA(cudaMemcpyAsync(h_infer_out_pinned_.get(), d_decode_.get(),
                                (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                                cudaMemcpyDeviceToHost, stream_));
 }
 
-bool YoloDetectModel::runInferenceAsync(FrameInputContext & frame_input_context) {
-    if (!isBackendInitialized()) {
-        APP_ERROR("Model not initialized");
-        return false;
-    }
-
-    // 异步预处理
-    cudaPreProcess(frame_input_context);
-    // 异步推理
-    backend_->runInferenceAsync(d_buffer_[0].get(), d_buffer_[1].get(), stream_);
-    // 异步后处理
-    cudaPostProcess(frame_input_context);
-    return true;
-}
-
 void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_context) {
-    waitAsync();
+    synchronizeStream();
     std::vector<Detection> vDetections;
-    int count = std::min(static_cast<int>(h_output_data_.get()[0]), MAX_NUM_OUTPUT_BBOX);
+    int count = std::min(static_cast<int>(h_infer_out_pinned_.get()[0]), MAX_NUM_OUTPUT_BBOX);
 
     for (int i = 0; i < count; i++) {
         int pos      = 1 + i * NUM_BOX_ELEMENT;
-        int keepFlag = static_cast<int>(h_output_data_.get()[pos + 6]);
+        int keepFlag = static_cast<int>(h_infer_out_pinned_.get()[pos + 6]);
 
         if (keepFlag == 1) {
             Detection det;
-            memcpy(det.bbox.data(), &h_output_data_.get()[pos], 4 * sizeof(float));
-            det.conf    = h_output_data_.get()[pos + 4];
-            det.classId = static_cast<int>(h_output_data_.get()[pos + 5]);
+            memcpy(det.bbox.data(), &h_infer_out_pinned_.get()[pos], 4 * sizeof(float));
+            det.conf    = h_infer_out_pinned_.get()[pos + 4];
+            det.classId = static_cast<int>(h_infer_out_pinned_.get()[pos + 5]);
             float r_w   = input_w_ / (raw_img_w_ * 1.0);
             float r_h   = input_h_ / (raw_img_h_ * 1.0);
             float r     = std::min(r_w, r_h);
@@ -166,22 +135,7 @@ void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_con
     infer_output_context.detections = vDetections;
 }
 
-bool YoloDetectModel::runInference(FrameInputContext &  frame_input_context,
-                                   InferOutputContext & infer_output_context) {
-    if (!isBackendInitialized()) {
-        APP_ERROR("Model not initialized");
-        return false;
-    }
-    if (backend_->getBackendType() == BackendType::OnnxRuntime) {
-        cvMatPreProcess(frame_input_context);
-        backend_->runInference(onnx_input_tensor_.data(), onnx_output_data_.data());
-        cvMatPostProcess(infer_output_context);
-        return true;
-    }
-    return false;
-}
-
-void YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
+std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
     // 1. letterbox resize
     float scale = std::min((float) input_w_ / frame_input_context.raw_img.cols,
                            (float) input_h_ / frame_input_context.raw_img.rows);
@@ -198,21 +152,22 @@ void YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
                        cv::Scalar(128, 128, 128));
 
     // 2. BGR→RGB + HWC→CHW + /255, 一次遍历
-    onnx_input_tensor_.clear();
+    std::vector<float> onnx_input_tensor;
     for (int c = 0; c < 3; ++c) {
         for (int y = 0; y < input_h_; ++y) {
             const uchar * row = padded.ptr<uchar>(y);
             for (int x = 0; x < input_w_; ++x) {
-                onnx_input_tensor_.emplace_back(row[x * 3 + (2 - c)] / 255.0f);
+                onnx_input_tensor.emplace_back(row[x * 3 + (2 - c)] / 255.0f);
             }
         }
     }
+    return onnx_input_tensor;
 }
 
 void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
     int           num_elements = num_class_ + 4;
     int           num_bboxes   = output_candidates_;
-    const float * raw_output   = onnx_output_data_.data();
+    const float * raw_output   = h_infer_out_.data();
 
     // 1. 解码：直接从原矩阵 [84, 8400] 读取，无需转置
     std::vector<cv::Rect2d> boxes;
@@ -295,7 +250,7 @@ void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context
 //     // transpose [1 84 8400] convert to [1 8400 84]
 //     int                num_elements = num_class_ + 4;
 //     int                num_bboxes   = output_candidates_;
-//     std::vector<float> h_transpose(getOutputSize() / sizeof(float) + 1);
+//     std::vector<float> h_transpose(getOutputByteSize() / sizeof(float) + 1);
 //     for (int i = 0; i < num_bboxes; ++i) {
 //         for (int j = 0; j < num_elements; ++j) {
 //             h_transpose[i * num_elements + j + 1] = onnx_output_data_[j * num_bboxes + i];

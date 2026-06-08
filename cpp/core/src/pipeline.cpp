@@ -18,15 +18,16 @@ Pipeline::Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta) :
                          config_manager_.getKfProcessNoiseCov(),
                          config_manager_.getKfMeasurementNoiseCov()) {
     bool is_normalize = false;
-    if (config_manager_.getDepthEnginePath().find("depth_anything") != std::string::npos) {
-        is_normalize = true;
-    } else if (config_manager_.getDepthEnginePath().find("lite") != std::string::npos) {
-        is_normalize = false;
-    }
-    depth_model_.init(config_manager_.getDepthEnginePath(), frame_meta.img_w, frame_meta.img_h,
-                      is_normalize);
-    detector_.init(config_manager_.getYoloEnginePath(), frame_meta.img_w, frame_meta.img_h,
-                   config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80);
+    // depth_model_.init(config_manager_.getDepthEnginePath(), frame_meta.img_w, frame_meta.img_h,
+    //                   is_normalize);
+    // detector_.init(config_manager_.getYoloEnginePath(), frame_meta.img_w, frame_meta.img_h,
+    //                config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80);
+
+    depth_model_.init(config_manager_.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
+                      is_normalize, config_manager_.isUseGPU());
+    detector_.init(config_manager_.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
+                   config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80,
+                   config_manager_.isUseGPU());
 }
 
 void Pipeline::init() {}
@@ -34,8 +35,20 @@ void Pipeline::init() {}
 // 同步
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
-    // bool do_depth = (!has_cached_depth_) ||
-    //                 ((frame_input_context.frame_id - 1) % config_manager_.getDepthInterval() == 0);
+    detector_.runInference(frame_input_context, infer_output_context);
+    depth_model_.runInference(frame_input_context, infer_output_context);
+
+    std::vector<Detection> res = infer_output_context.detections;
+    std::vector<Object>    objects;
+    for (size_t j = 0; j < res.size(); j++) {
+        if (isTrackingClass(res[j].classId)) {
+            cv::Rect_<float> rect(res[j].bbox[0], res[j].bbox[1], (res[j].bbox[2] - res[j].bbox[0]),
+                                  (res[j].bbox[3] - res[j].bbox[1]));
+            objects.push_back({ rect, res[j].classId, res[j].conf });
+        }
+    }
+    infer_output_context.tracked_objects = tracker_.update(objects);
+    this->postProcess(frame_input_context, infer_output_context);
 
     // if (do_depth) {
     //     auto depth_infer_result = depth_model_.runInference(frame_input_context.raw_img, );

@@ -29,10 +29,11 @@ class ConfigManager {
     float                              getYoloConfThresh() const;
     float                              getKfProcessNoiseCov() const;
     float                              getKfMeasurementNoiseCov() const;
-
-    bool        isLogFileSaveEnabled() const;
-    bool        isLogConsoleOutputEnabled() const;
-    std::string getLogLevel() const;
+    bool                               isUseGPU() const;
+    bool                               isOverlapEnabled() const;
+    bool                               isLogFileSaveEnabled() const;
+    bool                               isLogConsoleOutputEnabled() const;
+    std::string                        getLogLevel() const;
 
   private:
     explicit ConfigManager(const std::string & config_path);
@@ -117,4 +118,12 @@ inline bool ConfigManager::isLogConsoleOutputEnabled() const {
 
 inline std::string ConfigManager::getLogLevel() const {
     return config_["logger"]["log_level"].as<std::string>("info");
+}
+
+inline bool ConfigManager::isUseGPU() const {
+    return config_["prefer"]["use_gpu"].as<bool>(false);
+}
+
+inline bool ConfigManager::isOverlapEnabled() const {
+    return config_["prefer"]["overlap"].as<bool>(true);
 }

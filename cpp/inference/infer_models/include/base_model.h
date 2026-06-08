@@ -20,7 +20,7 @@ class BaseModel {
     virtual ~BaseModel();
 
     // 初始化模型
-    virtual bool initInferenceBackend();
+    virtual bool initInferenceBackend(std::map<std::string, std::string> model_path, bool use_gpu);
 
     // 获取后端类型
     BackendType getBackendType() const {
@@ -41,13 +41,22 @@ class BaseModel {
     }
 
     // 获取输入数据大小（字节）
-    size_t getInputSize() const { return backend_ ? backend_->getInputSize() : 0; }
+    size_t getInputByteSize() const { return backend_ ? backend_->getInputByteSize() : 0; }
 
     // 获取输出数据大小（字节）
-    size_t getOutputSize() const { return backend_ ? backend_->getOutputSize() : 0; }
+    size_t getOutputByteSize() const { return backend_ ? backend_->getOutputByteSize() : 0; }
 
     // 获取 CUDA 流
     cudaStream_t getStream() const { return stream_; }
+
+  protected:
+    // 创建后端（子类可重写以自定义后端选择逻辑）
+    virtual std::unique_ptr<InferenceBackend> createBackend(
+        std::map<std::string, std::string> model_path,
+        bool                               use_gpu);
+
+    // 检查 GPU 是否可用
+    static bool isGPUAvailable();
 
     // 同步流
     void synchronizeStream() const {
@@ -55,22 +64,13 @@ class BaseModel {
             CHECK_CUDA(cudaStreamSynchronize(stream_));
         }
     }
-  protected:
-    // 创建后端（子类可重写以自定义后端选择逻辑）
-    virtual std::unique_ptr<InferenceBackend> createBackend();
-
-    // 检查 GPU 是否可用
-    static bool isGPUAvailable();
-
-    void waitAsync() {
-        if (stream_ != 0) {
-            CHECK_CUDA(cudaStreamSynchronize(stream_));
-        }
-    }
 
     // 子类必须实现的部分
   public:
-    virtual void init(std::map<std::string, std::string> model_path, int raw_img_w, int raw_img_h);
+    void init(std::map<std::string, std::string> model_path,
+              int                                raw_img_w,
+              int                                raw_img_h,
+              bool                               use_gpu = false);
 
     // 预处理路由（根据后端类型调用不同的预处理方法）
     // virtual void preProcess(FrameInputContext & frame_input_context) {
@@ -81,7 +81,7 @@ class BaseModel {
     //     }
     // }
 
-    virtual void cvMatPreProcess(FrameInputContext & frame_input_context) {}
+    virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 
     virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
 
@@ -94,40 +94,18 @@ class BaseModel {
     //     }
     // }
 
-    virtual void cvMatPostProcess(InferOutputContext & infer_output_context) {
-        APP_ERROR(
-            "CPU post-processing not implemented for base model, please implement in derived "
-            "class.");
-    };
+    virtual void cvMatPostProcess(InferOutputContext & infer_output_context) = 0;  //cpu
 
-    virtual void cudaPostProcess(FrameInputContext & frame_input_context) {
-        APP_ERROR(
-            "GPU post-processing not implemented for base model, please implement in derived "
-            "class.");
-    }  //gpu
+    virtual void cudaPostProcess(FrameInputContext & frame_input_context) = 0;     //gpu
 
     // 执行异步推理（供子类调用）
-    virtual bool runInferenceAsync(FrameInputContext & frame_input_context) {
-        APP_ERROR(
-            "Asynchronous inference not implemented for base model, please implement in derived "
-            "class.");
-        return false;
-    }
+    virtual bool runInferenceAsync(FrameInputContext & frame_input_context);
 
     // 执行同步推理（供子类调用）
     virtual bool runInference(FrameInputContext &  frame_input_context,
-                              InferOutputContext & infer_output_context) {
-        APP_ERROR(
-            "Synchronous inference not implemented for base model, please implement in derived "
-            "class.");
-        return false;
-    }
+                              InferOutputContext & infer_output_context);
 
-    virtual void getInferOutputResult(InferOutputContext & infer_output_context) {
-        APP_ERROR(
-            "getInferOutput not implemented for base model, please implement in derived class if "
-            "using asynchronous inference.");
-    }
+    virtual void getInferOutputResult(InferOutputContext & infer_output_context) = 0;
 
   protected:
     // 原始图像分辨率
@@ -135,11 +113,12 @@ class BaseModel {
     int raw_img_h_;
 
     // 模型输入分辨率
-    int                                input_h_;
-    int                                input_w_;
-    std::map<std::string, std::string> model_path_;
-    bool                               initialized_ = false;
-
-    std::unique_ptr<InferenceBackend> backend_;
-    cudaStream_t                      stream_;  // 由 BaseModel 管理
+    int                                  input_h_;
+    int                                  input_w_;
+    bool                                 initialized_ = false;
+    // 模型输入输出缓冲区: d_infer_io_[0] -> input, d_infer_io_[1] -> output
+    std::array<unique_ptr_cuda<void>, 2> d_infer_io_;
+    std::unique_ptr<InferenceBackend>    backend_;
+    cudaStream_t                         stream_;
+    std::vector<float>                   h_infer_out_;
 };

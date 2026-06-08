@@ -22,25 +22,20 @@ class YoloDetectModel : public BaseModel {
               int                                raw_img_h,
               float                              nms_thresh,
               float                              conf_thresh,
-              int                                num_class);
+              int                                num_class,
+              bool                               use_gpu = false);
 
-    // 同步推理
-    bool runInference(FrameInputContext &  frame_input_context,
-                      InferOutputContext & infer_output_context) override;
-
-    // 异步推理
-    bool runInferenceAsync(FrameInputContext & frame_input_context) override;
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
 
   private:
     // BaseModel 接口实现
     // opencv 预处理和后处理（用于 ONNX Runtime）
-    void cvMatPreProcess(FrameInputContext & frame_input_context) override;
-    void cvMatPostProcess(InferOutputContext & infer_output_context) override;
+    std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) override;
+    void               cvMatPostProcess(InferOutputContext & infer_output_context) override;
     // CUDA 预处理和后处理（用于 TensorRT）
-    void cudaPreProcess(FrameInputContext & frame_input_context) override;
-    void cudaPostProcess(FrameInputContext & frame_input_context) override;
+    void               cudaPreProcess(FrameInputContext & frame_input_context) override;
+    void               cudaPostProcess(FrameInputContext & frame_input_context) override;
 
   private:
     int   num_class_;
@@ -48,12 +43,11 @@ class YoloDetectModel : public BaseModel {
     float conf_thresh_;
 
     // CUDA 资源（仅 TensorRT 后端使用）
-    std::array<unique_ptr_cuda<void>, 2> d_buffer_;
-    unique_ptr_cuda<float>               d_transpose_;
-    unique_ptr_cuda<float>               d_decode_;
-    unique_ptr_cuda<uchar>               d_src_data_;
-    unique_ptr_cuda<uchar>               d_mid_data_;
-    unique_ptr_pinned_cuda<float>        h_output_data_;
+    unique_ptr_cuda<float>        d_transpose_;
+    unique_ptr_cuda<float>        d_decode_;
+    unique_ptr_cuda<uchar>        d_src_data_;
+    unique_ptr_cuda<uchar>        d_mid_data_;
+    unique_ptr_pinned_cuda<float> h_infer_out_pinned_;
 
     int output_candidates_;
 
@@ -61,8 +55,4 @@ class YoloDetectModel : public BaseModel {
     // 常量
     static constexpr int MAX_NUM_OUTPUT_BBOX = 1000;
     static constexpr int NUM_BOX_ELEMENT     = 7;
-
-  public:
-    std::vector<float> onnx_output_data_;
-    std::vector<float> onnx_input_tensor_;
 };

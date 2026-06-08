@@ -21,22 +21,17 @@ class DepthModel : public BaseModel {
     bool init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
-              bool                               is_normalize);
+              bool                               is_normalize,
+              bool                               use_gpu = false);
 
-    // 同步推理
-    bool runInference(FrameInputContext &  frame_input_context,
-                      InferOutputContext & infer_output_context) override;
-
-    // 异步推理
-    bool runInferenceAsync(FrameInputContext & frame_input_context) override;
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
   private:
     // BaseModel 接口实现
-    void cvMatPreProcess(FrameInputContext & frame_input_context) override;
-    void cvMatPostProcess(InferOutputContext & infer_output_context) override;
-    void cudaPreProcess(FrameInputContext & frame_input_context) override;
-    void cudaPostProcess(FrameInputContext & frame_input_context) override;
+    std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) override;
+    void               cvMatPostProcess(InferOutputContext & infer_output_context) override;
+    void               cudaPreProcess(FrameInputContext & frame_input_context) override;
+    void               cudaPostProcess(FrameInputContext & frame_input_context) override;
 
   private:
     bool               is_normalize_;
@@ -44,9 +39,6 @@ class DepthModel : public BaseModel {
     std::vector<float> h_std_;
 
     // ── CUDA 资源（仅 TensorRT 后端使用）──
-
-    // 推理 I/O：模型输入/输出张量
-    std::array<unique_ptr_cuda<void>, 2> d_buffer_;
 
     // 后处理中间 buffer：归一化 depth + colormap（模型分辨率）
     unique_ptr_cuda<uchar>  d_buffer_norm_depth_;
@@ -69,7 +61,5 @@ class DepthModel : public BaseModel {
     unique_ptr_pinned_cuda<uchar3> host_pinned_depth_colormap_data_;
 
     // CPU 端资源
-    std::vector<float> h_output_data_;
-    cv::Mat            colormap_table_;
-    std::vector<float> onnx_input_tensor_;
+    cv::Mat colormap_table_;
 };

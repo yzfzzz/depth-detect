@@ -90,8 +90,13 @@ int run(char * video_path) {
         // 执行推理流水线
         std::string name = "Infer Pipeline";
         // DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context, infer_output_context);
-        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap, frame_input_context,
-                                               infer_output_context);
+        if (config_manager.isOverlapEnabled()) {
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap,
+                                                   frame_input_context, infer_output_context);
+        } else {
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
+                                                   infer_output_context);
+        }
         total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
 #else
         if (!io_manager.readNextFrame(frame_input_context, false) ||
@@ -99,7 +104,11 @@ int run(char * video_path) {
             break;
         }
 
-        pipeline.processOverlap(frame_input_context, infer_output_context);
+        if (config_manager.isOverlapEnabled()) {
+            pipeline.processOverlap(frame_input_context, infer_output_context);
+        } else {
+            pipeline.process(frame_input_context, infer_output_context);
+        }
 
 #endif
         num_frames++;
