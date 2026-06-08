@@ -157,6 +157,7 @@ list(APPEND YAML_CPP_TARGET dl)
 
 # ==================== Helper Function ====================
 set(PROJECT_CPP_DIR ${PROJECT_SOURCE_DIR}/cpp)
+set(ONNXRUNTIME_ROOT ${PROJECT_SOURCE_DIR}/third_party/onnxruntime)
 set(PROJECT_CUB_DIR ${PROJECT_SOURCE_DIR}/third_party/cub)
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/spdlog)
 find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3)
@@ -197,6 +198,7 @@ function(configure_common_includes target)
         ${CUDA_INCLUDE_DIRS}
         ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
         ${NVTX3_INCLUDE_DIR}
+        ${ONNXRUNTIME_ROOT}/include
     )
     if(IS_JETSON)
         target_include_directories(${target} PRIVATE ${PROJECT_CUB_DIR})
@@ -252,7 +254,9 @@ target_link_libraries(inference PRIVATE
     ${CUDA_CUDART_LIBRARY}   
     ${TENSORRT_NVINFER_LIBRARY} 
     ${OpenCV_LIBS}
+    onnxruntime
 )
+target_link_directories(inference PRIVATE ${ONNXRUNTIME_ROOT}/lib)
 
 
 
