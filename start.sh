@@ -6,7 +6,8 @@ ONNX_DIR="${SCRIPT_DIR}/third_party/onnxruntime"
 
 # ---------- 1. 初始化 git submodule ----------
 echo "[1/3] Initializing git submodules..."
-git config --global --add safe.directory /home/depth-detect/work && git submodule update --init --recursive
+git config --global --add safe.directory "$(pwd)" || true
+git submodule update --init --recursive
 
 # ---------- 2. 下载 ONNX Runtime ----------
 # 如果头文件和库已存在则跳过
@@ -28,7 +29,7 @@ else
     URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${TARBALL}"
 
     # 下载
-    wget -q --show-progress "${URL}" -O "/tmp/${TARBALL}"
+    curl -fsSL "${URL}" -o "/tmp/${TARBALL}"
 
     # 解压到临时目录
     TMP_DIR="$(mktemp -d)"
