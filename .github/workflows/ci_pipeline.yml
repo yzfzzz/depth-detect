@@ -154,7 +154,7 @@ jobs:
       - name: Run compile inside image
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
-          docker run --rm -v "${{ github.workspace }}":/home/depth-detect/work -w /home/depth-detect/work "$IMAGE" bash -lc "\
+          docker run --rm -v "${{ github.workspace }}":/home/work/depth-detect/ -w /home/work/depth-detect/ "$IMAGE" bash -lc "\
             chmod +x ./start.sh && ./start.sh && \
             mkdir -p build && \
             cd build && \
@@ -202,10 +202,10 @@ jobs:
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
           docker run --rm \
-            -v "${{ github.workspace }}":/home/depth-detect/work \
-            -w /home/depth-detect/work \
+            -v "${{ github.workspace }}":/home/work/depth-detect/ \
+            -w /home/work/depth-detect \
             "$IMAGE" bash -lc "
-              git config --global --add safe.directory "$(pwd)" || true && \
+              git config --global --add safe.directory '*' &&
               git submodule update --init --recursive && \
               cd bin && \
               chmod +x ./main && \
