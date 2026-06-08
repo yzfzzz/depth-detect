@@ -205,6 +205,8 @@ jobs:
             -v "${{ github.workspace }}":/home/depth-detect/work \
             -w /home/depth-detect/work \
             "$IMAGE" bash -lc "
+              git config --global --add safe.directory "$(pwd)" || true && \
+              git submodule update --init --recursive && \
               cd bin && \
               chmod +x ./main && \
               export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
