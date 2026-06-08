@@ -29,7 +29,7 @@ else
     URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${TARBALL}"
 
     # 下载
-    curl -fsSL "${URL}" -o "/tmp/${TARBALL}"
+    wget -fsSL "${URL}" -o "/tmp/${TARBALL}"
 
     # 解压到临时目录
     TMP_DIR="$(mktemp -d)"
