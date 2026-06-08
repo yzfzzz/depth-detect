@@ -110,17 +110,17 @@ void TensorRTBackend::setupInputOutputDims() {
     }
 
     // 计算数据大小
-    input_size_ = 1;
+    input_byte_size_ = 1;
     for (int dim : input_dims_) {
-        input_size_ *= dim;
+        input_byte_size_ *= dim;
     }
-    input_size_ *= sizeof(float);
+    input_byte_size_ *= sizeof(float);
 
-    output_size_ = 1;
+    output_byte_size_ = 1;
     for (int dim : output_dims_) {
-        output_size_ *= dim;
+        output_byte_size_ *= dim;
     }
-    output_size_ *= sizeof(float);
+    output_byte_size_ *= sizeof(float);
 
     // 设置输入维度（动态形状）
 #if NV_TENSORRT_MAJOR < 10
@@ -128,7 +128,8 @@ void TensorRTBackend::setupInputOutputDims() {
 #else
     context_->setInputShape(input_tensor_name_.c_str(), input_dims);
 #endif
-    APP_INFO("TensorRT input size: {} bytes, output size: {} bytes", input_size_, output_size_);
+    APP_INFO("TensorRT input size: {} bytes, output size: {} bytes", input_byte_size_,
+             output_byte_size_);
 }
 
 bool TensorRTBackend::runInference(void * input_data, void * output_data) {
@@ -183,10 +184,10 @@ std::vector<int> TensorRTBackend::getOutputDims() const {
     return output_dims_;
 }
 
-size_t TensorRTBackend::getInputSize() const {
-    return input_size_;
+size_t TensorRTBackend::getInputByteSize() const {
+    return input_byte_size_;
 }
 
-size_t TensorRTBackend::getOutputSize() const {
-    return output_size_;
+size_t TensorRTBackend::getOutputByteSize() const {
+    return output_byte_size_;
 }

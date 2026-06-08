@@ -5,7 +5,10 @@
 #include <cstring>
 #include <fstream>
 
-OnnxRuntimeBackend::OnnxRuntimeBackend() : session_(nullptr), input_size_(0), output_size_(0) {}
+OnnxRuntimeBackend::OnnxRuntimeBackend() :
+    session_(nullptr),
+    input_byte_size_(0),
+    output_byte_size_(0) {}
 
 OnnxRuntimeBackend::~OnnxRuntimeBackend() = default;
 
@@ -73,17 +76,17 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
         }
 
         // 计算输入/输出数据大小
-        input_size_ = 1;
+        input_byte_size_ = 1;
         for (auto dim : input_dims_) {
-            input_size_ *= dim;
+            input_byte_size_ *= dim;
         }
-        input_size_ *= sizeof(float);
+        input_byte_size_ *= sizeof(float);
 
-        output_size_ = 1;
+        output_byte_size_ = 1;
         for (auto dim : output_dims_) {
-            output_size_ *= dim;
+            output_byte_size_ *= dim;
         }
-        output_size_ *= sizeof(float);
+        output_byte_size_ *= sizeof(float);
 
         APP_INFO("ONNX Runtime model loaded successfully from: {}", model_path);
         {
@@ -106,7 +109,8 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
             }
             APP_INFO("Output dims: [{}]", dims_str);
         }
-        APP_INFO("Input size: {} bytes, output size: {} bytes", input_size_, output_size_);
+        APP_INFO("Input size: {} bytes, output size: {} bytes", input_byte_size_,
+                 output_byte_size_);
 
         return true;
     } catch (const Ort::Exception & e) {
@@ -172,10 +176,10 @@ std::vector<int> OnnxRuntimeBackend::getOutputDims() const {
     return std::vector<int>(output_dims_.begin(), output_dims_.end());
 }
 
-size_t OnnxRuntimeBackend::getInputSize() const {
-    return input_size_;
+size_t OnnxRuntimeBackend::getInputByteSize() const {
+    return input_byte_size_;
 }
 
-size_t OnnxRuntimeBackend::getOutputSize() const {
-    return output_size_;
+size_t OnnxRuntimeBackend::getOutputByteSize() const {
+    return output_byte_size_;
 }
