@@ -131,8 +131,10 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
         }
     }
     // 读取处理用的当前帧
-    bool result = video_capture_.read(frame_input_context.raw_img);
-    if (result) {
+    bool        result       = video_capture_.read(frame_input_context.raw_img);
+    int         device_count = 0;
+    cudaError_t error        = cudaGetDeviceCount(&device_count);
+    if (result && error == cudaSuccess && device_count > 0) {
         CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
                               frame_input_context.raw_img.data, frame_input_context.img_size,
                               cudaMemcpyHostToDevice));
