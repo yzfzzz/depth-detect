@@ -10,7 +10,7 @@
 
 #include <array>
 
-Pipeline::Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta) :
+Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     config_manager_(config_manager),
     tracker_(30, 30),  // 假设fps=30，或从config读取
     motion_state_engine_(config_manager_.getMotionVelocityThreshold(),

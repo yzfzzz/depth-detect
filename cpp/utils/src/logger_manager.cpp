@@ -50,7 +50,7 @@ spdlog::level::level_enum LoggerManager::stringToLogLevel(const std::string & le
     return spdlog::level::info;
 }
 
-LoggerManager::LoggerManager(const ConfigManager & config) {
+LoggerManager::LoggerManager(ConfigManager & config) {
     // 创建sinks容器
     std::vector<spdlog::sink_ptr> sinks;
 

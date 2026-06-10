@@ -8,7 +8,7 @@
 
 class Pipeline {
   public:
-    Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta);
+    Pipeline(ConfigManager & config_manager, FrameMeta frame_meta);
     void init();
 
     // 核心推理接口，供正常业务和 Benchmark 调用

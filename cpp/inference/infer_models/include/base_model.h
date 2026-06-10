@@ -16,7 +16,6 @@
 // 推理模型基类，提供统一的模型接口，支持多后端（TensorRT/ONNX Runtime），自动检测 GPU 可用性并选择合适的后端
 class BaseModel {
   public:
-    BaseModel();
     virtual ~BaseModel();
 
     // 初始化模型

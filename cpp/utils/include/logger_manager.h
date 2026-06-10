@@ -64,7 +64,7 @@ class LoggerManager {
      * @param config 配置管理器引用
      * @return LoggerManager单例引用
      */
-    static LoggerManager & getInstance(const ConfigManager & config) {
+    static LoggerManager & getInstance(ConfigManager & config) {
         static LoggerManager instance(config);
         return instance;
     }
@@ -79,7 +79,7 @@ class LoggerManager {
     std::shared_ptr<spdlog::logger> getLogger() const { return logger_; }
 
   private:
-    explicit LoggerManager(const ConfigManager & config);
+    explicit LoggerManager(ConfigManager & config);
 
     std::shared_ptr<spdlog::logger> logger_;
 

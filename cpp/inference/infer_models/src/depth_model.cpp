@@ -12,10 +12,6 @@
 #include <memory>
 #include <string>
 
-DepthModel::DepthModel() {}
-
-DepthModel::~DepthModel() {}
-
 bool DepthModel::init(std::map<std::string, std::string> model_path,
                       int                                raw_img_w,
                       int                                raw_img_h,
@@ -116,6 +112,10 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
 // ═══════════════════════════════════════════════════════════════════════
 
 void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+    if (frame_input_context.d_raw_img_ == nullptr) {
+        APP_ERROR("Input image buffer is not allocated on GPU");
+        return;
+    }
     depthPreprocess(frame_input_context.d_raw_img_.get(),
                     static_cast<float *>(d_infer_io_[0].get()), raw_img_w_, raw_img_h_, input_w_,
                     input_h_,
