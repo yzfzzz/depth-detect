@@ -1,5 +1,7 @@
 #pragma once
 
+#include "public.h"
+
 #include <cuda_runtime.h>
 #include <NvInfer.h>
 
@@ -9,7 +11,7 @@
 struct CudaDeleter {
     void operator()(void * p) const noexcept {
         if (p != nullptr) {
-            cudaFree(p);
+            CHECK_CUDA(cudaFree(p));
         }
     }
 };
@@ -18,7 +20,7 @@ struct CudaDeleter {
 struct PinnedCudaDeleter {
     void operator()(void * p) const noexcept {
         if (p != nullptr) {
-            cudaFreeHost(p);
+            CHECK_CUDA(cudaFreeHost(p));
         }
     }
 };

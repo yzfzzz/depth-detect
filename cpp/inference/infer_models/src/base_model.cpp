@@ -7,9 +7,9 @@
 
 #include <fstream>
 
-BaseModel::BaseModel() : initialized_(false), stream_(0) {}
 
 BaseModel::~BaseModel() {
+    CHECK_CUDA(cudaDeviceSynchronize());
     if (stream_ != 0) {
         CHECK_CUDA(cudaStreamSynchronize(stream_));
         CHECK_CUDA(cudaStreamDestroy(stream_));
@@ -20,6 +20,8 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
                      int                                raw_img_w,
                      int                                raw_img_h,
                      bool                               use_gpu) {
+    initialized_ = false;
+    stream_ = 0;
     if (raw_img_h <= 0 || raw_img_w <= 0) {
         APP_ERROR("Invalid image dimensions: {}x{}", raw_img_w, raw_img_h);
         return;
@@ -145,7 +147,7 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
     }
     if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         std::vector<float> onnx_input_tensor = cvMatPreProcess(frame_input_context);
-        cudaStreamSynchronize(stream_);  // 确保预处理完成
+        CHECK_CUDA(cudaStreamSynchronize(stream_));  // 确保预处理完成
         backend_->runInference(onnx_input_tensor.data(), h_infer_out_.data());
         cvMatPostProcess(infer_output_context);
         return true;

@@ -83,6 +83,10 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 }
 
 void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+    if (frame_input_context.d_raw_img_ == nullptr) {
+        APP_ERROR("Input image buffer is not allocated on GPU");
+        return;
+    }
     preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
                   d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 }
