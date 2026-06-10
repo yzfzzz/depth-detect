@@ -14,7 +14,6 @@
 // 深度估计模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class DepthModel : public BaseModel {
   public:
-
     // 初始化模型
     bool init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
