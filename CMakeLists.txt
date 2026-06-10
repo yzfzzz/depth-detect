@@ -36,7 +36,7 @@ if(ENABLE_JESTON_MEM_MANAGED)
     add_definitions(-DENABLE_JESTON_MEM_MANAGED)
 endif()
 
-option(ENABLE_BENCHMARK "Build benchmark tests" OFF)
+option(ENABLE_BENCHMARK "Build benchmark tests" ON)
 option(ENABLE_PYBIND "Build python pybind module" OFF)
 
 # ==================== Platform Detection ====================
@@ -287,14 +287,14 @@ if(ENABLE_BENCHMARK)
     add_executable(test_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_pipeline.cpp)
     configure_common_includes(test_pipeline)
     target_link_libraries(test_pipeline PRIVATE 
-        core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
     
-    add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
-    configure_common_includes(test_depth_preprocess)
-    target_link_libraries(test_depth_preprocess PRIVATE 
-        core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
-    )
+    # add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
+    # configure_common_includes(test_depth_preprocess)
+    # target_link_libraries(test_depth_preprocess PRIVATE 
+    #     core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
+    # )
     
     if(IS_JETSON)
         add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)
