@@ -1,0 +1,34 @@
+display_manager:
+  is_display: false    # 是否启用本机的 GUI 交互窗口
+
+prefer:
+  use_gpu: false       # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
+  overlap: false       # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
+
+yolo:
+  yolo_model_path:
+    - type: onnx
+      path: "../model/onnx/yolov8n/yolov8n_640_op11.onnx"
+
+  yolo_nms_thresh: 0.4    # YOLO NMS阈值 (下采样截断遮挡框)
+  yolo_conf_thresh: 0.25
+
+depth:
+  depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
+  depth_model_path:
+    - type: onnx
+      path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
+
+motion_state_engine:      # 目标追踪与状态转换引擎
+  velocity_threshold: 20      # 判断趋近/远离的速度触发线
+  acceleration_threshold: 10   # 加减速缓冲界限
+  kf_process_noise_cov: 0.02  # 卡尔曼过程噪声
+  kf_measurement_noise_cov: 0.05
+
+io_manager:
+  out_dir: "out_dir"      # 落盘文件夹名称
+  save_mode: none        # 保存输出: video / images / both / none
+logger:
+  save_file: true         # 是否保存日志文件到logs文件夹
+  console_output: true    # 是否在终端显示日志
+  log_level: info         # 日志级别: trace / debug / info / warn / err / critical

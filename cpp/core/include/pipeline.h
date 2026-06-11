@@ -8,7 +8,8 @@
 
 class Pipeline {
   public:
-    Pipeline(const ConfigManager & config_manager, FrameMeta frame_meta);
+    Pipeline(ConfigManager & config_manager, FrameMeta frame_meta);
+    void init();
 
     // 核心推理接口，供正常业务和 Benchmark 调用
     void process(FrameInputContext &  frame_input_context,
@@ -49,4 +50,6 @@ class Pipeline {
     // 需要跟踪的类别，可以根据自己需求调整，筛选自己想要跟踪的对象的种类（以下对应COCO数据集类别索引）
     std::vector<int> track_classes_{ 1, 2, 3, 5,
                                      7 };  // person, bicycle, car, motorcycle, bus, truck
+
+    bool is_normalize_ = false;
 };

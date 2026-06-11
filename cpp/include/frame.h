@@ -29,8 +29,10 @@ struct FrameMeta {
 
 struct MotionStateInfoRecord;
 class STrack;
+class Detection;
 
 struct InferOutputContext {
+    std::vector<Detection>                         detections;
     std::vector<STrack>                            tracked_objects;
     cv::Mat                                        result_depth;
     cv::Mat                                        depth_vis;
@@ -46,10 +48,14 @@ struct FrameInputContext {
                 std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
                     .count();
         }
-        img_size   = meta.img_h * meta.img_w * 3;
-        void * ptr = nullptr;
-        CHECK_CUDA(cudaMalloc(&ptr, img_size));
-        d_raw_img_.reset(static_cast<uchar *>(ptr));
+        img_size                 = meta.img_h * meta.img_w * 3;
+        void *      ptr          = nullptr;
+        int         device_count = 0;
+        cudaError_t error        = cudaGetDeviceCount(&device_count);
+        if (error == cudaSuccess && device_count > 0) {
+            CHECK_CUDA(cudaMalloc(&ptr, img_size));
+            d_raw_img_.reset(static_cast<uchar *>(ptr));
+        }
     }
 
     void setFrameID(int id) { frame_id = id; }

@@ -31,19 +31,6 @@ void decode(float *      src,
 
 void nms(float * data, float kNmsThresh, int maxObjects, int numBoxElement, cudaStream_t stream);
 
-__inline__ void scale_bbox(const cv::Mat & img, float bbox[4], int input_w, int input_h) {
-    float r_w   = input_w / (img.cols * 1.0);
-    float r_h   = input_h / (img.rows * 1.0);
-    float r     = std::min(r_w, r_h);
-    float pad_h = (input_h - r * img.rows) / 2;
-    float pad_w = (input_w - r * img.cols) / 2;
-
-    bbox[0] = (bbox[0] - pad_w) / r;
-    bbox[1] = (bbox[1] - pad_h) / r;
-    bbox[2] = (bbox[2] - pad_w) / r;
-    bbox[3] = (bbox[3] - pad_h) / r;
-}
-
 void normalize_colormap_resize(float *      src,
                                uchar *      norm_depth,
                                uchar3 *     norm_colormap,
@@ -59,4 +46,17 @@ void normalize_colormap_resize(float *      src,
 
 void initColorMapTable();  // init color map table
 
-#endif                     // POSTPROCESS_H
+__inline__ void scale_bbox(const cv::Mat & img, float bbox[4], int input_w, int input_h) {
+    float r_w   = input_w / (img.cols * 1.0);
+    float r_h   = input_h / (img.rows * 1.0);
+    float r     = std::min(r_w, r_h);
+    float pad_h = (input_h - r * img.rows) / 2;
+    float pad_w = (input_w - r * img.cols) / 2;
+
+    bbox[0] = (bbox[0] - pad_w) / r;
+    bbox[1] = (bbox[1] - pad_h) / r;
+    bbox[2] = (bbox[2] - pad_w) / r;
+    bbox[3] = (bbox[3] - pad_h) / r;
+}
+
+#endif  // POSTPROCESS_H

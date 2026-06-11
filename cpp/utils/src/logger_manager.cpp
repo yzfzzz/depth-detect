@@ -50,7 +50,7 @@ spdlog::level::level_enum LoggerManager::stringToLogLevel(const std::string & le
     return spdlog::level::info;
 }
 
-LoggerManager::LoggerManager(const ConfigManager & config) {
+LoggerManager::LoggerManager(ConfigManager & config) {
     // 创建sinks容器
     std::vector<spdlog::sink_ptr> sinks;
 
@@ -70,7 +70,7 @@ LoggerManager::LoggerManager(const ConfigManager & config) {
             auto        file_sink =
                 std::make_shared<spdlog::sinks::basic_file_sink_mt>(date_log_path, true);
             file_sink->set_level(log_level);
-            file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+            file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] [%s:%#] %v");
             sinks.push_back(file_sink);
         } catch (const spdlog::spdlog_ex & ex) {
             fprintf(stderr, "File sink creation failed: %s\n", ex.what());
@@ -81,7 +81,7 @@ LoggerManager::LoggerManager(const ConfigManager & config) {
             auto latest_sink =
                 std::make_shared<spdlog::sinks::basic_file_sink_mt>("latest.log", true);
             latest_sink->set_level(log_level);
-            latest_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] %v");
+            latest_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] [%s:%#] %v");
             sinks.push_back(latest_sink);
         } catch (const spdlog::spdlog_ex & ex) {
             fprintf(stderr, "Latest sink creation failed: %s\n", ex.what());
@@ -92,7 +92,7 @@ LoggerManager::LoggerManager(const ConfigManager & config) {
     if (sinks.empty() || console_output) {
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         console_sink->set_level(spdlog::level::info);
-        console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] %v");
+        console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] [%s:%#] %v");
         sinks.push_back(console_sink);
     }
 
