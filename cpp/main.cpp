@@ -25,6 +25,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      DrawingManager &               drawing_manager,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us) {
+    if (infer_output_context.tracked_objects.size() <= 0) {
+        APP_WARN("tracked_objects size is 0, skip drawing!");
+    }
     for (int i = 0; i < infer_output_context.tracked_objects.size(); i++) {
         auto & track = infer_output_context.tracked_objects[i];
         if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
@@ -55,9 +58,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     return out_frame;
 }
 
-int run(char * video_path) {
+int run(char * video_path, char * config_path) {
     // 读取配置文件 - 使用单例模式
-    ConfigManager & config_manager = ConfigManager::getInstance("config.yaml");
+    ConfigManager & config_manager = ConfigManager::getInstance(config_path);
     // 初始化日志系统
     LoggerManager::getInstance(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
@@ -87,8 +90,13 @@ int run(char * video_path) {
         // 执行推理流水线
         std::string name = "Infer Pipeline";
         // DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context, infer_output_context);
-        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap, frame_input_context,
-                                               infer_output_context);
+        if (config_manager.isOverlapEnabled()) {
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap,
+                                                   frame_input_context, infer_output_context);
+        } else {
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
+                                                   infer_output_context);
+        }
         total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
 #else
         if (!io_manager.readNextFrame(frame_input_context, false) ||
@@ -96,7 +104,11 @@ int run(char * video_path) {
             break;
         }
 
-        pipeline.processOverlap(frame_input_context, infer_output_context);
+        if (config_manager.isOverlapEnabled()) {
+            pipeline.processOverlap(frame_input_context, infer_output_context);
+        } else {
+            pipeline.process(frame_input_context, infer_output_context);
+        }
 
 #endif
         num_frames++;
@@ -140,12 +152,12 @@ int run(char * video_path) {
 }
 
 int main(int argc, char * argv[]) {
-    if (argc != 2) {
+    if (argc != 3) {
         APP_ERROR("arguments not right!");
-        APP_ERROR("Usage: ./main [video path]");
-        APP_ERROR("Example: ./main ./videos/demo.mp4");
+        APP_ERROR("Usage: ./main [video path] [config yaml path]");
+        APP_ERROR("Example: ./main ./videos/demo.mp4 ./config.yaml");
         return -1;
     }
 
-    return run(argv[1]);
+    return run(argv[1], argv[2]);
 }
