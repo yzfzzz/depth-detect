@@ -8,7 +8,6 @@
 #include <fstream>
 
 BaseModel::~BaseModel() {
-    CHECK_CUDA(cudaDeviceSynchronize());
     if (stream_ != 0) {
         CHECK_CUDA(cudaStreamSynchronize(stream_));
         CHECK_CUDA(cudaStreamDestroy(stream_));
