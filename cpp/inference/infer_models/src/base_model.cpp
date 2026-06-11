@@ -146,7 +146,6 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
     }
     if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         std::vector<float> onnx_input_tensor = cvMatPreProcess(frame_input_context);
-        CHECK_CUDA(cudaStreamSynchronize(stream_));  // 确保预处理完成
         backend_->runInference(onnx_input_tensor.data(), h_infer_out_.data());
         cvMatPostProcess(infer_output_context);
         return true;
