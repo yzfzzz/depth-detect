@@ -1,5 +1,6 @@
 #include "base_model.h"
 
+#include "logger_manager.h"
 #include "onnxruntime_backend.h"
 #include "tensorrt_backend.h"
 
@@ -76,9 +77,10 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
             APP_INFO("ONNX Runtime CPU backend initialized successfully");
             return onnx_backend;
         }
+        APP_ERROR("ONNX Runtime CPU backend path not found in {}, failed to initialize any backend",
+                  it->second);
     }
-    APP_ERROR("ONNX Runtime CPU backend path not found in {}, failed to initialize any backend",
-              it->second);
+    APP_ERROR("Config yaml without onnx key, failed to initialize any backend");
     return nullptr;
 }
 

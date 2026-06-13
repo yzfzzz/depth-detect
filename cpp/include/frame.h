@@ -48,14 +48,7 @@ struct FrameInputContext {
                 std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
                     .count();
         }
-        img_size                 = meta.img_h * meta.img_w * 3;
-        void *      ptr          = nullptr;
-        int         device_count = 0;
-        cudaError_t error        = cudaGetDeviceCount(&device_count);
-        if (error == cudaSuccess && device_count > 0) {
-            CHECK_CUDA(cudaMalloc(&ptr, img_size));
-            d_raw_img_.reset(static_cast<uchar *>(ptr));
-        }
+        img_size = meta.img_h * meta.img_w * 3;
     }
 
     void setFrameID(int id) { frame_id = id; }

@@ -135,6 +135,11 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);
     if (result && error == cudaSuccess && device_count > 0) {
+        if (!frame_input_context.d_raw_img_) {
+            void * ptr = nullptr;
+            CHECK_CUDA(cudaMalloc(&ptr, frame_input_context.img_size));
+            frame_input_context.d_raw_img_.reset(static_cast<uchar *>(ptr));
+        }
         CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
                               frame_input_context.raw_img.data, frame_input_context.img_size,
                               cudaMemcpyHostToDevice));
