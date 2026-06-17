@@ -35,6 +35,7 @@ class ConfigManager {
     bool                               isLogConsoleOutputEnabled() const;
     std::string                        getLogLevel() const;
     void                               setUseGPU(bool use_gpu);
+    void                               setLogLevel(const std::string & log_level);
 
   private:
     explicit ConfigManager(const std::string & config_path);
@@ -131,4 +132,8 @@ inline void ConfigManager::setUseGPU(bool use_gpu) {
 
 inline bool ConfigManager::isOverlapEnabled() const {
     return config_["prefer"]["overlap"].as<bool>(true);
+}
+
+inline void ConfigManager::setLogLevel(const std::string & log_level) {
+    config_["logger"]["log_level"] = log_level;
 }

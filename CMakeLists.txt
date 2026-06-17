@@ -289,6 +289,12 @@ if(ENABLE_BENCHMARK)
     target_link_libraries(test_trt_pipeline PRIVATE 
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
+
+    add_executable(test_onnx_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_onnx_pipeline.cpp)
+    configure_common_includes(test_onnx_pipeline)
+    target_link_libraries(test_onnx_pipeline PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
     
     # add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
     # configure_common_includes(test_depth_preprocess)

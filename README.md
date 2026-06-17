@@ -145,27 +145,9 @@ cd ../bin
 项目集成 Google Benchmark 用于测量不同执行策略的吞吐/延迟
 
 ```bash
-cd ./bin
-./test_pipeline
-./test_depth_preprocess
+cd ./bin && ./test_trt_pipeline && ./test_onnx_pipeline
 ```
-### 同步改异步，流水线并行
-
-| 指标 | NV5060 同步 | NV5060 异步 | NV5060 改进 | TX2 同步 | TX2 异步 | TX2 改进 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| Wall Time (ms/帧) | 10.7 | 9.80 | -8.4% ↓ | 159 | 150 | -5.7% ↓ |
-| CPU Time (ms) | 10.7 | 9.64 | -9.9% ↓ | 43 | 35 | -18.6% ↓ |
-| 吞吐量 | 93.33 | 103.79 | +11.2% ↑ | 23.38 | 28.75 | +23.0% ↑ |
-| 迭代次数 | 66 | 72 | +6 ↑ | 16 | 20 | +4 ↑ |
-
-### 深度模型前处理 cpu 改 cuda加速
-
-| 平台 | 处理方式 | 平均耗时 | 吞吐量 | GPU相对CPU的性能提升倍数 |
-| :--- | :--- | :--- | :--- | :--- |
-| Jetson TX2 | CPU预处理 (含Copy) | 13 ms | 76.75 items/s | 约 9.1 倍 |
-| Jetson TX2 | GPU深度图预处理 | 2 ms | 696.23 items/s | - |
-| NV5060 | CPU预处理 (含Copy) | 2.71 ms | 356.30 items/s | 约 7.6 倍 |
-| NV5060 | GPU深度图预处理 | 0.355 ms | 2709.07 items/s | - |
+![geforce5060_benchmark_test.png](./doc/geforce5060_benchmark_test.png)
 
 
 

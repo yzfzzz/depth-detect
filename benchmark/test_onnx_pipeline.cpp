@@ -14,7 +14,7 @@ const char * config_path = "config.yaml";
 // 全局单例：配置、日志、IO、流水线
 ConfigManager & config_manager = []() -> ConfigManager & {
     auto & cm = ConfigManager::getInstance(config_path);
-    cm.setUseGPU(true);
+    cm.setUseGPU(false);
     cm.setLogLevel("err");
     return cm;
 }();
@@ -37,7 +37,6 @@ class PipelineBenchmark : public benchmark::Fixture {
                 break;
             }
             pipeline.process(warmup_ctx, warmup_out);
-            pipeline.processOverlap(warmup_ctx, warmup_out);
         }
         num_frames_ = 0;
     }
@@ -72,40 +71,20 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Process)(benchmark::State & state) {
                      [](auto & ctx, auto & out, auto & state) { pipeline.process(ctx, out); });
 }
 
-// CPU/GPU 重叠：YOLO 与 Depth 异步并行
-BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessOverlap)(benchmark::State & state) {
-    RunPipelineBench(
-        state, [](auto & ctx, auto & out, auto & state) { pipeline.processOverlap(ctx, out); });
-}
-
 // ---- YOLO 检测各阶段 ----
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
-    });
-}
-
-BENCHMARK_DEFINE_F(PipelineBenchmark, YoloInferenceAsync)(benchmark::State & state) {
-    RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
-        state.PauseTiming();
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
-        state.ResumeTiming();
-        pipeline.detector_.runInferenceAsync(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.detector_.cvMatPreProcess(ctx);
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, YoloInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, benchmark::State & state) {
         state.PauseTiming();
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.detector_.cvMatPreProcess(ctx);
         state.ResumeTiming();
         pipeline.detector_.runInference(ctx, out);
-        pipeline.detector_.synchronizeStream();
     });
 }
 
@@ -113,14 +92,12 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPostprocess)(benchmark::State & state)
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
 
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.runInferenceAsync(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.detector_.cvMatPreProcess(ctx);
+        pipeline.detector_.runInference(ctx, out);
 
         state.ResumeTiming();
 
-        pipeline.detector_.cudaPostProcess(ctx);
-        pipeline.detector_.getInferOutputResult(out);
+        pipeline.detector_.cvMatPostProcess(out);
     });
 }
 
@@ -128,32 +105,17 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPostprocess)(benchmark::State & state)
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
-    });
-}
-
-BENCHMARK_DEFINE_F(PipelineBenchmark, DepthInferenceAsync)(benchmark::State & state) {
-    RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
-        state.PauseTiming();
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.synchronizeStream();
-        state.ResumeTiming();
-
-        pipeline.depth_model_.runInferenceAsync(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.depth_model_.cvMatPreProcess(ctx);
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, DepthInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto state) {
         state.PauseTiming();
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.depth_model_.cvMatPreProcess(ctx);
         state.ResumeTiming();
 
         pipeline.depth_model_.runInference(ctx, out);
-        pipeline.depth_model_.synchronizeStream();
     });
 }
 
@@ -161,14 +123,12 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPostprocess)(benchmark::State & state
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
 
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.runInferenceAsync(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.depth_model_.cvMatPreProcess(ctx);
+        pipeline.depth_model_.runInference(ctx, out);
 
         state.ResumeTiming();
 
-        pipeline.depth_model_.cudaPostProcess(ctx);
-        pipeline.depth_model_.getInferOutputResult(out);
+        pipeline.depth_model_.cvMatPostProcess(out);
     });
 }
 
@@ -185,7 +145,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::S
         }
         num_frames_++;
         InferOutputContext out;
-        pipeline.processOverlap(ctx, out);
+        pipeline.process(ctx, out);
         state.ResumeTiming();
         pipeline.postProcess(ctx, out);
     }
@@ -195,55 +155,40 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::S
 // ============================================================================
 // 注册
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, ProcessOverlap)
-    ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/TensorRT/ProcessOverlap(Async)");
-
 BENCHMARK_REGISTER_F(PipelineBenchmark, Process)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/TensorRT/Process(Sync)");
+    ->Name("Pipeline/Onnx/Process(Sync)");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, YoloPreprocess)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/CUDA/YoloPreprocess");
+    ->Name("Pipeline/OpenCV2/YoloPreprocess");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, YoloInference)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/TensorRT/YoloInference");
-
-BENCHMARK_REGISTER_F(PipelineBenchmark, YoloInferenceAsync)
-    ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/TensorRT/YoloInferenceAsync");
+    ->Name("Pipeline/Onnx/YoloInference");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, YoloPostprocess)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/CUDA/YoloPostprocess");
+    ->Name("Pipeline/OpenCV2/YoloPostprocess");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, DepthPreprocess)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/CUDA/DepthPreprocess");
-
-BENCHMARK_REGISTER_F(PipelineBenchmark, DepthInferenceAsync)
-    ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/TensorRT/DepthInferenceAsync");
+    ->Name("Pipeline/OpenCV2/DepthPreprocess");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, DepthInference)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/TensorRT/DepthInference");
+    ->Name("Pipeline/Onnx/DepthInference");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, DepthPostprocess)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
-    ->Name("Pipeline/CUDA/DepthPostprocess");
+    ->Name("Pipeline/OpenCV2/DepthPostprocess");
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, MotionStateEnginePostprocess)
     ->Unit(benchmark::kMillisecond)
