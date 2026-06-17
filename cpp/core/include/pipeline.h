@@ -23,9 +23,10 @@ class Pipeline {
 
     DepthModel & getDepthModel() { return depth_model_; }
 
-    void postProcess(FrameInputContext &  frame_input_context,
-                     InferOutputContext & infer_output_context);
-
+    void            postProcess(FrameInputContext &  frame_input_context,
+                                InferOutputContext & infer_output_context);
+    YoloDetectModel detector_;
+    DepthModel      depth_model_;
 
   private:
     bool isTrackingClass(int class_id) {
@@ -38,8 +39,6 @@ class Pipeline {
     }
 
     const ConfigManager & config_manager_;
-    YoloDetectModel       detector_;
-    DepthModel            depth_model_;
     BYTETracker           tracker_;
     MotionStateEngine     motion_state_engine_;
 

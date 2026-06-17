@@ -284,9 +284,9 @@ if(ENABLE_BENCHMARK)
     message(STATUS "Building benchmark tests")
     find_package(benchmark REQUIRED)
     
-    add_executable(test_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_pipeline.cpp)
-    configure_common_includes(test_pipeline)
-    target_link_libraries(test_pipeline PRIVATE 
+    add_executable(test_trt_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_trt_pipeline.cpp)
+    configure_common_includes(test_trt_pipeline)
+    target_link_libraries(test_trt_pipeline PRIVATE 
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
     

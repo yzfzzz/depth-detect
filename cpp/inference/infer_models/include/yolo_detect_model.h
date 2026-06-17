@@ -27,8 +27,6 @@ class YoloDetectModel : public BaseModel {
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
-
-  private:
     // BaseModel 接口实现
     // opencv 预处理和后处理（用于 ONNX Runtime）
     std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) override;

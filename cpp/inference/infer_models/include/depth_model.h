@@ -23,7 +23,6 @@ class DepthModel : public BaseModel {
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
-  private:
     // BaseModel 接口实现
     std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) override;
     void               cvMatPostProcess(InferOutputContext & infer_output_context) override;
