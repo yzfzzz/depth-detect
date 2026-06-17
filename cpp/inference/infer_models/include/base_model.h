@@ -48,6 +48,13 @@ class BaseModel {
     // 获取 CUDA 流
     cudaStream_t getStream() const { return stream_; }
 
+    // 同步流
+    void synchronizeStream() const {
+        if (stream_ != 0) {
+            CHECK_CUDA(cudaStreamSynchronize(stream_));
+        }
+    }
+
   protected:
     // 创建后端（子类可重写以自定义后端选择逻辑）
     virtual std::unique_ptr<InferenceBackend> createBackend(
@@ -56,13 +63,6 @@ class BaseModel {
 
     // 检查 GPU 是否可用
     static bool isGPUAvailable();
-
-    // 同步流
-    void synchronizeStream() const {
-        if (stream_ != 0) {
-            CHECK_CUDA(cudaStreamSynchronize(stream_));
-        }
-    }
 
     // 子类必须实现的部分
   public:

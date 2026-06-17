@@ -11,23 +11,26 @@
 const char * video_path  = "../data/1shu_east_0514.mp4";
 const char * config_path = "config.yaml";
 
-// 读取配置文件 - 使用单例模式
-ConfigManager & config_manager = ConfigManager::getInstance(config_path);
-// 初始化日志系统
+// 全局单例：配置、日志、IO、流水线
+ConfigManager & config_manager = []() -> ConfigManager & {
+    auto & cm = ConfigManager::getInstance(config_path);
+    cm.setUseGPU(true);
+    return cm;
+}();
+
 LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
-// 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
 IOManager       io_manager(config_manager);
 FrameMeta       frame_meta = io_manager.Init(video_path);
-// 推理流水线（负责目标检测、深度估计、跟踪、运动状态判断等核心功能）
 Pipeline        pipeline(config_manager, frame_meta);
 
-// PipelineBenchmark — 对比 process()（同步） vs processOverlap()（CPU/GPU重叠）
+// 对比同步串行 (process) 与 CPU/GPU 重叠 (processOverlap) 的性能
 class PipelineBenchmark : public benchmark::Fixture {
   public:
     void SetUp(const ::benchmark::State & state) override {
         io_manager.Init(video_path);
         FrameInputContext  warmup_ctx(0, frame_meta);
         InferOutputContext warmup_out;
+        // 预热 20 帧，消除首次推理的冷启动偏差
         for (int i = 0; i < 20; ++i) {
             if (!io_manager.readNextFrame(warmup_ctx, false) || warmup_ctx.raw_img.empty()) {
                 break;
@@ -39,13 +42,13 @@ class PipelineBenchmark : public benchmark::Fixture {
     }
 
   protected:
-    // 公共 Benchmark 循环：封装帧读取、循环播放、计时控制
+    // 通用 Benchmark 循环：读帧 → 计时 → 执行 → 循环播放
     template <typename Func> void RunPipelineBench(benchmark::State & state, Func && process_fn) {
         for (auto _ : state) {
             state.PauseTiming();
             FrameInputContext ctx(num_frames_, frame_meta);
             if (!io_manager.readNextFrame(ctx, false) || ctx.raw_img.empty()) {
-                io_manager.Init(video_path);  // 播完从头循环
+                io_manager.Init(video_path);  // 播完循环
                 continue;
             }
             num_frames_++;
@@ -60,62 +63,73 @@ class PipelineBenchmark : public benchmark::Fixture {
     int num_frames_ = 0;
 };
 
-// 1. process — 同步串行：YOLO → Depth → ByteTrack → PostProcess
+// ---- 端到端流水线 ----
+
+// 同步串行：YOLO → Depth → ByteTrack → PostProcess
 BENCHMARK_DEFINE_F(PipelineBenchmark, Process)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) { pipeline.process(ctx, out); });
 }
 
-// 2. processOverlap — CPU/GPU 重叠：YOLO 与 Depth 异步并行
+// CPU/GPU 重叠：YOLO 与 Depth 异步并行
 BENCHMARK_DEFINE_F(PipelineBenchmark, ProcessOverlap)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) { pipeline.processOverlap(ctx, out); });
 }
 
+// ---- YOLO 检测各阶段 ----
+
 BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        // 仅测 YOLO 预处理 (preprocess + H2D)
-        pipeline.detector_.cudaPreProcess(ctx);  // 需要把 preprocess 暴露为 public
+        pipeline.detector_.cudaPreProcess(ctx);
+        pipeline.detector_.synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, YoloInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        pipeline.detector_.runInference(ctx, out);  // 纯推理
+        pipeline.detector_.runInference(ctx, out);
+        pipeline.detector_.synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        pipeline.detector_.cudaPostProcess(ctx);  // 纯推理
+        pipeline.detector_.cudaPostProcess(ctx);
         pipeline.detector_.getInferOutputResult(out);
     });
 }
 
+// ---- 深度估计各阶段 ----
+
 BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        pipeline.depth_model_.cudaPostProcess(ctx);  // 纯推理
-        pipeline.depth_model_.getInferOutputResult(out);
+        pipeline.depth_model_.cudaPreProcess(ctx);
+        pipeline.detector_.synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, DepthInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        pipeline.depth_model_.runInference(ctx, out);  // 纯推理
+        pipeline.depth_model_.runInference(ctx, out);
+        pipeline.detector_.synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out) {
-        pipeline.depth_model_.cudaPostProcess(ctx);  // 纯推理
+        pipeline.depth_model_.cudaPostProcess(ctx);
         pipeline.depth_model_.getInferOutputResult(out);
     });
 }
 
+// ---- 后处理 ----
+
+// 测量 MotionState + PostProcess 耗时（不含推理），用 processOverlap 准备好推理结果
 BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::State & state) {
     for (auto _ : state) {
         state.PauseTiming();
         FrameInputContext ctx(num_frames_, frame_meta);
         if (!io_manager.readNextFrame(ctx, false) || ctx.raw_img.empty()) {
-            io_manager.Init(video_path);  // 播完从头循环
+            io_manager.Init(video_path);
             continue;
         }
         num_frames_++;
@@ -128,10 +142,13 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::S
 }
 
 // ============================================================================
+// 注册
+
 BENCHMARK_REGISTER_F(PipelineBenchmark, ProcessOverlap)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
     ->Name("Pipeline/ProcessOverlap(Async)");
+
 BENCHMARK_REGISTER_F(PipelineBenchmark, Process)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
@@ -161,6 +178,7 @@ BENCHMARK_REGISTER_F(PipelineBenchmark, DepthInference)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
     ->Name("Pipeline/cuda/DepthInference");
+
 BENCHMARK_REGISTER_F(PipelineBenchmark, DepthPostprocess)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100)
