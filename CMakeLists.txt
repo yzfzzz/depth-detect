@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(depth_detection VERSION 1.0.0 LANGUAGES CXX CUDA)
 
 # ==================== Build Type ====================
-if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
@@ -37,7 +37,7 @@ if(ENABLE_JESTON_MEM_MANAGED)
 endif()
 
 option(ENABLE_BENCHMARK "Build benchmark tests" ON)
-option(ENABLE_PYBIND "Build python pybind module" OFF)
+option(ENABLE_PYBIND "Build python pybind module" ON)
 
 # ==================== Platform Detection ====================
 set(TARGET_PLATFORM "AUTO" CACHE STRING "Build target platform")
@@ -313,48 +313,46 @@ else()
     message(STATUS "ENABLE_BENCHMARK=OFF")
 endif()
 
-# ==================== pybind11 (Jetson Disabled) ====================
-if(IS_JETSON)
-    set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
-endif()
+# # ==================== pybind11 (Jetson Disabled) ====================
+# if(IS_JETSON)
+#     set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
+# endif()
 
-if(ENABLE_PYBIND)
-    find_package(pybind11 REQUIRED)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
+# # ==================== pybind11 ====================
+# if(ENABLE_PYBIND)
+#     find_package(pybind11 REQUIRED)
+#     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
+#     pybind11_add_module(depth_detection ${PROJECT_CPP_DIR}/python_wrapper/depth_detect_py.cpp)
+#     configure_common_includes(depth_detection)
+#     target_include_directories(depth_detection PRIVATE
+#         ${PROJECT_CPP_DIR}/inference/infer_models/include
+#         ${PROJECT_CPP_DIR}/inference/infer_backend/include
+#         ${PROJECT_CPP_DIR}/core/include
+#         ${PROJECT_CPP_DIR}/bytetrack/include
+#         ${PROJECT_CPP_DIR}/utils/include
+#         ${PROJECT_CPP_DIR}/include
+#     )
+#     if(IS_JETSON)
+#         target_include_directories(depth_detection PRIVATE ${PROJECT_CUB_DIR})
+#     endif()
     
-    pybind11_add_module(depth_detection ${PROJECT_CPP_DIR}/python_wrapper/depth_detect_py.cpp)
-    target_include_directories(depth_detection PRIVATE
-        ${PROJECT_CPP_DIR}/core/include
-        ${PROJECT_CPP_DIR}/detect/include
-        ${PROJECT_CPP_DIR}/bytetrack/include
-        ${PROJECT_CPP_DIR}/depth/include
-        ${PROJECT_CPP_DIR}/tools/include
-        ${PROJECT_CPP_DIR}/include
-        ${TENSORRT_INCLUDE_DIR}
-        ${OpenCV_INCLUDE_DIRS}
-    )
-    if(IS_JETSON)
-        target_include_directories(depth_detection PRIVATE ${PROJECT_CUB_DIR})
-    endif()
+#     target_link_libraries(depth_detection PRIVATE
+#         ${OpenCV_LIBS}
+#         ${CUDA_CUDART_LIBRARY}  
+#         ${TENSORRT_NVINFER_LIBRARY}
+#         ${TENSORRT_NVONNXPARSER_LIBRARY}
+#         cvnp
+#         bytetrack
+#         inference
+#         core
+#         utils
+#         ${YAML_CPP_TARGET}
+#     )
     
-    target_link_libraries(depth_detection PRIVATE
-        ${OpenCV_LIBS}
-        ${CUDA_CUDART_LIBRARY}  
-        ${TENSORRT_NVINFER_LIBRARY}
-        ${TENSORRT_NVONNXPARSER_LIBRARY}
-        cvnp
-        bytetrack
-        inference
-        core
-        tools
-        utils
-        ${YAML_CPP_TARGET}
-    )
-    
-    set_target_properties(depth_detection PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-    )
-else()
-    message(STATUS "ENABLE_PYBIND=OFF")
-endif()
+#     set_target_properties(depth_detection PROPERTIES
+#         LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
+#         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
+#     )
+# else()
+#     message(STATUS "ENABLE_PYBIND=OFF")
+# endif()
