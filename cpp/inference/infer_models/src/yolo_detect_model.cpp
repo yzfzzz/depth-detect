@@ -1,5 +1,6 @@
 #include "yolo_detect_model.h"
 
+#include "logger_manager.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
@@ -16,6 +17,10 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            float                              conf_thresh,
                            int                                num_class,
                            bool                               use_gpu) {
+    APP_INFO(
+        "YOLO model init: raw_img_w: {}, raw_img_h: {}, nms_thresh: {}, "
+        "conf_thresh: {}, num_class: {}, use_gpu: {}",
+        raw_img_w, raw_img_h, nms_thresh, conf_thresh, num_class, use_gpu);
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
     nms_thresh_  = nms_thresh;
     conf_thresh_ = conf_thresh;

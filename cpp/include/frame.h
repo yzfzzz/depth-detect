@@ -34,6 +34,7 @@ class Detection;
 struct InferOutputContext {
     std::vector<Detection>                         detections;
     std::vector<STrack>                            tracked_objects;
+    std::vector<float>                             depth_raw_infer_out;
     cv::Mat                                        result_depth;
     cv::Mat                                        depth_vis;
     std::unordered_map<int, MotionStateInfoRecord> motion_records;

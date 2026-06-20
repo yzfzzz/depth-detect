@@ -12,11 +12,11 @@ const char * video_path  = "../data/1shu_east_0514.mp4";
 const char * config_path = "config.yaml";
 
 // 全局单例：配置、日志、IO、流水线
-ConfigManager & config_manager = []() -> ConfigManager & {
-    auto & cm = ConfigManager::getInstance(config_path);
-    cm.setUseGPU(true);
-    cm.setLogLevel("err");
-    return cm;
+ConfigManager     config_manager(config_path);
+static const auto _ = []() -> bool {
+    config_manager.setUseGPU(true);
+    config_manager.setLogLevel("err");
+    return true;
 }();
 
 LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);

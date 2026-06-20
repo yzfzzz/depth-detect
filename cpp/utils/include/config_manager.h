@@ -8,14 +8,7 @@
 // 框架读取配置文件类 - 单例模式
 class ConfigManager {
   public:
-    static ConfigManager & getInstance(const std::string & config_path = "config.yaml") {
-        static ConfigManager instance(config_path);
-        return instance;
-    }
-
-    ConfigManager(const ConfigManager &)             = delete;
-    ConfigManager & operator=(const ConfigManager &) = delete;
-
+    ConfigManager(const std::string config_path);
     std::map<std::string, std::string> getYoloModelPath() const;
     std::map<std::string, std::string> getDepthModelPath() const;
     int                                getDepthInterval() const;
@@ -38,13 +31,11 @@ class ConfigManager {
     void                               setLogLevel(const std::string & log_level);
 
   private:
-    explicit ConfigManager(const std::string & config_path);
-
     YAML::Node config_;
 };
 
 // Implementation
-inline ConfigManager::ConfigManager(const std::string & config_path) {
+inline ConfigManager::ConfigManager(const std::string config_path) {
     config_ = YAML::LoadFile(config_path);
 }
 

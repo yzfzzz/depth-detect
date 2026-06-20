@@ -11,23 +11,40 @@
 #include <array>
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
-    config_manager_(config_manager),
     tracker_(30, 30),  // 假设fps=30，或从config读取
-    motion_state_engine_(config_manager_.getMotionVelocityThreshold(),
-                         config_manager_.getMotionAccelerationThreshold(),
-                         config_manager_.getKfProcessNoiseCov(),
-                         config_manager_.getKfMeasurementNoiseCov()) {
+    motion_state_engine_(config_manager.getMotionVelocityThreshold(),
+                         config_manager.getMotionAccelerationThreshold(),
+                         config_manager.getKfProcessNoiseCov(),
+                         config_manager.getKfMeasurementNoiseCov()) {
     bool is_normalize = false;
-    // depth_model_.init(config_manager_.getDepthEnginePath(), frame_meta.img_w, frame_meta.img_h,
+    // depth_model_.init(config_manager.getDepthEnginePath(), frame_meta.img_w, frame_meta.img_h,
     //                   is_normalize);
-    // detector_.init(config_manager_.getYoloEnginePath(), frame_meta.img_w, frame_meta.img_h,
-    //                config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80);
+    // detector_.init(config_manager.getYoloEnginePath(), frame_meta.img_w, frame_meta.img_h,
+    //                config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80);
 
-    depth_model_.init(config_manager_.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
-                      is_normalize, config_manager_.isUseGPU());
-    detector_.init(config_manager_.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
-                   config_manager_.getYoloNmsThresh(), config_manager_.getYoloConfThresh(), 80,
-                   config_manager_.isUseGPU());
+    depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
+                      is_normalize, config_manager.isUseGPU());
+    detector_.init(config_manager.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
+                   config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
+                   config_manager.isUseGPU());
+}
+
+Pipeline::Pipeline(std::string depth_engine_path,
+                   std::string yolo_engine_path,
+                   FrameMeta   frame_meta,
+                   float       yolo_nms_thresh,
+                   float       yolo_conf_thresh) {
+    bool is_normalize = false;
+    depth_model_.init(
+        {
+            { "engine", depth_engine_path }
+    },
+        frame_meta.img_w, frame_meta.img_h, is_normalize, true);
+    detector_.init(
+        {
+            { "engine", yolo_engine_path }
+    },
+        frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, true);
 }
 
 void Pipeline::init() {}

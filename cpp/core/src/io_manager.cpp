@@ -5,13 +5,14 @@
 #include "public.h"
 
 #include <cstdlib>  // For system()
-#include <iostream>
-#include <ostream>
-#include <thread>
 
 IOManager::IOManager(const ConfigManager & config_manager) :
     save_mode_(config_manager.getSaveMode()),
     out_dir_(config_manager.getOutDir()) {}
+
+IOManager::IOManager(std::string save_mode, std::string out_dir) :
+    save_mode_(save_mode),
+    out_dir_(out_dir) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建

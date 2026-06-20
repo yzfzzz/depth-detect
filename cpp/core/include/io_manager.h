@@ -13,6 +13,7 @@ class IOManager {
   public:
     // 构造函数，传入配置管理器以获取保存模式和保存路径，同时传入视频参数
     IOManager(const ConfigManager & config_manager);
+    IOManager(std::string save_mode, std::string out_dir);
 
     FrameMeta Init(const std::string & video_path);
 
