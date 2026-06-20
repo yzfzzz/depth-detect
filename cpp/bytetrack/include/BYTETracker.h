@@ -4,8 +4,8 @@
 
 struct Object {
     cv::Rect_<float> rect;
-    int              label;
-    float            prob;
+    int              label;  // 类别
+    float            prob;   // 置信度
     float distance;  // 目标距离，单位为米，只有在metric深度图时才有意义
 };
 
