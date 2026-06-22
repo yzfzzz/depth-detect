@@ -1,10 +1,10 @@
 #pragma once
 
 #include "inference_backend.h"
-#include "logger_manager.h"
 
 #include <onnxruntime_cxx_api.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,10 +19,14 @@ class OnnxRuntimeBackend : public InferenceBackend {
     bool loadModel(const std::string & model_path) override;
     bool runInference(void * input_data, void * output_data) override;
     bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
-    std::vector<int> getInputDims() const override;
-    std::vector<int> getOutputDims() const override;
-    size_t           getInputByteSize() const override;
-    size_t           getOutputByteSize() const override;
+    bool runInference(void * input_data, std::vector<void *> output_data) override;
+    bool runInferenceAsync(void *              input_data,
+                           std::vector<void *> output_data,
+                           cudaStream_t        stream) override;
+    std::vector<int>     getInputDims() const override;
+    std::vector<int64_t> getOutputDims(int output_index = 0) const override;
+    size_t               getInputByteSize() const override;
+    size_t               getOutputByteSize(int output_index = 0) const override;
 
     BackendType getBackendType() const override { return BackendType::OnnxRuntime; }
 
@@ -35,10 +39,8 @@ class OnnxRuntimeBackend : public InferenceBackend {
     std::unique_ptr<Ort::MemoryInfo>     memory_info_;
 
     std::vector<int64_t> input_dims_;
-    std::vector<int64_t> output_dims_;
     size_t               input_byte_size_;
-    size_t               output_byte_size_;
 
-    std::string input_name_;
-    std::string output_name_;
+    std::string                   input_name_;
+    std::vector<OutputTensorInfo> output_tensor_;
 };

@@ -20,11 +20,16 @@ class TensorRTBackend : public InferenceBackend {
     // InferenceBackend 接口实现
     bool loadModel(const std::string & model_path) override;
     bool runInference(void * input_data, void * output_data) override;
+    bool runInference(void * input_data, std::vector<void *> output_data) override;
     bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
+    bool runInferenceAsync(void *              input_data,
+                           std::vector<void *> output_data,
+                           cudaStream_t        stream) override;
+
     std::vector<int> getInputDims() const override;
-    std::vector<int> getOutputDims() const override;
+    std::vector<int64_t> getOutputDims(int output_index = 0) const override;
     size_t           getInputByteSize() const override;
-    size_t           getOutputByteSize() const override;
+    size_t           getOutputByteSize(int output_index = 0) const override;
 
     BackendType getBackendType() const override { return BackendType::TensorRT; }
 
@@ -38,6 +43,7 @@ class TensorRTBackend : public InferenceBackend {
     void setupInputOutputDims();
 
   private:
+
     int    gpu_id_;
     Logger logger_;
 
@@ -45,13 +51,11 @@ class TensorRTBackend : public InferenceBackend {
     TrtRuntimePtr    runtime_;
     TrtEnginePtr     engine_;
     TrtContextPtr    context_;
-    // 维度信息
+    // 输入维度信息, Tensor 名称
     std::vector<int> input_dims_;
-    std::vector<int> output_dims_;
     size_t           input_byte_size_;
-    size_t           output_byte_size_;
+    std::string      input_tensor_name_;
 
-    // Tensor 名称
-    std::string input_tensor_name_;
-    std::string output_tensor_name_;
+    // 输出维度信息, Tensor 名称
+    std::vector<OutputTensorInfo> output_tensor_;
 };

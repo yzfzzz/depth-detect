@@ -1,14 +1,11 @@
 #include "onnxruntime_backend.h"
 
-#include "public.h"
+#include "logger_manager.h"
 
 #include <cstring>
 #include <fstream>
 
-OnnxRuntimeBackend::OnnxRuntimeBackend() :
-    session_(nullptr),
-    input_byte_size_(0),
-    output_byte_size_(0) {}
+OnnxRuntimeBackend::OnnxRuntimeBackend() : session_(nullptr), input_byte_size_(0) {}
 
 OnnxRuntimeBackend::~OnnxRuntimeBackend() = default;
 
@@ -60,18 +57,17 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
         }
 
         // 获取输出信息
-        char * raw_output_name = session_.GetOutputName(0, allocator);
-        output_name_           = raw_output_name;
-        allocator.Free(raw_output_name);
-
-        auto output_type_info   = session_.GetOutputTypeInfo(0);
-        auto output_tensor_info = output_type_info.GetTensorTypeAndShapeInfo();
-        output_dims_            = output_tensor_info.GetShape();
-
-        // 处理动态维度
-        for (auto & dim : output_dims_) {
-            if (dim <= 0) {
-                dim = 1;
+        output_tensor_.resize(session_.GetOutputCount());
+        for (size_t i = 0; i < session_.GetOutputCount(); i++) {
+            char * raw_output_name = session_.GetOutputName(i, allocator);
+            output_tensor_[i].name = raw_output_name;
+            allocator.Free(raw_output_name);
+            auto output_type_info  = session_.GetOutputTypeInfo(i);
+            output_tensor_[i].dims = output_type_info.GetTensorTypeAndShapeInfo().GetShape();
+            for (auto & dim : output_tensor_[i].dims) {
+                if (dim <= 0) {
+                    dim = 1;
+                }
             }
         }
 
@@ -81,36 +77,31 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
             input_byte_size_ *= dim;
         }
         input_byte_size_ *= sizeof(float);
-
-        output_byte_size_ = 1;
-        for (auto dim : output_dims_) {
-            output_byte_size_ *= dim;
+        for (int i = 0; i < output_tensor_.size(); i++) {
+            size_t byte_size = 1;
+            for (auto dim : output_tensor_[i].dims) {
+                byte_size *= dim;
+            }
+            output_tensor_[i].byte_size = byte_size * sizeof(float);
         }
-        output_byte_size_ *= sizeof(float);
 
         APP_INFO("ONNX Runtime model loaded successfully from: {}", model_path);
-        {
+        auto print_dims = [](const std::vector<int64_t> & dims) {
             std::string dims_str;
-            for (size_t i = 0; i < input_dims_.size(); ++i) {
+            for (size_t i = 0; i < dims.size(); ++i) {
                 if (i > 0) {
                     dims_str += ", ";
                 }
-                dims_str += std::to_string(input_dims_[i]);
+                dims_str += std::to_string(dims[i]);
             }
-            APP_INFO("Input dims: [{}]", dims_str);
+            return dims_str;
+        };
+
+        APP_INFO("Input dims: [{}], byte size: {} bytes", print_dims(input_dims_),
+                 input_byte_size_);
+        for (const OutputTensorInfo & t : output_tensor_) {
+            APP_INFO("Output dims: [{}], byte size: {} bytes", print_dims(t.dims), t.byte_size);
         }
-        {
-            std::string dims_str;
-            for (size_t i = 0; i < output_dims_.size(); ++i) {
-                if (i > 0) {
-                    dims_str += ", ";
-                }
-                dims_str += std::to_string(output_dims_[i]);
-            }
-            APP_INFO("Output dims: [{}]", dims_str);
-        }
-        APP_INFO("Input size: {} bytes, output size: {} bytes", input_byte_size_,
-                 output_byte_size_);
 
         return true;
     } catch (const Ort::Exception & e) {
@@ -119,9 +110,13 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
     }
 }
 
-bool OnnxRuntimeBackend::runInference(void * input_data, void * output_data) {
+bool OnnxRuntimeBackend::runInference(void * input_data, std::vector<void *> output_data) {
     if (!session_) {
         APP_ERROR("ONNX Runtime session not initialized");
+        return false;
+    }
+    if (output_data.size() != output_tensor_.size()) {
+        APP_ERROR("output_data size is not equal to output_tensor_.size()");
         return false;
     }
 
@@ -137,23 +132,27 @@ bool OnnxRuntimeBackend::runInference(void * input_data, void * output_data) {
             Ort::Value::CreateTensor<float>(*memory_info_, static_cast<float *>(input_data),
                                             input_count, input_dims_.data(), input_dims_.size());
 
-        const char * input_names[]  = { input_name_.c_str() };
-        const char * output_names[] = { output_name_.c_str() };
+        const char *              input_names[] = { input_name_.c_str() };
+        std::vector<const char *> output_names;
+        for (int i = 0; i < output_tensor_.size(); i++) {
+            output_names.push_back(output_tensor_[i].name.c_str());
+        }
 
-        auto output_tensors = session_.Run(Ort::RunOptions{ nullptr }, input_names, &input_tensor,
-                                           1, output_names, 1);
+        auto output = session_.Run(Ort::RunOptions{ nullptr }, input_names, &input_tensor, 1,
+                                   output_names.data(), output_names.size());
 
-        if (output_tensors.empty() || !output_tensors.front().IsTensor()) {
+        if (output.empty() || !output.front().IsTensor()) {
             APP_ERROR("ONNX Runtime inference produced invalid output");
             return false;
         }
 
         // 复制输出数据到用户提供的缓冲区
-        auto &  output_tensor = output_tensors.front();
-        float * src           = output_tensor.GetTensorMutableData<float>();
-        size_t  output_count  = output_tensor.GetTensorTypeAndShapeInfo().GetElementCount();
-        std::memcpy(output_data, src, output_count * sizeof(float));
-
+        for (int i = 0; i < output_tensor_.size(); i++) {
+            auto &  output_tensor = output[i];
+            float * src           = output_tensor.GetTensorMutableData<float>();
+            size_t  output_count  = output_tensor.GetTensorTypeAndShapeInfo().GetElementCount();
+            std::memcpy(output_data[i], src, output_count * sizeof(float));
+        }
         return true;
     } catch (const Ort::Exception & e) {
         APP_ERROR("ONNX Runtime inference failed: {}", e.what());
@@ -161,10 +160,27 @@ bool OnnxRuntimeBackend::runInference(void * input_data, void * output_data) {
     }
 }
 
+bool OnnxRuntimeBackend::runInference(void * input_data, void * output_data) {
+    return runInference(input_data, std::vector<void *>{ output_data });
+}
+
 bool OnnxRuntimeBackend::runInferenceAsync(void * input_data,
                                            void * output_data,
                                            cudaStream_t /*stream*/) {
     // ONNX Runtime CPU 后端不支持异步推理，回退到同步推理
+    APP_WARN(
+        "ONNX Runtime CPU backend does not support async inference, falling back to sync "
+        "inference");
+    return runInference(input_data, output_data);
+}
+
+bool OnnxRuntimeBackend::runInferenceAsync(void *              input_data,
+                                           std::vector<void *> output_data,
+                                           cudaStream_t /*stream*/) {
+    // ONNX Runtime CPU 后端不支持异步推理，回退到同步推理
+    APP_WARN(
+        "ONNX Runtime CPU backend does not support async inference, falling back to sync "
+        "inference");
     return runInference(input_data, output_data);
 }
 
@@ -172,14 +188,22 @@ std::vector<int> OnnxRuntimeBackend::getInputDims() const {
     return std::vector<int>(input_dims_.begin(), input_dims_.end());
 }
 
-std::vector<int> OnnxRuntimeBackend::getOutputDims() const {
-    return std::vector<int>(output_dims_.begin(), output_dims_.end());
+std::vector<int64_t> OnnxRuntimeBackend::getOutputDims(int output_index) const {
+    if (output_index < 0 || output_index >= static_cast<int>(output_tensor_.size())) {
+        APP_ERROR("Invalid output index: {}", output_index);
+        return std::vector<int64_t>();
+    }
+    return output_tensor_[output_index].dims;
 }
 
 size_t OnnxRuntimeBackend::getInputByteSize() const {
     return input_byte_size_;
 }
 
-size_t OnnxRuntimeBackend::getOutputByteSize() const {
-    return output_byte_size_;
+size_t OnnxRuntimeBackend::getOutputByteSize(int output_index) const {
+    if (output_index < 0 || output_index >= static_cast<int>(output_tensor_.size())) {
+        APP_ERROR("Invalid output index: {}", output_index);
+        return 0;
+    }
+    return output_tensor_[output_index].byte_size;
 }
