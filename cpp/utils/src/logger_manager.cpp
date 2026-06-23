@@ -50,10 +50,12 @@ spdlog::level::level_enum LoggerManager::stringToLogLevel(const std::string & le
     return spdlog::level::info;
 }
 
-LoggerManager::LoggerManager(bool save_file, bool console_output, const std::string & log_level_str) {
+LoggerManager::LoggerManager(bool                save_file,
+                             bool                console_output,
+                             const std::string & log_level_str) {
     // 创建sinks容器
     std::vector<spdlog::sink_ptr> sinks;
-    auto        log_level      = stringToLogLevel(log_level_str);
+    auto                          log_level = stringToLogLevel(log_level_str);
 
     // 文件输出sinks（按日期和latest）
     if (save_file) {

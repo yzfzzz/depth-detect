@@ -60,9 +60,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 
 int run(char * video_path, char * config_path) {
     // 读取配置文件 - 使用单例模式
-    ConfigManager config_manager(config_path);
+    ConfigManager   config_manager(config_path);
     // 初始化日志系统
-    LoggerManager::getInstance(config_manager);
+    LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
     // 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
     IOManager      io_manager(config_manager);
