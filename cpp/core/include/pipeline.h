@@ -9,11 +9,12 @@
 class Pipeline {
   public:
     Pipeline(ConfigManager & config_manager, FrameMeta frame_meta);
-    Pipeline(std::string depth_engine_path,
-             std::string yolo_engine_path,
+    Pipeline(std::string depth_model_path,
+             std::string yolo_model_path,
              FrameMeta   frame_meta,
-             float       yolo_nms_thresh  = 0.45,
-             float       yolo_conf_thresh = 0.25);
+             bool        use_gpu          = false,
+             float       yolo_nms_thresh  = 0.4f,
+             float       yolo_conf_thresh = 0.25f);
     void init();
 
     // 核心推理接口，供正常业务和 Benchmark 调用

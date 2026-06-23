@@ -29,22 +29,24 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
                    config_manager.isUseGPU());
 }
 
-Pipeline::Pipeline(std::string depth_engine_path,
-                   std::string yolo_engine_path,
+Pipeline::Pipeline(std::string depth_model_path,
+                   std::string yolo_model_path,
                    FrameMeta   frame_meta,
+                   bool        use_gpu,
                    float       yolo_nms_thresh,
                    float       yolo_conf_thresh) {
-    bool is_normalize = false;
+    bool        is_normalize = false;
+    std::string backend_type = use_gpu ? "engine" : "onnx";
     depth_model_.init(
         {
-            { "engine", depth_engine_path }
+            { backend_type, depth_model_path }
     },
-        frame_meta.img_w, frame_meta.img_h, is_normalize, true);
+        frame_meta.img_w, frame_meta.img_h, is_normalize, use_gpu);
     detector_.init(
         {
-            { "engine", yolo_engine_path }
+            { backend_type, yolo_model_path }
     },
-        frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, true);
+        frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu);
 }
 
 void Pipeline::init() {}
@@ -66,20 +68,6 @@ void Pipeline::process(FrameInputContext &  frame_input_context,
     }
     infer_output_context.tracked_objects = tracker_.update(objects);
     this->postProcess(frame_input_context, infer_output_context);
-
-    // if (do_depth) {
-    //     auto depth_infer_result = depth_model_.runInference(frame_input_context.raw_img, );
-
-    //     infer_output_context.result_depth = depth_infer_result.first;
-    //     infer_output_context.depth_vis    = depth_infer_result.second;
-    //     has_cached_depth_                 = true;
-    // } else {
-    //     infer_output_context.result_depth = cached_depth_;
-    //     infer_output_context.depth_vis    = cached_depth_vis_;
-    // }
-
-    // std::vector<Detection> res = detector_.runInference(frame_input_context.raw_img);
-    // postProcess(frame_input_context, infer_output_context);
 }
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
