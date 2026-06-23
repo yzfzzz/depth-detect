@@ -153,8 +153,6 @@ __constant__ uchar3 C_DEVICE_COLOR_MAP[256];  // BGR
 __global__ void normlize_color_kernel(float *  src,
                                       uchar *  dst,
                                       uchar3 * dst_colormap,
-                                      float *  cur_src_min_value,
-                                      float *  cur_src_max_value,
                                       int      input_w,
                                       int      input_h) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -162,12 +160,9 @@ __global__ void normlize_color_kernel(float *  src,
     if (idx >= input_w || idy >= input_h) {
         return;
     }
-
     // normalize
-    float range = *cur_src_max_value - *cur_src_min_value;
     // 防止Nan
-    float norm_val =
-        (range < 1e-6f) ? 0.0f : (src[idy * input_w + idx] - *cur_src_min_value) / range;
+    float norm_val = src[idy * input_w + idx];
     uchar gray_val = (uchar) (norm_val * 255.0f + 0.5f);
 
     dst[idy * input_w + idx] = gray_val;
@@ -252,8 +247,6 @@ void normalize_colormap_resize(float *      src,
                                uchar3 *     norm_colormap,
                                uchar *      dst_depth,
                                uchar3 *     dst_colormap,
-                               float *      d_cur_src_min_value,
-                               float *      d_cur_src_max_value,
                                int          input_w,
                                int          input_h,
                                int          resized_w,
@@ -264,8 +257,8 @@ void normalize_colormap_resize(float *      src,
 
     // 1. normalize
     // 2. colormap
-    normlize_color_kernel<<<grid_size, block_size, 0, stream>>>(
-        src, norm_depth, norm_colormap, d_cur_src_min_value, d_cur_src_max_value, input_w, input_h);
+    normlize_color_kernel<<<grid_size, block_size, 0, stream>>>(src, norm_depth, norm_colormap,
+                                                                input_w, input_h);
     // 3. resize
     grid_size = dim3((resized_w + 31) >> 5, (resized_h + 7) >> 3);
     resize_kernel<<<grid_size, block_size, 0, stream>>>(

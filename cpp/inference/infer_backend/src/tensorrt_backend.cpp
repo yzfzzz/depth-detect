@@ -2,7 +2,6 @@
 
 #include "public.h"
 
-#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -84,7 +83,7 @@ bool TensorRTBackend::loadEngine(const std::string & engine_path) {
             }
             dims_str += std::to_string(output_tensor_[i].dims[j]);
         }
-        APP_INFO("Output tensor[{}]: {}, dims: [{}], byte size: {} bytes", i,
+        APP_INFO("[{}] Output tensor['{}']: dims: [{}], byte size: {} bytes", i,
                  output_tensor_[i].name, dims_str, output_tensor_[i].byte_size);
     }
 
@@ -161,11 +160,6 @@ void TensorRTBackend::setupInputOutputDims() {
 #else
     context_->setInputShape(input_tensor_name_.c_str(), input_dims);
 #endif
-    APP_INFO("TensorRT input size: {} bytes", input_byte_size_);
-    for (int i = 0; i < output_tensor_.size(); i++) {
-        APP_INFO("TensorRT output[{}] size: {} bytes", output_tensor_[i].name,
-                 output_tensor_[i].byte_size);
-    }
 }
 
 bool TensorRTBackend::runInference(void * input_data, void * output_data) {

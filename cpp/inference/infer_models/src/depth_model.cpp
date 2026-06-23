@@ -132,24 +132,11 @@ void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 }
 
 void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
-    // CUB 归约：min / max（串行，复用 d_cub_temp_）
-    cub_device_reduce_min(d_cub_temp_.get(), cub_temp_bytes_,
-                          static_cast<float *>(d_infer_io_[1].get()),
-                          d_depth_minmax_.get(),  // d_out → min
-                          input_h_ * input_w_, stream_);
-
-    cub_device_reduce_max(d_cub_temp_.get(), cub_temp_bytes_,
-                          static_cast<float *>(d_infer_io_[1].get()),
-                          d_depth_minmax_.get() + 1,  // d_out → max
-                          input_h_ * input_w_, stream_);
-
     // 归一化 + 颜色映射 + resize
     normalize_colormap_resize(static_cast<float *>(d_infer_io_[1].get()),
                               d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(),
-                              d_buffer_dst_depth_.get(), d_buffer_dst_colormap_.get(),
-                              d_depth_minmax_.get(),      // min
-                              d_depth_minmax_.get() + 1,  // max
-                              input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
+                              d_buffer_dst_depth_.get(), d_buffer_dst_colormap_.get(), input_w_,
+                              input_h_, raw_img_w_, raw_img_h_, stream_);
 
     // 异步 D2H 拷贝
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_output_data_.get(), d_buffer_dst_depth_.get(),
@@ -163,7 +150,7 @@ void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 void DepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
     synchronizeStream();
     infer_output_context.depth_raw_infer_out.resize(input_h_ * input_w_);
-    cudaMemcpy(infer_output_context.depth_raw_infer_out.data(), d_infer_io_[1].get(),
+    cudaMemcpy(infer_output_context.depth_raw_infer_out.data(), d_infer_io_[2].get(),
                input_h_ * input_w_ * sizeof(float), cudaMemcpyDeviceToHost);
     infer_output_context.result_depth =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
@@ -189,7 +176,7 @@ std::vector<float> DepthModel::cvMatPreProcess(FrameInputContext & frame_input_c
 }
 
 void DepthModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-    infer_output_context.depth_raw_infer_out = h_infer_out_[0];
+    infer_output_context.depth_raw_infer_out = h_infer_out_[1];
     cv::Mat depth_mat(input_h_, input_w_, CV_32FC1, h_infer_out_[0].data());
     cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
 
