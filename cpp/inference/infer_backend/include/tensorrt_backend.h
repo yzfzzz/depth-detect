@@ -26,10 +26,10 @@ class TensorRTBackend : public InferenceBackend {
                            std::vector<void *> output_data,
                            cudaStream_t        stream) override;
 
-    std::vector<int> getInputDims() const override;
+    std::vector<int>     getInputDims() const override;
     std::vector<int64_t> getOutputDims(int output_index = 0) const override;
-    size_t           getInputByteSize() const override;
-    size_t           getOutputByteSize(int output_index = 0) const override;
+    size_t               getInputByteSize() const override;
+    size_t               getOutputByteSize(int output_index = 0) const override;
 
     BackendType getBackendType() const override { return BackendType::TensorRT; }
 
@@ -43,7 +43,6 @@ class TensorRTBackend : public InferenceBackend {
     void setupInputOutputDims();
 
   private:
-
     int    gpu_id_;
     Logger logger_;
 
