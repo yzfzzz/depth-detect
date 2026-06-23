@@ -133,8 +133,7 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
         std::vector<void *> output_buffers;
         output_buffers.reserve(d_infer_io_.size() - 1);
         std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
-                       std::back_inserter(output_buffers),
-                       [](const unique_ptr_cuda<void> & ptr) { return ptr.get(); });
+                       std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
         backend_->runInferenceAsync(d_infer_io_[0].get(), output_buffers, stream_);
         // 异步后处理
         cudaPostProcess(frame_input_context);
@@ -150,9 +149,13 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
         APP_ERROR("Model not initialized");
         return false;
     }
+    std::vector<void *> output_buffers;
+    output_buffers.reserve(getNumOutputs());
     if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         std::vector<float> onnx_input_tensor = cvMatPreProcess(frame_input_context);
-        backend_->runInference(onnx_input_tensor.data(), h_infer_out_.data());
+        std::transform(h_infer_out_.begin(), h_infer_out_.end(), std::back_inserter(output_buffers),
+                       [](auto & v) { return v.data(); });
+        backend_->runInference(onnx_input_tensor.data(), output_buffers);
         cvMatPostProcess(infer_output_context);
         return true;
     } else if (backend_->getBackendType() == BackendType::TensorRT) {
@@ -160,11 +163,8 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
         cudaPreProcess(frame_input_context);
         synchronizeStream();  // 等待预处理完成
                               // 同步推理
-                std::vector<void *> output_buffers;
-        output_buffers.reserve(d_infer_io_.size() - 1);
         std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
-                       std::back_inserter(output_buffers),
-                       [](const unique_ptr_cuda<void> & ptr) { return ptr.get(); });
+                       std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
         backend_->runInference(d_infer_io_[0].get(), output_buffers);
         // 异步后处理
         cudaPostProcess(frame_input_context);
