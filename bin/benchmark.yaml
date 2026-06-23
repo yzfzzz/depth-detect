@@ -1,0 +1,18 @@
+video_path: "../data/1shu_east_0514.mp4"
+
+task:
+  test_trt_pipeline:
+    yolo_model_path: "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
+    depth_model_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
+  
+  test_onnx_pipeline:
+    yolo_model_path: "../model/onnx/yolov8n/yolov8n_640_op11.onnx"
+    depth_model_path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
+  
+  test_quant_error:
+    yolo_int8_path: "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
+    yolo_fp16_path: "../model/engine/yolov8n/yolov8n_640_op11_fp16_trt10.9.engine"
+    yolo_fp32_path: "../model/engine/yolov8n/yolov8n_640_op11_fp32_trt10.9.engine"
+    depth_int8_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
+    depth_fp16_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
+    depth_fp32_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp32_trt10.9.engine"
