@@ -17,7 +17,7 @@ class DepthModel : public BaseModel {
               int                                raw_img_w,
               int                                raw_img_h,
               bool                               is_normalize,
-              bool                               use_gpu = false);
+              bool                               use_gpu = true);
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 

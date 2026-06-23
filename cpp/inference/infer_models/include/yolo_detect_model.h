@@ -23,7 +23,7 @@ class YoloDetectModel : public BaseModel {
               float                              nms_thresh,
               float                              conf_thresh,
               int                                num_class,
-              bool                               use_gpu = false);
+              bool                               use_gpu = true);
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 

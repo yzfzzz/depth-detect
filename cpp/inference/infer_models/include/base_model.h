@@ -73,7 +73,7 @@ class BaseModel {
     void init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
-              bool                               use_gpu = false);
+              bool                               use_gpu = true);
 
     // 预处理路由（根据后端类型调用不同的预处理方法）
     // virtual void preProcess(FrameInputContext & frame_input_context) {
