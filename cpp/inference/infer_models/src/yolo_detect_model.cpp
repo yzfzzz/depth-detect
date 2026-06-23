@@ -29,15 +29,13 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
     // 计算输出候选框数量（YOLOv8 输出格式: [1, num_class+4, candidates]）
     output_candidates_ = getOutputDims()[2];
 
-    // 计算输出数据总大小
-    size_t output_size = getOutputByteSize() / sizeof(float);
-
     APP_INFO("YOLO model output candidates: {}", output_candidates_);
-    APP_INFO("YOLO model output size: {}", output_size);
     size_t h_output_data_size = 1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT;
     if (backend_->getBackendType() == BackendType::TensorRT) {
+        // 计算输出数据总大小
+        size_t output_size       = getOutputByteSize(0);
         // 定义分配固定主机内存的 lambda 函数
-        auto alloc_cuda_pinned = [](size_t bytes) {
+        auto   alloc_cuda_pinned = [](size_t bytes) {
             void * ptr = nullptr;
             CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
             return ptr;
@@ -59,6 +57,7 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 
         // 准备设备输入输出缓冲区
         // d_infer_io_[0]: 输入缓冲区 [1, 3, H, W]
+        d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
         d_infer_io_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
 
         // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
@@ -81,7 +80,12 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 
     } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         // ONNX Runtime CPU 后端，准备主机输出数据空间
-        h_infer_out_.resize(output_size);
+        int output_num = getNumOutputs();
+        h_infer_out_.resize(output_num);
+        for (int i = 0; i < output_num; ++i) {
+            auto output_size = getOutputByteSize(i);
+            h_infer_out_[i].resize(output_size / sizeof(float));
+        }
     }
 
     APP_INFO("YOLO model initialized successfully");
@@ -176,7 +180,7 @@ std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_in
 void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
     int           num_elements = num_class_ + 4;
     int           num_bboxes   = output_candidates_;
-    const float * raw_output   = h_infer_out_.data();
+    const float * raw_output   = h_infer_out_[0].data();
 
     // 1. 解码：直接从原矩阵 [84, 8400] 读取，无需转置
     std::vector<cv::Rect2d> boxes;

@@ -130,7 +130,12 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
         // 异步预处理
         cudaPreProcess(frame_input_context);
         // 异步推理
-        backend_->runInferenceAsync(d_infer_io_[0].get(), d_infer_io_[1].get(), stream_);
+        std::vector<void *> output_buffers;
+        output_buffers.reserve(d_infer_io_.size() - 1);
+        std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
+                       std::back_inserter(output_buffers),
+                       [](const unique_ptr_cuda<void> & ptr) { return ptr.get(); });
+        backend_->runInferenceAsync(d_infer_io_[0].get(), output_buffers, stream_);
         // 异步后处理
         cudaPostProcess(frame_input_context);
         return true;
@@ -154,8 +159,13 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
         // 异步预处理
         cudaPreProcess(frame_input_context);
         synchronizeStream();  // 等待预处理完成
-        // 同步推理
-        backend_->runInference(d_infer_io_[0].get(), d_infer_io_[1].get());
+                              // 同步推理
+                std::vector<void *> output_buffers;
+        output_buffers.reserve(d_infer_io_.size() - 1);
+        std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
+                       std::back_inserter(output_buffers),
+                       [](const unique_ptr_cuda<void> & ptr) { return ptr.get(); });
+        backend_->runInference(d_infer_io_[0].get(), output_buffers);
         // 异步后处理
         cudaPostProcess(frame_input_context);
         getInferOutputResult(infer_output_context);

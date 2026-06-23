@@ -35,15 +35,17 @@ class BaseModel {
     }
 
     // 获取输出维度
-    std::vector<int> getOutputDims() const {
-        return backend_ ? backend_->getOutputDims() : std::vector<int>{};
+    std::vector<int64_t> getOutputDims(int output_index = 0) const {
+        return backend_ ? backend_->getOutputDims(output_index) : std::vector<int64_t>{};
     }
 
     // 获取输入数据大小（字节）
     size_t getInputByteSize() const { return backend_ ? backend_->getInputByteSize() : 0; }
 
     // 获取输出数据大小（字节）
-    size_t getOutputByteSize() const { return backend_ ? backend_->getOutputByteSize() : 0; }
+    size_t getOutputByteSize(int output_index = 0) const {
+        return backend_ ? backend_->getOutputByteSize(output_index) : 0;
+    }
 
     // 获取 CUDA 流
     cudaStream_t getStream() const { return stream_; }
@@ -54,6 +56,8 @@ class BaseModel {
             CHECK_CUDA(cudaStreamSynchronize(stream_));
         }
     }
+
+    int getNumOutputs() const { return backend_ ? static_cast<int>(backend_->getNumOutputs()) : 0; }
 
   protected:
     // 创建后端（子类可重写以自定义后端选择逻辑）
@@ -112,12 +116,12 @@ class BaseModel {
     int raw_img_h_;
 
     // 模型输入分辨率
-    int                                  input_h_;
-    int                                  input_w_;
-    bool                                 initialized_ = false;
+    int                                input_h_;
+    int                                input_w_;
+    bool                               initialized_ = false;
     // 模型输入输出缓冲区: d_infer_io_[0] -> input, d_infer_io_[1] -> output
-    std::array<unique_ptr_cuda<void>, 2> d_infer_io_;
-    std::unique_ptr<InferenceBackend>    backend_;
-    cudaStream_t                         stream_;
-    std::vector<float>                   h_infer_out_;
+    std::vector<unique_ptr_cuda<void>> d_infer_io_;
+    std::unique_ptr<InferenceBackend>  backend_;
+    cudaStream_t                       stream_;
+    std::vector<std::vector<float>>    h_infer_out_;
 };

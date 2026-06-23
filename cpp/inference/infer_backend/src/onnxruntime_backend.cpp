@@ -57,8 +57,9 @@ bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
         }
 
         // 获取输出信息
-        output_tensor_.resize(session_.GetOutputCount());
-        for (size_t i = 0; i < session_.GetOutputCount(); i++) {
+        num_outputs_ = session_.GetOutputCount();
+        output_tensor_.resize(num_outputs_);
+        for (size_t i = 0; i < num_outputs_; i++) {
             char * raw_output_name = session_.GetOutputName(i, allocator);
             output_tensor_[i].name = raw_output_name;
             allocator.Free(raw_output_name);

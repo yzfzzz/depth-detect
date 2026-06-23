@@ -38,8 +38,11 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         };
 
         // ── 推理 I/O 缓冲区 ──
-        d_infer_io_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
-        d_infer_io_[1].reset(alloc_cuda(input_h_ * input_w_ * sizeof(float)));
+        d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
+        d_infer_io_[0].reset(alloc_cuda(getInputByteSize()));
+        for (int i = 0; i < getNumOutputs(); ++i) {
+            d_infer_io_[i + 1].reset(alloc_cuda(getOutputByteSize(i)));
+        }
 
         // ── 后处理中间 buffer（模型分辨率）──
         d_buffer_norm_depth_.reset(
@@ -97,9 +100,13 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         // 初始化颜色映射表
         initColorMapTable();
     } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
-        auto output_size = getOutputByteSize();
-        APP_INFO("ONNX Runtime output byte size: {} bytes", output_size);
-        h_infer_out_.resize(output_size / sizeof(float));
+        int output_num = getNumOutputs();
+        h_infer_out_.resize(output_num);
+        for (int i = 0; i < output_num; ++i) {
+            auto output_size = getOutputByteSize(i);
+            APP_INFO("ONNX Runtime output {} byte size: {} bytes", i, output_size);
+            h_infer_out_[i].resize(output_size / sizeof(float));
+        }
     }
 
     APP_INFO("DepthModel initialized successfully with backend: {}",
@@ -182,8 +189,8 @@ std::vector<float> DepthModel::cvMatPreProcess(FrameInputContext & frame_input_c
 }
 
 void DepthModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-    infer_output_context.depth_raw_infer_out = h_infer_out_;
-    cv::Mat depth_mat(input_h_, input_w_, CV_32FC1, h_infer_out_.data());
+    infer_output_context.depth_raw_infer_out = h_infer_out_[0];
+    cv::Mat depth_mat(input_h_, input_w_, CV_32FC1, h_infer_out_[0].data());
     cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
 
     cv::Mat colormap;

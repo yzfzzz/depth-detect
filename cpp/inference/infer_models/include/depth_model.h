@@ -3,11 +3,9 @@
 #include "base_model.h"
 #include "frame.h"
 #include "memory.h"
-#include "public.h"
 
 #include <opencv2/core/hal/interface.h>
 
-#include <memory>
 #include <opencv2/opencv.hpp>
 #include <vector>
 
