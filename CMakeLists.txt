@@ -295,12 +295,12 @@ if(ENABLE_BENCHMARK)
     target_link_libraries(test_onnx_pipeline PRIVATE 
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
-    
-    # add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
-    # configure_common_includes(test_depth_preprocess)
-    # target_link_libraries(test_depth_preprocess PRIVATE 
-    #     core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
-    # )
+
+    add_executable(test_trt_quant_error ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_error.cpp)
+    configure_common_includes(test_trt_quant_error)
+    target_link_libraries(test_trt_quant_error PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
     
     if(IS_JETSON)
         add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)

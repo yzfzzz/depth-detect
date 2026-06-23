@@ -3,9 +3,9 @@
 #include "logger_manager.h"
 #include "pipeline.h"
 
-#include <opencv2/opencv.hpp>
+#include <yaml-cpp/yaml.h>
 
-// main ./video_path ./yolo_fp16.trt ./yolo_fp32.trt ./depth_fp16.trt ./depth_fp32.trt
+#include <opencv2/opencv.hpp>
 
 // ============================================================================
 // 误差度量工具函数
@@ -133,94 +133,38 @@ YoloDetectionError computeDetectionError(const std::vector<Detection> & dets_fp1
     return err;
 }
 
-// ============================================================================
-// 主函数
-// ============================================================================
-int main(int argc, char ** argv) {
-    if (argc != 6) {
-        APP_ERROR(
-            "Usage: {} <video_path> <yolo_fp16.trt> <yolo_fp32.trt> <depth_fp16.trt> "
-            "<depth_fp32.trt>",
-            argv[0]);
-    }
-    std::string video_path      = argv[1];
-    std::string yolo_fp16_path  = argv[2];
-    std::string yolo_fp32_path  = argv[3];
-    std::string depth_fp16_path = argv[4];
-    std::string depth_fp32_path = argv[5];
+void addYoloError(YoloDetectionError & sum_err, YoloDetectionError frame_err) {
+    sum_err.avg_iou += frame_err.avg_iou;
+    sum_err.avg_conf_diff += frame_err.avg_conf_diff;
+    sum_err.class_mismatch += frame_err.class_mismatch;
+    sum_err.count_diff += frame_err.count_diff;
+    sum_err.paired_count += frame_err.paired_count;
+}
 
-    ConfigManager config_manager("./config.yaml");
-    // 初始化日志系统
-    LoggerManager::getInstance(config_manager);
+void addDepthError(DepthErrorMetrics & sum_err, DepthErrorMetrics frame_err) {
+    sum_err.mae += frame_err.mae * frame_err.valid_px;
+    sum_err.rmse += frame_err.rmse * frame_err.rmse * frame_err.valid_px;  // sum_sq
+    sum_err.rel_err += frame_err.rel_err * frame_err.valid_px;
+    sum_err.max_abs = std::max(sum_err.max_abs, frame_err.max_abs);
+    sum_err.valid_px += frame_err.valid_px;
+}
 
-    APP_INFO("Application started with video: {}", std::string(video_path));
-    IOManager io_manager("video", "none");
-    FrameMeta frame_meta = io_manager.Init(video_path);
-
-    Pipeline pipeline_fp16(depth_fp16_path, yolo_fp16_path, frame_meta);
-    Pipeline pipeline_fp32(depth_fp32_path, yolo_fp32_path, frame_meta);
-
-    int                num_frames = 0;
-    FrameInputContext  frame_input_context(num_frames, frame_meta);
-    InferOutputContext infer_output_context_fp16;
-    InferOutputContext infer_output_context_fp32;
-
-    // ---- 累积误差统计 ----
-    DepthErrorMetrics  depth_err_sum;
-    YoloDetectionError yolo_err_sum;
-    int                processed_frames = 0;
-
-    while (true) {
-        frame_input_context.setFrameID(num_frames);
-
-        if (!io_manager.readNextFrame(frame_input_context, false) ||
-            frame_input_context.raw_img.empty()) {
-            break;
-        }
-        num_frames++;
-
-        pipeline_fp16.processOverlap(frame_input_context, infer_output_context_fp16);
-        pipeline_fp32.processOverlap(frame_input_context, infer_output_context_fp32);
-
-        // ---- 逐帧计算误差 ----
-        // 1. 深度误差
-        DepthErrorMetrics depth_frame_err =
-            computeDepthError(infer_output_context_fp16.depth_raw_infer_out,
-                              infer_output_context_fp32.depth_raw_infer_out);
-        depth_err_sum.mae += depth_frame_err.mae;
-        depth_err_sum.rmse += depth_frame_err.rmse;
-        depth_err_sum.max_abs = std::max(depth_err_sum.max_abs, depth_frame_err.max_abs);
-        depth_err_sum.rel_err += depth_frame_err.rel_err;
-        depth_err_sum.valid_px += depth_frame_err.valid_px;
-
-        // 2. YOLO 检测误差
-        YoloDetectionError yolo_frame_err = computeDetectionError(
-            infer_output_context_fp16.detections, infer_output_context_fp32.detections);
-        yolo_err_sum.avg_iou += yolo_frame_err.avg_iou;
-        yolo_err_sum.avg_conf_diff += yolo_frame_err.avg_conf_diff;
-        yolo_err_sum.class_mismatch += yolo_frame_err.class_mismatch;
-        yolo_err_sum.count_diff += yolo_frame_err.count_diff;
-        yolo_err_sum.paired_count += yolo_frame_err.paired_count;
-
-        processed_frames++;
-
-        if (num_frames > 1000) {
-            break;
-        }
-    }
-
+void printReport(const YoloDetectionError & yolo_err_sum,
+                 const DepthErrorMetrics &  depth_err_sum,
+                 int                        processed_frames,
+                 std::string                type = "FP16") {
     // ========================================================================
     // 输出量化误差报告
     // ========================================================================
-    APP_INFO("========== FP16 vs FP32 Quantization Error Report ==========");
+    APP_INFO("========== {} vs FP32 Quantization Error Report ==========", type);
     APP_INFO("Total frames processed: {}", processed_frames);
 
     // --- 深度误差 ---
     APP_INFO("--- Depth Map Error ---");
-    APP_INFO("  MAE:                {:.6f}", depth_err_sum.mae / processed_frames);
-    APP_INFO("  RMSE:               {:.6f}", depth_err_sum.rmse / processed_frames);
+    APP_INFO("  MAE:  {:.6f}", depth_err_sum.mae / depth_err_sum.valid_px);
+    APP_INFO("  RMSE: {:.6f}", std::sqrt(depth_err_sum.rmse / depth_err_sum.valid_px));
     APP_INFO("  Max Absolute Error: {:.6f}", depth_err_sum.max_abs);
-    APP_INFO("  Relative Error:     {:.2f}%", depth_err_sum.rel_err / processed_frames * 100.0);
+    APP_INFO("  Rel:  {:.2f}%", depth_err_sum.rel_err / depth_err_sum.valid_px * 100.0);
 
     // --- YOLO 检测误差 ---
     APP_INFO("--- YOLO Detection Error ---");
@@ -232,5 +176,77 @@ int main(int argc, char ** argv) {
     APP_INFO("  Count Diffs:        {} (total)", yolo_err_sum.count_diff);
 
     APP_INFO("=============================================================\n");
+}
+
+// ============================================================================
+// 主函数
+// ============================================================================
+int main() {
+    std::string config_path     = "benchmark.yaml";
+    std::string task_name       = "test_quant_error";
+    YAML::Node  root            = YAML::LoadFile(config_path);           // 先拿到根节点
+    std::string video_path      = root["video_path"].as<std::string>();  // 根层级读 video_path
+    YAML::Node  task_node       = root["task"][task_name];
+    std::string yolo_int8_path  = task_node["yolo_int8_path"].as<std::string>();
+    std::string yolo_fp16_path  = task_node["yolo_fp16_path"].as<std::string>();
+    std::string yolo_fp32_path  = task_node["yolo_fp32_path"].as<std::string>();
+    std::string depth_int8_path = task_node["depth_int8_path"].as<std::string>();
+    std::string depth_fp16_path = task_node["depth_fp16_path"].as<std::string>();
+    std::string depth_fp32_path = task_node["depth_fp32_path"].as<std::string>();
+    // 初始化日志系统
+    LoggerManager::getInstance(false, true, "info");
+
+    APP_INFO("Application started with video: {}", std::string(video_path));
+    IOManager io_manager("video", "none");
+    FrameMeta frame_meta = io_manager.Init(video_path);
+
+    Pipeline pipeline_int8(depth_int8_path, yolo_int8_path, frame_meta, true);
+    Pipeline pipeline_fp16(depth_fp16_path, yolo_fp16_path, frame_meta, true);
+    Pipeline pipeline_fp32(depth_fp32_path, yolo_fp32_path, frame_meta, true);
+
+    int                num_frames = 0;
+    FrameInputContext  frame_input_context(num_frames, frame_meta);
+    InferOutputContext infer_output_context_int8, infer_output_context_fp16,
+        infer_output_context_fp32;
+
+    // ---- 累积误差统计 ----
+    DepthErrorMetrics  depth_err_sum_int8, depth_err_sum_fp16;
+    YoloDetectionError yolo_err_sum_int8, yolo_err_sum_fp16;
+
+    while (true) {
+        frame_input_context.setFrameID(num_frames);
+
+        if (!io_manager.readNextFrame(frame_input_context, false) ||
+            frame_input_context.raw_img.empty()) {
+            break;
+        }
+        pipeline_int8.process(frame_input_context, infer_output_context_int8);
+        pipeline_fp16.process(frame_input_context, infer_output_context_fp16);
+        pipeline_fp32.process(frame_input_context, infer_output_context_fp32);
+
+        // ---- 逐帧计算误差 ----
+        // 1. 深度误差
+        addDepthError(depth_err_sum_int8,
+                      computeDepthError(infer_output_context_int8.depth_raw_infer_out,
+                                        infer_output_context_fp32.depth_raw_infer_out));
+        addDepthError(depth_err_sum_fp16,
+                      computeDepthError(infer_output_context_fp16.depth_raw_infer_out,
+                                        infer_output_context_fp32.depth_raw_infer_out));
+        // 2. YOLO 检测误差
+        addYoloError(yolo_err_sum_int8,
+                     computeDetectionError(infer_output_context_int8.detections,
+                                           infer_output_context_fp32.detections));
+
+        addYoloError(yolo_err_sum_fp16,
+                     computeDetectionError(infer_output_context_fp16.detections,
+                                           infer_output_context_fp32.detections));
+        num_frames++;
+        if (num_frames >= 1000) {
+            break;
+        }
+    }
+    printReport(yolo_err_sum_int8, depth_err_sum_int8, num_frames, "INT8");
+    printReport(yolo_err_sum_fp16, depth_err_sum_fp16, num_frames, "FP16");
+
     return 0;
 }

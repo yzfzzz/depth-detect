@@ -1,28 +1,25 @@
-#include "config_manager.h"
 #include "frame.h"
 #include "io_manager.h"
 #include "logger_manager.h"
 #include "pipeline.h"
 
 #include <benchmark/benchmark.h>
+#include <yaml-cpp/yaml.h>
 
 #include <opencv2/opencv.hpp>
 
-const char * video_path  = "../data/1shu_east_0514.mp4";
-const char * config_path = "config.yaml";
+std::string config_path      = "benchmark.yaml";
+std::string task_name        = "test_trt_pipeline";
+YAML::Node  root             = YAML::LoadFile(config_path);           // 先拿到根节点
+std::string video_path       = root["video_path"].as<std::string>();  // 根层级读 video_path
+YAML::Node  task_node        = root["task"][task_name];
+std::string yolo_model_path  = task_node["yolo_model_path"].as<std::string>();
+std::string depth_model_path = task_node["depth_model_path"].as<std::string>();
 
-// 全局单例：配置、日志、IO、流水线
-ConfigManager     config_manager(config_path);
-static const auto _ = []() -> bool {
-    config_manager.setUseGPU(true);
-    config_manager.setLogLevel("err");
-    return true;
-}();
-
-LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
-IOManager       io_manager(config_manager);
+LoggerManager & logger_manager = LoggerManager::getInstance(false, true, "err");
+IOManager       io_manager("none");
 FrameMeta       frame_meta = io_manager.Init(video_path);
-Pipeline        pipeline(config_manager, frame_meta);
+Pipeline        pipeline(depth_model_path, yolo_model_path, frame_meta, true);
 
 // 对比同步串行 (process) 与 CPU/GPU 重叠 (processOverlap) 的性能
 class PipelineBenchmark : public benchmark::Fixture {
