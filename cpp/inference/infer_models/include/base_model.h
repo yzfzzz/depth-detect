@@ -77,7 +77,7 @@ class BaseModel {
 
     virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 
-    virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
+    virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;      // cuda
 
     virtual void cvMatPostProcess(InferOutputContext & infer_output_context) = 0;  //cpu
 

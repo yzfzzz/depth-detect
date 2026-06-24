@@ -8,9 +8,9 @@ prefer:
 yolo:
   yolo_model_path:
     - type: engine
-      path: "/home/work/Stereo-Detection/modelV2/engine/yolov8s_s640_ws1024_fp16.engine"
+      path: "/home/work/Stereo-Detection/model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
     - type: onnx
-      path: "/home/work/Stereo-Detection/modelV2/onnx_model/yolov8s.onnx"
+      path: "/home/work/Stereo-Detection/model/onnx/yolov8n/yolov8n_640_op11.onnx"
 
   yolo_nms_thresh: 0.4    # YOLO NMS阈值 (下采样截断遮挡框)
   yolo_conf_thresh: 0.25
@@ -19,7 +19,7 @@ depth:
   depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
   depth_model_path:
     - type: engine
-      path: "/home/work/Stereo-Detection/modelV2/engine/lite_mono-8m_op12_s640_ws-all_fp16.engine"
+      path: "/home/work/Stereo-Detection/model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
     - type: onnx
       path: "/home/work/Stereo-Detection/model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
 
@@ -35,4 +35,4 @@ io_manager:
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
   console_output: true    # 是否在终端显示日志
-  log_level: info         # 日志级别: trace / debug / info / warn / err / critical
+  log_level: debug         # 日志级别: trace / debug / info / warn / err / critical
