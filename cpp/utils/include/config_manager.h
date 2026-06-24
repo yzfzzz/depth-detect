@@ -2,7 +2,6 @@
 #include <yaml-cpp/yaml.h>
 
 #include <map>
-#include <memory>
 #include <string>
 
 // 框架读取配置文件类 - 单例模式

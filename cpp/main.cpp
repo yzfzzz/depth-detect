@@ -12,7 +12,6 @@
 
 #include <cstdio>
 #include <functional>
-#include <iostream>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/operations.hpp>
 #include <string>

@@ -1,17 +1,36 @@
 #include "BYTETracker.h"
 #include "cvnp/cvnp.h"
-#include "depth_anything.h"
-#include "lite_mono.h"
+#include "depth_model.h"
+#include "frame.h"
 #include "motion_state_engine.h"
 #include "STrack.h"
-#include "types.h"
 #include "yolo_detect_model.h"
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 namespace py = pybind11;
+
+// ━━━━━ 工具函数：numpy 图片 → FrameInputContext（含 GPU 上传）━━━━━
+FrameInputContext make_frame_context(py::array_t<uint8_t> & img, int frame_id, double fps) {
+    cv::Mat           mat = cvnp::nparray_to_mat(img);
+    FrameMeta         meta(mat.cols, mat.rows, fps, FrameSource::VIDEO);
+    FrameInputContext ctx(frame_id, meta);
+    ctx.raw_img = mat;
+
+    int device_count = 0;
+    if (cudaGetDeviceCount(&device_count) == cudaSuccess && device_count > 0) {
+        void * ptr = nullptr;
+        CHECK_CUDA(cudaMalloc(&ptr, ctx.img_size));
+        ctx.d_raw_img_.reset(static_cast<uchar *>(ptr));
+        CHECK_CUDA(
+            cudaMemcpy(ctx.d_raw_img_.get(), mat.data, ctx.img_size, cudaMemcpyHostToDevice));
+    }
+    return ctx;
+}
 
 // ==================== 绑定 Detection 结构体 ====================
 void bind_detection(py::module & m) {
@@ -20,8 +39,9 @@ void bind_detection(py::module & m) {
         .def_readwrite("conf", &Detection::conf)
         .def_readwrite("class_id", &Detection::classId)
         .def("__repr__", [](const Detection & d) {
-            return py::str("Detection(bbox={}, conf={:.2f}, class_id={})")
-                .format(d.bbox, d.conf, d.classId);
+            return py::str(
+                       "Detection(bbox=[{:.1f}, {:.1f}, {:.1f}, {:.1f}], conf={:.2f}, class_id={})")
+                .format(d.bbox[0], d.bbox[1], d.bbox[2], d.bbox[3], d.conf, d.classId);
         });
 }
 
@@ -55,24 +75,49 @@ void bind_motion_state_info_record(py::module & m) {
 // ==================== 绑定 YoloDetectModel ====================
 void bind_yolo_detector(py::module & m) {
     py::class_<YoloDetectModel>(m, "YoloDetectModel")
-        .def(py::init<const std::string &, int, float, float, int>(), py::arg("trt_file"),
-             py::arg("gpu_id") = 0, py::arg("nms_thresh") = 0.45f, py::arg("conf_thresh") = 0.25f,
-             py::arg("num_class") = 80)
-        .def("inference", &YoloDetectModel::inference, py::arg("img"),
-             "Run inference on the input image and return a list of Detection results");
+        .def(py::init<>())
+        .def("init", &YoloDetectModel::init, py::arg("model_path"), py::arg("raw_img_w"),
+             py::arg("raw_img_h"), py::arg("nms_thresh"), py::arg("conf_thresh"),
+             py::arg("num_class"), py::arg("use_gpu") = false,
+             "Initialize YOLO model with paths and parameters")
+        // 便捷方法：直接接受 numpy 图片，内部管理 FrameInputContext
+        .def(
+            "inference",
+            [](YoloDetectModel & self, py::array_t<uint8_t> & img, int frame_id, double fps) {
+                FrameInputContext  ctx = make_frame_context(img, frame_id, fps);
+                InferOutputContext out;
+
+                self.runInferenceAsync(ctx);
+                self.getInferOutputResult(out);
+                return out.detections;
+            },
+            py::arg("img"), py::arg("frame_id") = 0, py::arg("fps") = 30.0,
+            "Run YOLO inference on a numpy image (HxWxC, uint8). "
+            "Returns list of Detection objects.");
 }
 
-// ==================== 绑定 depth深度检测模型 ====================
+// ==================== 绑定 DepthModel（统一的深度模型）====================
 void bind_depth_models(py::module & m) {
-    py::class_<DepthModel, std::shared_ptr<DepthModel>>(m, "DepthModel")
-        .def("init", &DepthModel::init, py::arg("engine_path"),
-             "Initialize the depth model with the given engine path")
-        .def("predict", &DepthModel::predict, py::arg("image"), "Run depth prediction");
-
-    py::class_<DepthAnything, DepthModel, std::shared_ptr<DepthAnything>>(m, "DepthAnything")
-        .def(py::init<>());
-
-    py::class_<LiteMono, DepthModel, std::shared_ptr<LiteMono>>(m, "LiteMono").def(py::init<>());
+    py::class_<DepthModel>(m, "DepthModel")
+        .def(py::init<>())
+        .def("init", &DepthModel::init, py::arg("model_path"), py::arg("raw_img_w"),
+             py::arg("raw_img_h"), py::arg("is_normalize") = false, py::arg("use_gpu") = false,
+             "Initialize the depth model with given paths. "
+             "model_path is a dict with 'engine' and/or 'onnx' keys.")
+        // 便捷方法：直接接受 numpy 图片，返回 (depth_map, depth_vis) 两个 numpy 数组
+        .def(
+            "predict",
+            [](DepthModel & self, py::array_t<uint8_t> & img, int frame_id, double fps) {
+                FrameInputContext  ctx = make_frame_context(img, frame_id, fps);
+                InferOutputContext out;
+                self.runInferenceAsync(ctx);
+                self.getInferOutputResult(out);
+                // clone 确保数据独立于模型内部的 pinned memory
+                return py::make_tuple(out.result_depth.clone(), out.depth_vis.clone());
+            },
+            py::arg("img"), py::arg("frame_id") = 0, py::arg("fps") = 30.0,
+            "Run depth prediction on a numpy image. "
+            "Returns (depth_map, depth_colormap) as numpy arrays.");
 }
 
 // ==================== 绑定 MotionStateEngine ====================
@@ -89,8 +134,6 @@ void bind_motion_state_engine(py::module & m) {
 
 // ==================== 绑定 BYTETracker ====================
 void bind_byte_tracker(py::module & m) {
-    // Object 结构体
-
     py::class_<Object>(m, "Object")
         .def(py::init<>())
         .def_property(
@@ -112,7 +155,6 @@ void bind_byte_tracker(py::module & m) {
         .def_readwrite("prob", &Object::prob)
         .def_readwrite("distance", &Object::distance);
 
-    // STrack
     py::class_<STrack>(m, "STrack")
         .def_readonly("tlwh", &STrack::tlwh_)
         .def_readonly("track_id", &STrack::track_id_)
@@ -120,13 +162,10 @@ void bind_byte_tracker(py::module & m) {
         .def_readonly("score", &STrack::score_)
         .def_readonly("is_activated", &STrack::is_activated_);
 
-    // BYTETracker
     py::class_<BYTETracker>(m, "BYTETracker")
         .def(py::init<int, int>(), py::arg("frame_rate") = 30, py::arg("track_buffer") = 30)
-        .def(
-            "update",
-            [](BYTETracker & self, std::vector<Object> & objects) { return self.update(objects); },
-            py::arg("objects"), "Update tracker with new detections");
+        .def("update", &BYTETracker::update, py::arg("objects"),
+             "Update tracker with new detections");
 }
 
 // ==================== 导出常量 ====================
@@ -136,9 +175,15 @@ void bind_constants(py::module & m) {
 
 // ==================== 主模块定义 ====================
 PYBIND11_MODULE(depth_detection, m) {
-    m.doc() = "Depth Detection Python Bindings - C++ core classes exposed to Python";
+    m.doc() = "Depth Detection Python Bindings — inference-only C++ bridge to Python";
 
-    // 绑定各类
+    // ── 初始化 spdlog 默认 logger，防止 APP_INFO/APP_ERROR 空指针崩溃 ──
+    auto logger = spdlog::get("app");
+    if (!logger) {
+        logger = spdlog::stdout_color_mt("app");
+        spdlog::set_level(spdlog::level::info);  // Python 侧只显示 warn 以上，减少刷屏
+    }
+
     bind_detection(m);
     bind_depth_models(m);
     bind_motion_state(m);

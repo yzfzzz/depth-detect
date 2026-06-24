@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iomanip>
-#include <iostream>
 
 std::string LoggerManager::getDateLogFilePath() {
     auto now  = std::chrono::system_clock::now();

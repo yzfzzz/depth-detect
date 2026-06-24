@@ -1,6 +1,4 @@
 #pragma once
-#include "public.h"
-
 #include <memory.h>
 #include <opencv2/core/hal/interface.h>
 

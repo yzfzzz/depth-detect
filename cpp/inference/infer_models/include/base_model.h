@@ -75,27 +75,9 @@ class BaseModel {
               int                                raw_img_h,
               bool                               use_gpu = true);
 
-    // 预处理路由（根据后端类型调用不同的预处理方法）
-    // virtual void preProcess(FrameInputContext & frame_input_context) {
-    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
-    //         cudaPreProcess(frame_input_context);
-    //     } else {
-    //         cvMatPreProcess(frame_input_context);
-    //     }
-    // }
-
     virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 
     virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
-
-    // 后处理路由（根据后端类型调用不同的后处理方法）
-    // virtual void postProcess(FrameInputContext & frame_input_context) {
-    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
-    //         cudaPostProcess(frame_input_context);
-    //     } else {
-    //         cvMatPostProcess(frame_input_context);
-    //     }
-    // }
 
     virtual void cvMatPostProcess(InferOutputContext & infer_output_context) = 0;  //cpu
 
