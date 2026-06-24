@@ -302,57 +302,11 @@ if(ENABLE_BENCHMARK)
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
     
-    if(IS_JETSON)
-        add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)
-        configure_common_includes(test_jeston_mem_manager)
-        target_link_libraries(test_jeston_mem_manager PRIVATE 
-            core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
-        )
-    endif()
+    add_executable(test_trt_quant_latency ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_latency.cpp)
+    configure_common_includes(test_trt_quant_latency)
+    target_link_libraries(test_trt_quant_latency PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
 else()
     message(STATUS "ENABLE_BENCHMARK=OFF")
 endif()
-
-# # ==================== pybind11 (Jetson Disabled) ====================
-# if(IS_JETSON)
-#     set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
-# endif()
-
-# # ==================== pybind11 ====================
-# if(ENABLE_PYBIND)
-#     find_package(pybind11 REQUIRED)
-#     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
-#     pybind11_add_module(depth_detection ${PROJECT_CPP_DIR}/python_wrapper/depth_detect_py.cpp)
-#     configure_common_includes(depth_detection)
-#     target_include_directories(depth_detection PRIVATE
-#         ${PROJECT_CPP_DIR}/inference/infer_models/include
-#         ${PROJECT_CPP_DIR}/inference/infer_backend/include
-#         ${PROJECT_CPP_DIR}/core/include
-#         ${PROJECT_CPP_DIR}/bytetrack/include
-#         ${PROJECT_CPP_DIR}/utils/include
-#         ${PROJECT_CPP_DIR}/include
-#     )
-#     if(IS_JETSON)
-#         target_include_directories(depth_detection PRIVATE ${PROJECT_CUB_DIR})
-#     endif()
-    
-#     target_link_libraries(depth_detection PRIVATE
-#         ${OpenCV_LIBS}
-#         ${CUDA_CUDART_LIBRARY}  
-#         ${TENSORRT_NVINFER_LIBRARY}
-#         ${TENSORRT_NVONNXPARSER_LIBRARY}
-#         cvnp
-#         bytetrack
-#         inference
-#         core
-#         utils
-#         ${YAML_CPP_TARGET}
-#     )
-    
-#     set_target_properties(depth_detection PROPERTIES
-#         LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-#         RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-#     )
-# else()
-#     message(STATUS "ENABLE_PYBIND=OFF")
-# endif()

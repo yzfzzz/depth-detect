@@ -1,18 +1,34 @@
 video_path: "../data/1shu_east_0514.mp4"
 
+# 单独锚点 — 每个模型路径一个
+_yolo_int8:  &yolo_int8  "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
+_yolo_fp16:  &yolo_fp16  "../model/engine/yolov8n/yolov8n_640_op11_fp16_trt10.9.engine"
+_yolo_fp32:  &yolo_fp32  "../model/engine/yolov8n/yolov8n_640_op11_fp32_trt10.9.engine"
+_depth_int8: &depth_int8 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
+_depth_fp16: &depth_fp16 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
+_depth_fp32: &depth_fp32 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp32_trt10.9.engine"
+
 task:
   test_trt_pipeline:
-    yolo_model_path: "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
-    depth_model_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
-  
+    yolo_model_path:  *yolo_fp16                        
+    depth_model_path: *depth_fp16
+
   test_onnx_pipeline:
-    yolo_model_path: "../model/onnx/yolov8n/yolov8n_640_op11.onnx"
+    yolo_model_path:  "../model/onnx/yolov8n/yolov8n_640_op11.onnx"
     depth_model_path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
-  
+
   test_quant_error:
-    yolo_int8_path: "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
-    yolo_fp16_path: "../model/engine/yolov8n/yolov8n_640_op11_fp16_trt10.9.engine"
-    yolo_fp32_path: "../model/engine/yolov8n/yolov8n_640_op11_fp32_trt10.9.engine"
-    depth_int8_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
-    depth_fp16_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
-    depth_fp32_path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp32_trt10.9.engine"
+    yolo_int8_path:  *yolo_int8
+    yolo_fp16_path:  *yolo_fp16
+    yolo_fp32_path:  *yolo_fp32
+    depth_int8_path: *depth_int8
+    depth_fp16_path: *depth_fp16
+    depth_fp32_path: *depth_fp32
+
+  test_quant_latency:
+    yolo_int8_path:  *yolo_int8
+    yolo_fp16_path:  *yolo_fp16
+    yolo_fp32_path:  *yolo_fp32
+    depth_int8_path: *depth_int8
+    depth_fp16_path: *depth_fp16
+    depth_fp32_path: *depth_fp32
