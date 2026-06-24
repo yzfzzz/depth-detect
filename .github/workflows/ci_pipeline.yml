@@ -210,7 +210,7 @@ jobs:
               cd bin && \
               chmod +x ./test_onnx_pipeline && \
               export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
-              echo '🚀 Running ./test_onnx_pipeline && \
+              echo '🚀 Running ./test_onnx_pipeline' && \
               ./test_onnx_pipeline && \
               echo '🎉 Test successful'
             "
