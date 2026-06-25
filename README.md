@@ -147,7 +147,11 @@ cd ../bin
 ```bash
 cd ./bin && ./test_trt_pipeline && ./test_onnx_pipeline
 ```
-![geforce5060_benchmark_test.png](./doc/geforce5060_benchmark_test.png)
+GeForce 5060（x86）基准测试结果：
+![geforce5060_benchmark_test.png](./doc/geforce_5060_benchmark_combined.png)
+Jetson TX2（aarch64）基准测试结果：
+![jetson_benchmark_test.png](./doc/jeston_tx2_benchmark_combined.png)
+ps. 测试结果仅供参考，实际性能可能因硬件配置、模型大小、输入分辨率等因素而有所不同
 
 
 

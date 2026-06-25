@@ -23,18 +23,25 @@ class Pipeline {
     void processOverlap(FrameInputContext &  frame_input_context,
                         InferOutputContext & infer_output_context);
 
+    void updateMotionStates(FrameInputContext &  frame_input_context,
+                            InferOutputContext & infer_output_context);
+
     cv::Scalar getColor(int idx) { return tracker_.getColor(idx); }
 
     YoloDetectModel & getDetector() { return detector_; }
 
     DepthModel & getDepthModel() { return depth_model_; }
 
-    void            postProcess(FrameInputContext &  frame_input_context,
-                                InferOutputContext & infer_output_context);
+    BYTETracker & getTracker() { return tracker_; }
+
+    MotionStateEngine & getMotionStateEngine() { return motion_state_engine_; }
+
+  private:
+    void updateTracker(InferOutputContext & infer_output_context);
+
     YoloDetectModel detector_;
     DepthModel      depth_model_;
 
-  private:
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {
             if (class_id == c) {
