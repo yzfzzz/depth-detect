@@ -1,7 +1,6 @@
 #include "postprocess.h"
 
 #include <cstdio>
-#include <cub/cub.cuh>
 
 // ------------------ transpose --------------------
 __global__ void transpose_kernel(float * src,

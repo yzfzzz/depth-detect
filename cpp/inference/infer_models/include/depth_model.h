@@ -38,11 +38,6 @@ class DepthModel : public BaseModel {
     unique_ptr_cuda<uchar>  d_buffer_norm_depth_;
     unique_ptr_cuda<uchar3> d_buffer_norm_colormap_;
 
-    // 后处理归约：min/max 标量 + CUB 临时空间（min/max 串行复用同一 buffer）
-    unique_ptr_cuda<float> d_depth_minmax_;  // float[2]: [min, max]
-    unique_ptr_cuda<void>  d_cub_temp_;
-    size_t                 cub_temp_bytes_ = 0;
-
     // 预处理参数：mean[3] + std[3] 合并存储
     unique_ptr_cuda<float> d_normalize_params_;  // float[6]
 
