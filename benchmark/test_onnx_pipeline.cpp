@@ -9,8 +9,8 @@
 
 std::string config_path      = "benchmark.yaml";
 std::string task_name        = "test_onnx_pipeline";
-YAML::Node  root             = YAML::LoadFile(config_path);           // 先拿到根节点
-std::string video_path       = root["video_path"].as<std::string>();  // 根层级读 video_path
+YAML::Node  root             = YAML::LoadFile(config_path);
+std::string video_path       = root["video_path"].as<std::string>();
 YAML::Node  task_node        = root["task"][task_name];
 std::string yolo_model_path  = task_node["yolo_model_path"].as<std::string>();
 std::string depth_model_path = task_node["depth_model_path"].as<std::string>();
@@ -44,7 +44,7 @@ class PipelineBenchmark : public benchmark::Fixture {
             state.PauseTiming();
             FrameInputContext ctx(num_frames_, frame_meta);
             if (!io_manager.readNextFrame(ctx, false) || ctx.raw_img.empty()) {
-                io_manager.Init(video_path);  // 播完循环
+                io_manager.Init(video_path);
                 continue;
             }
             num_frames_++;
@@ -61,22 +61,21 @@ class PipelineBenchmark : public benchmark::Fixture {
 
 // ---- 端到端流水线 ----
 
-// 同步串行：YOLO → Depth → ByteTrack → PostProcess
-BENCHMARK_DEFINE_F(PipelineBenchmark, Process)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_Onnx_Process_Sync)(benchmark::State & state) {
     RunPipelineBench(state,
                      [](auto & ctx, auto & out, auto & state) { pipeline.process(ctx, out); });
 }
 
 // ---- YOLO 检测各阶段 ----
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPreprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         pipeline.detector_.cvMatPreProcess(ctx);
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, YoloInference)(benchmark::State & state) {
-    RunPipelineBench(state, [](auto & ctx, auto & out, benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_Onnx_YoloInference)(benchmark::State & state) {
+    RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
         pipeline.detector_.cvMatPreProcess(ctx);
         state.ResumeTiming();
@@ -84,7 +83,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, YoloInference)(benchmark::State & state) {
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPostprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
 
@@ -99,14 +98,14 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, YoloPostprocess)(benchmark::State & state)
 
 // ---- 深度估计各阶段 ----
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPreprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         pipeline.depth_model_.cvMatPreProcess(ctx);
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, DepthInference)(benchmark::State & state) {
-    RunPipelineBench(state, [](auto & ctx, auto & out, auto state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_Onnx_DepthInference)(benchmark::State & state) {
+    RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
         pipeline.depth_model_.cvMatPreProcess(ctx);
         state.ResumeTiming();
@@ -115,7 +114,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, DepthInference)(benchmark::State & state) 
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPostprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
 
@@ -130,8 +129,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, DepthPostprocess)(benchmark::State & state
 
 // ---- 后处理 ----
 
-// 测量 MotionState + PostProcess 耗时（不含推理），用 processOverlap 准备好推理结果
-BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)(benchmark::State & state) {
     for (auto _ : state) {
         state.PauseTiming();
         FrameInputContext ctx(num_frames_, frame_meta);
@@ -149,46 +147,39 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, MotionStateEnginePostprocess)(benchmark::S
 }
 
 // ============================================================================
-// 注册
+// 注册（无 ->Name，1.7 兼容）
+// ============================================================================
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, Process)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_Onnx_Process_Sync)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/Onnx/Process(Sync)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, YoloPreprocess)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPreprocess)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/OpenCV2/YoloPreprocess");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, YoloInference)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_Onnx_YoloInference)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/Onnx/YoloInference");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, YoloPostprocess)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPostprocess)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/OpenCV2/YoloPostprocess");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, DepthPreprocess)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPreprocess)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/OpenCV2/DepthPreprocess");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, DepthInference)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_Onnx_DepthInference)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/Onnx/DepthInference");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, DepthPostprocess)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPostprocess)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/OpenCV2/DepthPostprocess");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(PipelineBenchmark, MotionStateEnginePostprocess)
+BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("Pipeline/MotionStateEnginePostprocess");
+    ->Iterations(100);
 
 BENCHMARK_MAIN();

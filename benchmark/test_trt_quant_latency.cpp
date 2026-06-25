@@ -75,67 +75,61 @@ class QuantLatencyBench : public benchmark::Fixture {
 };
 
 // ============================================================================
-// Benchmarks — 命名规则: QuantLatency/<精度>/<模式>
+// Benchmarks
 // ============================================================================
 
 // ---------- INT8 ----------
-BENCHMARK_DEFINE_F(QuantLatencyBench, INT8_Sync)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_INT8_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_int8_pipe.process(ctx, out); });
 }
 
-BENCHMARK_DEFINE_F(QuantLatencyBench, INT8_Overlap)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_INT8_Process_Overlap)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_int8_pipe.processOverlap(ctx, out); });
 }
 
 // ---------- FP16 ----------
-BENCHMARK_DEFINE_F(QuantLatencyBench, FP16_Sync)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP16_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp16_pipe.process(ctx, out); });
 }
 
-BENCHMARK_DEFINE_F(QuantLatencyBench, FP16_Overlap)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP16_Process_Overlap)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp16_pipe.processOverlap(ctx, out); });
 }
 
 // ---------- FP32 ----------
-BENCHMARK_DEFINE_F(QuantLatencyBench, FP32_Sync)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP32_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp32_pipe.process(ctx, out); });
 }
 
-BENCHMARK_DEFINE_F(QuantLatencyBench, FP32_Overlap)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP32_Process_Overlap)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp32_pipe.processOverlap(ctx, out); });
 }
 
 // ============================================================================
-// 注册
+// 注册（无 ->Name，1.7 兼容）
 // ============================================================================
-BENCHMARK_REGISTER_F(QuantLatencyBench, INT8_Sync)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_INT8_Process_Sync)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/INT8/Process(Sync)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(QuantLatencyBench, INT8_Overlap)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_INT8_Process_Overlap)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/INT8/Process(Overlap)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(QuantLatencyBench, FP16_Sync)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_FP16_Process_Sync)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/FP16/Process(Sync)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(QuantLatencyBench, FP16_Overlap)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_FP16_Process_Overlap)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/FP16/Process(Overlap)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(QuantLatencyBench, FP32_Sync)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_FP32_Process_Sync)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/FP32/Process(Sync)");
+    ->Iterations(100);
 
-BENCHMARK_REGISTER_F(QuantLatencyBench, FP32_Overlap)
+BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_FP32_Process_Overlap)
     ->Unit(benchmark::kMillisecond)
-    ->Iterations(100)
-    ->Name("QuantLatency/FP32/Process(Overlap)");
+    ->Iterations(100);
 
 BENCHMARK_MAIN();
