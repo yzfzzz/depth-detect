@@ -1,6 +1,4 @@
 #pragma once
-#include "public.h"
-
 #include <memory.h>
 #include <opencv2/core/hal/interface.h>
 
@@ -27,13 +25,35 @@ struct FrameMeta {
     FrameSource frame_source;
 };
 
-struct MotionStateInfoRecord;
 class STrack;
 class Detection;
+
+enum MotionState {
+    INVAILD   = 0,
+    UNKNOWN   = 1,
+    STABLE    = 2,
+    APPROACH  = 3,
+    MOVE_AWAY = 4,
+    ACCELE    = 5,
+    DECELE    = 6,
+    CONSTANT  = 7
+};
+
+struct MotionStateInfoRecord {
+    MotionStateInfoRecord(MotionState state_vec, MotionState state_acc, float velocity) :
+        state_vec(state_vec),
+        state_acc(state_acc),
+        velocity(velocity) {}
+
+    MotionState state_vec;
+    MotionState state_acc;
+    float       velocity;
+};
 
 struct InferOutputContext {
     std::vector<Detection>                         detections;
     std::vector<STrack>                            tracked_objects;
+    std::vector<float>                             depth_raw_infer_out;
     cv::Mat                                        result_depth;
     cv::Mat                                        depth_vis;
     std::unordered_map<int, MotionStateInfoRecord> motion_records;
@@ -48,14 +68,7 @@ struct FrameInputContext {
                 std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch())
                     .count();
         }
-        img_size                 = meta.img_h * meta.img_w * 3;
-        void *      ptr          = nullptr;
-        int         device_count = 0;
-        cudaError_t error        = cudaGetDeviceCount(&device_count);
-        if (error == cudaSuccess && device_count > 0) {
-            CHECK_CUDA(cudaMalloc(&ptr, img_size));
-            d_raw_img_.reset(static_cast<uchar *>(ptr));
-        }
+        img_size = meta.img_h * meta.img_w * 3;
     }
 
     void setFrameID(int id) { frame_id = id; }

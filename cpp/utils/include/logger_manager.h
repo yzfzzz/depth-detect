@@ -1,4 +1,5 @@
 #pragma once
+
 #include "config_manager.h"
 
 #include <NvInfer.h>
@@ -61,12 +62,22 @@ class LoggerManager {
   public:
     /**
      * @brief 获取单例实例，初始化日志系统
-     * @param config 配置管理器引用
+     * @param save_file 是否保存日志文件
+     * @param console_output 是否在终端显示日志
+     * @param log_level_str 日志级别字符串
      * @return LoggerManager单例引用
      */
-    static LoggerManager & getInstance(ConfigManager & config) {
-        static LoggerManager instance(config);
+    static LoggerManager & getInstance(bool                save_file,
+                                       bool                console_output,
+                                       const std::string & log_level_str) {
+        static LoggerManager instance(save_file, console_output, log_level_str);
         return instance;
+    }
+
+    static LoggerManager & getInstance(ConfigManager & config_manager) {
+        return getInstance(config_manager.isLogFileSaveEnabled(),
+                           config_manager.isLogConsoleOutputEnabled(),
+                           config_manager.getLogLevel());
     }
 
     LoggerManager(const LoggerManager &)             = delete;
@@ -79,7 +90,7 @@ class LoggerManager {
     std::shared_ptr<spdlog::logger> getLogger() const { return logger_; }
 
   private:
-    explicit LoggerManager(ConfigManager & config);
+    explicit LoggerManager(bool save_file, bool console_output, const std::string & log_level_str);
 
     std::shared_ptr<spdlog::logger> logger_;
 

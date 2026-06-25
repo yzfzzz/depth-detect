@@ -1,5 +1,6 @@
 #include "base_model.h"
 
+#include "logger_manager.h"
 #include "onnxruntime_backend.h"
 #include "tensorrt_backend.h"
 
@@ -76,9 +77,10 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
             APP_INFO("ONNX Runtime CPU backend initialized successfully");
             return onnx_backend;
         }
+        APP_ERROR("ONNX Runtime CPU backend path not found in {}, failed to initialize any backend",
+                  it->second);
     }
-    APP_ERROR("ONNX Runtime CPU backend path not found in {}, failed to initialize any backend",
-              it->second);
+    APP_ERROR("Config yaml without onnx key, failed to initialize any backend");
     return nullptr;
 }
 
@@ -128,7 +130,11 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
         // 异步预处理
         cudaPreProcess(frame_input_context);
         // 异步推理
-        backend_->runInferenceAsync(d_infer_io_[0].get(), d_infer_io_[1].get(), stream_);
+        std::vector<void *> output_buffers;
+        output_buffers.reserve(d_infer_io_.size() - 1);
+        std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
+                       std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
+        backend_->runInferenceAsync(d_infer_io_[0].get(), output_buffers, stream_);
         // 异步后处理
         cudaPostProcess(frame_input_context);
         return true;
@@ -143,17 +149,23 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
         APP_ERROR("Model not initialized");
         return false;
     }
+    std::vector<void *> output_buffers;
+    output_buffers.reserve(getNumOutputs());
     if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         std::vector<float> onnx_input_tensor = cvMatPreProcess(frame_input_context);
-        backend_->runInference(onnx_input_tensor.data(), h_infer_out_.data());
+        std::transform(h_infer_out_.begin(), h_infer_out_.end(), std::back_inserter(output_buffers),
+                       [](auto & v) { return v.data(); });
+        backend_->runInference(onnx_input_tensor.data(), output_buffers);
         cvMatPostProcess(infer_output_context);
         return true;
     } else if (backend_->getBackendType() == BackendType::TensorRT) {
         // 异步预处理
         cudaPreProcess(frame_input_context);
         synchronizeStream();  // 等待预处理完成
-        // 同步推理
-        backend_->runInference(d_infer_io_[0].get(), d_infer_io_[1].get());
+                              // 同步推理
+        std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
+                       std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
+        backend_->runInference(d_infer_io_[0].get(), output_buffers);
         // 异步后处理
         cudaPostProcess(frame_input_context);
         getInferOutputResult(infer_output_context);

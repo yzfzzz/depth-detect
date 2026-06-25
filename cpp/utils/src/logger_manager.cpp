@@ -8,7 +8,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iomanip>
-#include <iostream>
 
 std::string LoggerManager::getDateLogFilePath() {
     auto now  = std::chrono::system_clock::now();
@@ -50,15 +49,12 @@ spdlog::level::level_enum LoggerManager::stringToLogLevel(const std::string & le
     return spdlog::level::info;
 }
 
-LoggerManager::LoggerManager(ConfigManager & config) {
+LoggerManager::LoggerManager(bool                save_file,
+                             bool                console_output,
+                             const std::string & log_level_str) {
     // 创建sinks容器
     std::vector<spdlog::sink_ptr> sinks;
-
-    // 获取日志配置
-    bool        save_file      = config.isLogFileSaveEnabled();
-    bool        console_output = config.isLogConsoleOutputEnabled();
-    std::string log_level_str  = config.getLogLevel();
-    auto        log_level      = stringToLogLevel(log_level_str);
+    auto                          log_level = stringToLogLevel(log_level_str);
 
     // 文件输出sinks（按日期和latest）
     if (save_file) {

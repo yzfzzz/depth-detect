@@ -1,5 +1,6 @@
 #include "yolo_detect_model.h"
 
+#include "logger_manager.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
@@ -16,6 +17,10 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            float                              conf_thresh,
                            int                                num_class,
                            bool                               use_gpu) {
+    APP_INFO(
+        "YOLO model init: raw_img_w: {}, raw_img_h: {}, nms_thresh: {}, "
+        "conf_thresh: {}, num_class: {}, use_gpu: {}",
+        raw_img_w, raw_img_h, nms_thresh, conf_thresh, num_class, use_gpu);
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
     nms_thresh_  = nms_thresh;
     conf_thresh_ = conf_thresh;
@@ -24,15 +29,13 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
     // 计算输出候选框数量（YOLOv8 输出格式: [1, num_class+4, candidates]）
     output_candidates_ = getOutputDims()[2];
 
-    // 计算输出数据总大小
-    size_t output_size = getOutputByteSize() / sizeof(float);
-
     APP_INFO("YOLO model output candidates: {}", output_candidates_);
-    APP_INFO("YOLO model output size: {}", output_size);
     size_t h_output_data_size = 1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT;
     if (backend_->getBackendType() == BackendType::TensorRT) {
+        // 计算输出数据总大小
+        size_t output_size       = getOutputByteSize(0);
         // 定义分配固定主机内存的 lambda 函数
-        auto alloc_cuda_pinned = [](size_t bytes) {
+        auto   alloc_cuda_pinned = [](size_t bytes) {
             void * ptr = nullptr;
             CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
             return ptr;
@@ -54,6 +57,7 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 
         // 准备设备输入输出缓冲区
         // d_infer_io_[0]: 输入缓冲区 [1, 3, H, W]
+        d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
         d_infer_io_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
 
         // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
@@ -76,7 +80,12 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
 
     } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         // ONNX Runtime CPU 后端，准备主机输出数据空间
-        h_infer_out_.resize(output_size);
+        int output_num = getNumOutputs();
+        h_infer_out_.resize(output_num);
+        for (int i = 0; i < output_num; ++i) {
+            auto output_size = getOutputByteSize(i);
+            h_infer_out_[i].resize(output_size / sizeof(float));
+        }
     }
 
     APP_INFO("YOLO model initialized successfully");
@@ -93,8 +102,8 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // 转置
-    transpose(static_cast<float *>(d_infer_io_[1].get()), d_transpose_.get(), output_candidates_,
-              num_class_ + 4, stream_);
+    transpose(static_cast<float *>(d_infer_io_[getOutputIndexFromName("output0")].get()),
+              d_transpose_.get(), output_candidates_, num_class_ + 4, stream_);
 
     // 解码
     decode(d_transpose_.get(), d_decode_.get(), output_candidates_, num_class_, conf_thresh_,
@@ -171,7 +180,7 @@ std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_in
 void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
     int           num_elements = num_class_ + 4;
     int           num_bboxes   = output_candidates_;
-    const float * raw_output   = h_infer_out_.data();
+    const float * raw_output   = h_infer_out_[getOutputIndexFromName("output0")].data();
 
     // 1. 解码：直接从原矩阵 [84, 8400] 读取，无需转置
     std::vector<cv::Rect2d> boxes;
@@ -248,75 +257,3 @@ void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context
 
     infer_output_context.detections = vDetections;
 }
-
-// void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-//     APP_INFO("Running CPU post-processing for YOLO model...");
-//     // transpose [1 84 8400] convert to [1 8400 84]
-//     int                num_elements = num_class_ + 4;
-//     int                num_bboxes   = output_candidates_;
-//     std::vector<float> h_transpose(getOutputByteSize() / sizeof(float) + 1);
-//     for (int i = 0; i < num_bboxes; ++i) {
-//         for (int j = 0; j < num_elements; ++j) {
-//             h_transpose[i * num_elements + j + 1] = onnx_output_data_[j * num_bboxes + i];
-//         }
-//     }
-//     // decode
-//     // convert [1 8400 84] to [1 7001]
-//     std::vector<float> h_decode((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT));
-//     int                count = 0;
-//     for (int i = 0; i < num_bboxes; ++i) {
-//         int index = i * num_elements + 1;
-
-//         // 找最大置信度及类别
-//         float confidence = 0;
-//         int   label      = 0;
-//         for (int j = 0; j < num_class_; j++) {
-//             if (h_transpose[index + j + 4] > confidence) {
-//                 confidence = h_transpose[index + j + 4];
-//                 label      = j;
-//             }
-//         }
-
-//         if (confidence < conf_thresh_) {
-//             continue;
-//         }
-//         if (count >= MAX_NUM_OUTPUT_BBOX) {
-//             break;
-//         }
-
-//         float cx = h_transpose[index], cy = h_transpose[index + 1];
-//         float w = h_transpose[index + 2], h = h_transpose[index + 3];
-//         h_decode[i * NUM_BOX_ELEMENT + 1] = cx - w * 0.5f;  // left
-//         h_decode[i * NUM_BOX_ELEMENT + 2] = cy - h * 0.5f;  // top
-//         h_decode[i * NUM_BOX_ELEMENT + 3] = cx + w * 0.5f;  // right
-//         h_decode[i * NUM_BOX_ELEMENT + 4] = cy + h * 0.5f;  // bottom
-//         h_decode[i * NUM_BOX_ELEMENT + 5] = confidence;
-//         h_decode[i * NUM_BOX_ELEMENT + 6] = (float) label;
-//         h_decode[i * NUM_BOX_ELEMENT + 7] = 1.0f;  // keep flag
-
-//         count++;
-//     }
-//     h_decode[0] = (float) count;
-
-//     // nms
-//     std::vector<cv::Rect2d> boxes(count);
-//     std::vector<float>      scores(count);
-//     std::vector<int>        classIds(count);
-
-//     for (int i = 0; i < count; ++i) {
-//         float p     = h_decode[1 + i * 7];
-//         boxes[i]    = cv::Rect2d(h_decode[1 + i * 7], h_decode[1 + i * 7 + 1],
-//                                  h_decode[1 + i * 7 + 2] - h_decode[1 + i * 7],
-//                                  h_decode[1 + i * 7 + 3] - h_decode[1 + i * 7 + 1]);
-//         scores[i]   = h_decode[1 + i * 7 + 4];
-//         classIds[i] = (int) h_decode[1 + i * 7 + 5];
-//     }
-//     std::vector<int> indices;
-//     cv::dnn::NMSBoxes(boxes, scores, 0.f, nms_thresh_, indices);
-//     for (int i = 0; i < count; ++i) {
-//         h_decode[1 + i * 7 + 6] = 0.f;  // 全部先标 ignore
-//     }
-//     for (int idx : indices) {
-//         h_decode[1 + idx * 7 + 6] = 1.f;
-//     }
-// }

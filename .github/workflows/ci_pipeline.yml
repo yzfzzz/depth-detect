@@ -208,10 +208,10 @@ jobs:
               git config --global --add safe.directory '*' &&
               git submodule update --init --recursive && \
               cd bin && \
-              chmod +x ./main && \
+              chmod +x ./test_onnx_pipeline && \
               export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
-              echo '🚀 Running ./main ../data/car.avi ./ci_config.yaml' && \
-              ./main ../data/car.avi ./ci_config.yaml && \
+              echo '🚀 Running ./test_onnx_pipeline' && \
+              ./test_onnx_pipeline && \
               echo '🎉 Test successful'
             "
       - name: Upload run logs

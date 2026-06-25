@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(depth_detection VERSION 1.0.0 LANGUAGES CXX CUDA)
 
 # ==================== Build Type ====================
-if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
@@ -37,7 +37,7 @@ if(ENABLE_JESTON_MEM_MANAGED)
 endif()
 
 option(ENABLE_BENCHMARK "Build benchmark tests" ON)
-option(ENABLE_PYBIND "Build python pybind module" OFF)
+option(ENABLE_PYBIND "Build python pybind module" ON)
 
 # ==================== Platform Detection ====================
 set(TARGET_PLATFORM "AUTO" CACHE STRING "Build target platform")
@@ -158,7 +158,6 @@ list(APPEND YAML_CPP_TARGET dl)
 # ==================== Helper Function ====================
 set(PROJECT_CPP_DIR ${PROJECT_SOURCE_DIR}/cpp)
 set(ONNXRUNTIME_ROOT ${PROJECT_SOURCE_DIR}/third_party/onnxruntime)
-set(PROJECT_CUB_DIR ${PROJECT_SOURCE_DIR}/third_party/cub)
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/spdlog)
 find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3)
 if(NOT EIGEN3_INCLUDE_DIR)
@@ -200,9 +199,6 @@ function(configure_common_includes target)
         ${NVTX3_INCLUDE_DIR}
         ${ONNXRUNTIME_ROOT}/include
     )
-    if(IS_JETSON)
-        target_include_directories(${target} PRIVATE ${PROJECT_CUB_DIR})
-    endif()
 endfunction()
 
 # ==================== Libraries ====================
@@ -237,6 +233,7 @@ target_link_libraries(op_kernel PRIVATE
 )
 
 # inference model
+link_directories(${ONNXRUNTIME_ROOT}/lib)
 file(GLOB_RECURSE INFERENCE_SRCS 
     ${PROJECT_CPP_DIR}/inference/infer_models/src/*.cpp 
     ${PROJECT_CPP_DIR}/inference/infer_backend/src/*.cpp 
@@ -256,7 +253,6 @@ target_link_libraries(inference PRIVATE
     ${OpenCV_LIBS}
     onnxruntime
 )
-target_link_directories(inference PRIVATE ${ONNXRUNTIME_ROOT}/lib)
 
 
 
@@ -284,71 +280,29 @@ if(ENABLE_BENCHMARK)
     message(STATUS "Building benchmark tests")
     find_package(benchmark REQUIRED)
     
-    add_executable(test_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_pipeline.cpp)
-    configure_common_includes(test_pipeline)
-    target_link_libraries(test_pipeline PRIVATE 
+    add_executable(test_trt_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_trt_pipeline.cpp)
+    configure_common_includes(test_trt_pipeline)
+    target_link_libraries(test_trt_pipeline PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
+
+    add_executable(test_onnx_pipeline ${PROJECT_SOURCE_DIR}/benchmark/test_onnx_pipeline.cpp)
+    configure_common_includes(test_onnx_pipeline)
+    target_link_libraries(test_onnx_pipeline PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
+
+    add_executable(test_trt_quant_error ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_error.cpp)
+    configure_common_includes(test_trt_quant_error)
+    target_link_libraries(test_trt_quant_error PRIVATE 
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
     
-    # add_executable(test_depth_preprocess ${PROJECT_SOURCE_DIR}/benchmark/test_depth_preprocess.cpp)
-    # configure_common_includes(test_depth_preprocess)
-    # target_link_libraries(test_depth_preprocess PRIVATE 
-    #     core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
-    # )
-    
-    if(IS_JETSON)
-        add_executable(test_jeston_mem_manager ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_mem_manager.cpp)
-        configure_common_includes(test_jeston_mem_manager)
-        target_link_libraries(test_jeston_mem_manager PRIVATE 
-            core bytetrack inference tools utils ${YAML_CPP_TARGET} benchmark::benchmark
-        )
-    endif()
+    add_executable(test_trt_quant_latency ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_latency.cpp)
+    configure_common_includes(test_trt_quant_latency)
+    target_link_libraries(test_trt_quant_latency PRIVATE 
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
 else()
     message(STATUS "ENABLE_BENCHMARK=OFF")
-endif()
-
-# ==================== pybind11 (Jetson Disabled) ====================
-if(IS_JETSON)
-    set(ENABLE_PYBIND OFF CACHE BOOL "Build python pybind module" FORCE)
-endif()
-
-if(ENABLE_PYBIND)
-    find_package(pybind11 REQUIRED)
-    add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/cvnp)
-    
-    pybind11_add_module(depth_detection ${PROJECT_CPP_DIR}/python_wrapper/depth_detect_py.cpp)
-    target_include_directories(depth_detection PRIVATE
-        ${PROJECT_CPP_DIR}/core/include
-        ${PROJECT_CPP_DIR}/detect/include
-        ${PROJECT_CPP_DIR}/bytetrack/include
-        ${PROJECT_CPP_DIR}/depth/include
-        ${PROJECT_CPP_DIR}/tools/include
-        ${PROJECT_CPP_DIR}/include
-        ${TENSORRT_INCLUDE_DIR}
-        ${OpenCV_INCLUDE_DIRS}
-    )
-    if(IS_JETSON)
-        target_include_directories(depth_detection PRIVATE ${PROJECT_CUB_DIR})
-    endif()
-    
-    target_link_libraries(depth_detection PRIVATE
-        ${OpenCV_LIBS}
-        ${CUDA_CUDART_LIBRARY}  
-        ${TENSORRT_NVINFER_LIBRARY}
-        ${TENSORRT_NVONNXPARSER_LIBRARY}
-        cvnp
-        bytetrack
-        inference
-        core
-        tools
-        utils
-        ${YAML_CPP_TARGET}
-    )
-    
-    set_target_properties(depth_detection PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-        RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/python
-    )
-else()
-    message(STATUS "ENABLE_PYBIND=OFF")
 endif()

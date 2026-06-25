@@ -5,13 +5,14 @@
 #include "public.h"
 
 #include <cstdlib>  // For system()
-#include <iostream>
-#include <ostream>
-#include <thread>
 
 IOManager::IOManager(const ConfigManager & config_manager) :
     save_mode_(config_manager.getSaveMode()),
     out_dir_(config_manager.getOutDir()) {}
+
+IOManager::IOManager(std::string save_mode, std::string out_dir) :
+    save_mode_(save_mode),
+    out_dir_(out_dir) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
@@ -135,6 +136,11 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);
     if (result && error == cudaSuccess && device_count > 0) {
+        if (!frame_input_context.d_raw_img_) {
+            void * ptr = nullptr;
+            CHECK_CUDA(cudaMalloc(&ptr, frame_input_context.img_size));
+            frame_input_context.d_raw_img_.reset(static_cast<uchar *>(ptr));
+        }
         CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
                               frame_input_context.raw_img.data, frame_input_context.img_size,
                               cudaMemcpyHostToDevice));

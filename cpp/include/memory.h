@@ -31,8 +31,11 @@ struct TrtDeleter {
         if (p == nullptr) {
             return;
         }
-
-        delete p;
+#if NV_TENSORRT_MAJOR >= 10
+        delete p;  // TRT 10.x 使用标准 C++ 析构
+#else
+        p->destroy();  // TRT 8.x 使用 destroy 方法
+#endif
     }
 };
 

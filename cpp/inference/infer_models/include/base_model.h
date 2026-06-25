@@ -35,18 +35,29 @@ class BaseModel {
     }
 
     // 获取输出维度
-    std::vector<int> getOutputDims() const {
-        return backend_ ? backend_->getOutputDims() : std::vector<int>{};
+    std::vector<int64_t> getOutputDims(int output_index = 0) const {
+        return backend_ ? backend_->getOutputDims(output_index) : std::vector<int64_t>{};
     }
 
     // 获取输入数据大小（字节）
     size_t getInputByteSize() const { return backend_ ? backend_->getInputByteSize() : 0; }
 
     // 获取输出数据大小（字节）
-    size_t getOutputByteSize() const { return backend_ ? backend_->getOutputByteSize() : 0; }
+    size_t getOutputByteSize(int output_index = 0) const {
+        return backend_ ? backend_->getOutputByteSize(output_index) : 0;
+    }
 
     // 获取 CUDA 流
     cudaStream_t getStream() const { return stream_; }
+
+    // 同步流
+    void synchronizeStream() const {
+        if (stream_ != 0) {
+            CHECK_CUDA(cudaStreamSynchronize(stream_));
+        }
+    }
+
+    int getNumOutputs() const { return backend_ ? static_cast<int>(backend_->getNumOutputs()) : 0; }
 
   protected:
     // 创建后端（子类可重写以自定义后端选择逻辑）
@@ -57,41 +68,16 @@ class BaseModel {
     // 检查 GPU 是否可用
     static bool isGPUAvailable();
 
-    // 同步流
-    void synchronizeStream() const {
-        if (stream_ != 0) {
-            CHECK_CUDA(cudaStreamSynchronize(stream_));
-        }
-    }
-
     // 子类必须实现的部分
   public:
     void init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
-              bool                               use_gpu = false);
-
-    // 预处理路由（根据后端类型调用不同的预处理方法）
-    // virtual void preProcess(FrameInputContext & frame_input_context) {
-    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
-    //         cudaPreProcess(frame_input_context);
-    //     } else {
-    //         cvMatPreProcess(frame_input_context);
-    //     }
-    // }
+              bool                               use_gpu = true);
 
     virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 
-    virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;  // cuda
-
-    // 后处理路由（根据后端类型调用不同的后处理方法）
-    // virtual void postProcess(FrameInputContext & frame_input_context) {
-    //     if (backend_->getBackendType() == BackendType::TENSORRT) {
-    //         cudaPostProcess(frame_input_context);
-    //     } else {
-    //         cvMatPostProcess(frame_input_context);
-    //     }
-    // }
+    virtual void cudaPreProcess(FrameInputContext & frame_input_context) = 0;      // cuda
 
     virtual void cvMatPostProcess(InferOutputContext & infer_output_context) = 0;  //cpu
 
@@ -106,18 +92,36 @@ class BaseModel {
 
     virtual void getInferOutputResult(InferOutputContext & infer_output_context) = 0;
 
+    virtual size_t getOutputIndexFromName(const std::string & name) const {
+        size_t error_index = static_cast<size_t>(-1);
+        if (!backend_) {
+            APP_ERROR("Backend not initialized, cannot get output index for name: {}", name);
+            return error_index;
+        }
+        if (name.empty()) {
+            APP_ERROR("Output name is empty, cannot get output index");
+            return error_index;
+        }
+        if (backend_->getOutputIndexFromName(name) == -1) {
+            APP_ERROR("Output name {} not found", name);
+            return error_index;
+        }
+        return backend_->getOutputIndexFromName(name);
+    }
+
+
   protected:
     // 原始图像分辨率
     int raw_img_w_;
     int raw_img_h_;
 
     // 模型输入分辨率
-    int                                  input_h_;
-    int                                  input_w_;
-    bool                                 initialized_ = false;
+    int                                input_h_;
+    int                                input_w_;
+    bool                               initialized_ = false;
     // 模型输入输出缓冲区: d_infer_io_[0] -> input, d_infer_io_[1] -> output
-    std::array<unique_ptr_cuda<void>, 2> d_infer_io_;
-    std::unique_ptr<InferenceBackend>    backend_;
-    cudaStream_t                         stream_;
-    std::vector<float>                   h_infer_out_;
+    std::vector<unique_ptr_cuda<void>> d_infer_io_;
+    std::unique_ptr<InferenceBackend>  backend_;
+    cudaStream_t                       stream_;
+    std::vector<std::vector<float>>    h_infer_out_;
 };

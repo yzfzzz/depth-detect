@@ -1,4 +1,5 @@
 #pragma once
+#include "frame.h"
 #include "STrack.h"
 
 #include <cmath>
@@ -8,28 +9,6 @@
 #include <opencv2/core/types.hpp>
 #include <opencv2/opencv.hpp>
 #include <vector>
-
-enum MotionState {
-    INVAILD   = 0,
-    UNKNOWN   = 1,
-    STABLE    = 2,
-    APPROACH  = 3,
-    MOVE_AWAY = 4,
-    ACCELE    = 5,
-    DECELE    = 6,
-    CONSTANT  = 7
-};
-
-struct MotionStateInfoRecord {
-    MotionStateInfoRecord(MotionState state_vec, MotionState state_acc, float velocity) :
-        state_vec(state_vec),
-        state_acc(state_acc),
-        velocity(velocity) {}
-
-    MotionState state_vec;
-    MotionState state_acc;
-    float       velocity;
-};
 
 const std::map<std::pair<MotionState, MotionState>, std::string> MOTION_STR_MAP = {
     { { MotionState::STABLE, MotionState::CONSTANT },    "Stable"               },

@@ -3,11 +3,9 @@
 #include "base_model.h"
 #include "frame.h"
 #include "memory.h"
-#include "public.h"
 
 #include <opencv2/core/hal/interface.h>
 
-#include <memory>
 #include <opencv2/opencv.hpp>
 #include <vector>
 
@@ -19,11 +17,10 @@ class DepthModel : public BaseModel {
               int                                raw_img_w,
               int                                raw_img_h,
               bool                               is_normalize,
-              bool                               use_gpu = false);
+              bool                               use_gpu = true);
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
-  private:
     // BaseModel 接口实现
     std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) override;
     void               cvMatPostProcess(InferOutputContext & infer_output_context) override;
@@ -40,11 +37,6 @@ class DepthModel : public BaseModel {
     // 后处理中间 buffer：归一化 depth + colormap（模型分辨率）
     unique_ptr_cuda<uchar>  d_buffer_norm_depth_;
     unique_ptr_cuda<uchar3> d_buffer_norm_colormap_;
-
-    // 后处理归约：min/max 标量 + CUB 临时空间（min/max 串行复用同一 buffer）
-    unique_ptr_cuda<float> d_depth_minmax_;  // float[2]: [min, max]
-    unique_ptr_cuda<void>  d_cub_temp_;
-    size_t                 cub_temp_bytes_ = 0;
 
     // 预处理参数：mean[3] + std[3] 合并存储
     unique_ptr_cuda<float> d_normalize_params_;  // float[6]
