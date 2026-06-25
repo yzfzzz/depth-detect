@@ -158,7 +158,6 @@ list(APPEND YAML_CPP_TARGET dl)
 # ==================== Helper Function ====================
 set(PROJECT_CPP_DIR ${PROJECT_SOURCE_DIR}/cpp)
 set(ONNXRUNTIME_ROOT ${PROJECT_SOURCE_DIR}/third_party/onnxruntime)
-set(PROJECT_CUB_DIR ${PROJECT_SOURCE_DIR}/third_party/cub)
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/spdlog)
 find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3)
 if(NOT EIGEN3_INCLUDE_DIR)
@@ -200,9 +199,6 @@ function(configure_common_includes target)
         ${NVTX3_INCLUDE_DIR}
         ${ONNXRUNTIME_ROOT}/include
     )
-    if(IS_JETSON)
-        target_include_directories(${target} PRIVATE ${PROJECT_CUB_DIR})
-    endif()
 endfunction()
 
 # ==================== Libraries ====================
@@ -237,6 +233,7 @@ target_link_libraries(op_kernel PRIVATE
 )
 
 # inference model
+link_directories(${ONNXRUNTIME_ROOT}/lib)
 file(GLOB_RECURSE INFERENCE_SRCS 
     ${PROJECT_CPP_DIR}/inference/infer_models/src/*.cpp 
     ${PROJECT_CPP_DIR}/inference/infer_backend/src/*.cpp 
@@ -256,7 +253,6 @@ target_link_libraries(inference PRIVATE
     ${OpenCV_LIBS}
     onnxruntime
 )
-target_link_directories(inference PRIVATE ${ONNXRUNTIME_ROOT}/lib)
 
 
 
