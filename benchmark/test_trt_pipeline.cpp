@@ -63,6 +63,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_Process_Sync)(benchmark:
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
+
 (benchmark::State & state) {
     RunPipelineBench(state,
                      [](auto & ctx, auto & out, auto & s) { pipeline.processOverlap(ctx, out); });
@@ -77,6 +78,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPreprocess)(benchmark::S
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_YoloInferenceAsync)
+
 (benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
@@ -120,6 +122,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)(benchmark::
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)
+
 (benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
@@ -156,6 +159,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)(benchmark:
 
 // ---- 后处理 ----
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
+
 (benchmark::State & state) {
     for (auto _ : state) {
         state.PauseTiming();

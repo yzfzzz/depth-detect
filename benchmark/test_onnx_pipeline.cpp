@@ -130,6 +130,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPostprocess)(benchma
 // ---- 后处理 ----
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
+
 (benchmark::State & state) {
     for (auto _ : state) {
         state.PauseTiming();
