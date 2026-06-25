@@ -182,17 +182,11 @@ void printReport(const YoloDetectionError & yolo_err_sum,
 // 主函数
 // ============================================================================
 int main() {
-    std::string config_path     = "benchmark.yaml";
-    std::string task_name       = "test_quant_error";
-    YAML::Node  root            = YAML::LoadFile(config_path);           // 先拿到根节点
-    std::string video_path      = root["video_path"].as<std::string>();  // 根层级读 video_path
-    YAML::Node  task_node       = root["task"][task_name];
-    std::string yolo_int8_path  = task_node["yolo_int8_path"].as<std::string>();
-    std::string yolo_fp16_path  = task_node["yolo_fp16_path"].as<std::string>();
-    std::string yolo_fp32_path  = task_node["yolo_fp32_path"].as<std::string>();
-    std::string depth_int8_path = task_node["depth_int8_path"].as<std::string>();
-    std::string depth_fp16_path = task_node["depth_fp16_path"].as<std::string>();
-    std::string depth_fp32_path = task_node["depth_fp32_path"].as<std::string>();
+    std::string config_path = "benchmark.yaml";
+    std::string task_name   = "test_quant_error";
+    YAML::Node  root        = YAML::LoadFile(config_path);           // 先拿到根节点
+    std::string video_path  = root["video_path"].as<std::string>();  // 根层级读 video_path
+    YAML::Node  task_node   = root["task"][task_name];
     // 初始化日志系统
     LoggerManager::getInstance(false, true, "info");
 
@@ -200,18 +194,30 @@ int main() {
     IOManager io_manager("video", "none");
     FrameMeta frame_meta = io_manager.Init(video_path);
 
-    Pipeline pipeline_int8(depth_int8_path, yolo_int8_path, frame_meta, true);
+#ifndef __aarch64__
+    std::string        yolo_int8_path  = task_node["yolo_int8_path"].as<std::string>();
+    std::string        depth_int8_path = task_node["depth_int8_path"].as<std::string>();
+    Pipeline           pipeline_int8(depth_int8_path, yolo_int8_path, frame_meta, true);
+    InferOutputContext infer_output_context_int8;
+    DepthErrorMetrics  depth_err_sum_int8;
+    YoloDetectionError yolo_err_sum_int8;
+#endif
+    std::string yolo_fp16_path  = task_node["yolo_fp16_path"].as<std::string>();
+    std::string depth_fp16_path = task_node["depth_fp16_path"].as<std::string>();
+
+    std::string yolo_fp32_path  = task_node["yolo_fp32_path"].as<std::string>();
+    std::string depth_fp32_path = task_node["depth_fp32_path"].as<std::string>();
+
     Pipeline pipeline_fp16(depth_fp16_path, yolo_fp16_path, frame_meta, true);
     Pipeline pipeline_fp32(depth_fp32_path, yolo_fp32_path, frame_meta, true);
 
     int                num_frames = 0;
     FrameInputContext  frame_input_context(num_frames, frame_meta);
-    InferOutputContext infer_output_context_int8, infer_output_context_fp16,
-        infer_output_context_fp32;
+    InferOutputContext infer_output_context_fp16, infer_output_context_fp32;
 
     // ---- 累积误差统计 ----
-    DepthErrorMetrics  depth_err_sum_int8, depth_err_sum_fp16;
-    YoloDetectionError yolo_err_sum_int8, yolo_err_sum_fp16;
+    DepthErrorMetrics  depth_err_sum_fp16;
+    YoloDetectionError yolo_err_sum_fp16;
 
     while (true) {
         frame_input_context.setFrameID(num_frames);
@@ -220,23 +226,21 @@ int main() {
             frame_input_context.raw_img.empty()) {
             break;
         }
-        pipeline_int8.process(frame_input_context, infer_output_context_int8);
-        pipeline_fp16.process(frame_input_context, infer_output_context_fp16);
         pipeline_fp32.process(frame_input_context, infer_output_context_fp32);
 
-        // ---- 逐帧计算误差 ----
-        // 1. 深度误差
+#ifndef __aarch64__
+        pipeline_int8.process(frame_input_context, infer_output_context_int8);
         addDepthError(depth_err_sum_int8,
                       computeDepthError(infer_output_context_int8.depth_raw_infer_out,
                                         infer_output_context_fp32.depth_raw_infer_out));
-        addDepthError(depth_err_sum_fp16,
-                      computeDepthError(infer_output_context_fp16.depth_raw_infer_out,
-                                        infer_output_context_fp32.depth_raw_infer_out));
-        // 2. YOLO 检测误差
         addYoloError(yolo_err_sum_int8,
                      computeDetectionError(infer_output_context_int8.detections,
                                            infer_output_context_fp32.detections));
-
+#endif
+        pipeline_fp16.process(frame_input_context, infer_output_context_fp16);
+        addDepthError(depth_err_sum_fp16,
+                      computeDepthError(infer_output_context_fp16.depth_raw_infer_out,
+                                        infer_output_context_fp32.depth_raw_infer_out));
         addYoloError(yolo_err_sum_fp16,
                      computeDetectionError(infer_output_context_fp16.detections,
                                            infer_output_context_fp32.detections));
@@ -245,7 +249,9 @@ int main() {
             break;
         }
     }
+#ifndef __aarch64__
     printReport(yolo_err_sum_int8, depth_err_sum_int8, num_frames, "INT8");
+#endif
     printReport(yolo_err_sum_fp16, depth_err_sum_fp16, num_frames, "FP16");
 
     return 0;
