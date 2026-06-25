@@ -63,7 +63,21 @@ class InferenceBackend {
     void * getOutputData(size_t index) const;
 
     // 获取输出个数
-    size_t getNumOutputs() const { return num_outputs_; }
+    virtual size_t getNumOutputs() const { return num_outputs_; }
+
+    // 根据输出名获取输出索引
+    virtual size_t getOutputIndexFromName(const std::string & name) const {
+        for (size_t i = 0; i < output_tensor_.size(); ++i) {
+            if (output_tensor_[i].name == name) {
+                if (getBackendType() == BackendType::OnnxRuntime) {
+                    return i;      // ONNX Runtime 后端输出索引从 0 开始
+                } else if (getBackendType() == BackendType::TensorRT) {
+                    return i + 1;  // TensorRT 后端输出索引从 1 开始, 0是输入
+                }
+            }
+        }
+        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
+    }
 
   protected:
     struct OutputTensorInfo {
@@ -71,6 +85,9 @@ class InferenceBackend {
         std::vector<int64_t> dims;
         size_t               byte_size;
     };
+
+    // 输出维度信息, Tensor 名称
+    std::vector<OutputTensorInfo> output_tensor_;
 
     int num_outputs_ = 1;
 };

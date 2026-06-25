@@ -102,8 +102,8 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // 转置
-    transpose(static_cast<float *>(d_infer_io_[1].get()), d_transpose_.get(), output_candidates_,
-              num_class_ + 4, stream_);
+    transpose(static_cast<float *>(d_infer_io_[getOutputIndexFromName("output0")].get()),
+              d_transpose_.get(), output_candidates_, num_class_ + 4, stream_);
 
     // 解码
     decode(d_transpose_.get(), d_decode_.get(), output_candidates_, num_class_, conf_thresh_,
@@ -180,7 +180,7 @@ std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_in
 void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
     int           num_elements = num_class_ + 4;
     int           num_bboxes   = output_candidates_;
-    const float * raw_output   = h_infer_out_[0].data();
+    const float * raw_output   = h_infer_out_[getOutputIndexFromName("output0")].data();
 
     // 1. 解码：直接从原矩阵 [84, 8400] 读取，无需转置
     std::vector<cv::Rect2d> boxes;
@@ -257,75 +257,3 @@ void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context
 
     infer_output_context.detections = vDetections;
 }
-
-// void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-//     APP_INFO("Running CPU post-processing for YOLO model...");
-//     // transpose [1 84 8400] convert to [1 8400 84]
-//     int                num_elements = num_class_ + 4;
-//     int                num_bboxes   = output_candidates_;
-//     std::vector<float> h_transpose(getOutputByteSize() / sizeof(float) + 1);
-//     for (int i = 0; i < num_bboxes; ++i) {
-//         for (int j = 0; j < num_elements; ++j) {
-//             h_transpose[i * num_elements + j + 1] = onnx_output_data_[j * num_bboxes + i];
-//         }
-//     }
-//     // decode
-//     // convert [1 8400 84] to [1 7001]
-//     std::vector<float> h_decode((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT));
-//     int                count = 0;
-//     for (int i = 0; i < num_bboxes; ++i) {
-//         int index = i * num_elements + 1;
-
-//         // 找最大置信度及类别
-//         float confidence = 0;
-//         int   label      = 0;
-//         for (int j = 0; j < num_class_; j++) {
-//             if (h_transpose[index + j + 4] > confidence) {
-//                 confidence = h_transpose[index + j + 4];
-//                 label      = j;
-//             }
-//         }
-
-//         if (confidence < conf_thresh_) {
-//             continue;
-//         }
-//         if (count >= MAX_NUM_OUTPUT_BBOX) {
-//             break;
-//         }
-
-//         float cx = h_transpose[index], cy = h_transpose[index + 1];
-//         float w = h_transpose[index + 2], h = h_transpose[index + 3];
-//         h_decode[i * NUM_BOX_ELEMENT + 1] = cx - w * 0.5f;  // left
-//         h_decode[i * NUM_BOX_ELEMENT + 2] = cy - h * 0.5f;  // top
-//         h_decode[i * NUM_BOX_ELEMENT + 3] = cx + w * 0.5f;  // right
-//         h_decode[i * NUM_BOX_ELEMENT + 4] = cy + h * 0.5f;  // bottom
-//         h_decode[i * NUM_BOX_ELEMENT + 5] = confidence;
-//         h_decode[i * NUM_BOX_ELEMENT + 6] = (float) label;
-//         h_decode[i * NUM_BOX_ELEMENT + 7] = 1.0f;  // keep flag
-
-//         count++;
-//     }
-//     h_decode[0] = (float) count;
-
-//     // nms
-//     std::vector<cv::Rect2d> boxes(count);
-//     std::vector<float>      scores(count);
-//     std::vector<int>        classIds(count);
-
-//     for (int i = 0; i < count; ++i) {
-//         float p     = h_decode[1 + i * 7];
-//         boxes[i]    = cv::Rect2d(h_decode[1 + i * 7], h_decode[1 + i * 7 + 1],
-//                                  h_decode[1 + i * 7 + 2] - h_decode[1 + i * 7],
-//                                  h_decode[1 + i * 7 + 3] - h_decode[1 + i * 7 + 1]);
-//         scores[i]   = h_decode[1 + i * 7 + 4];
-//         classIds[i] = (int) h_decode[1 + i * 7 + 5];
-//     }
-//     std::vector<int> indices;
-//     cv::dnn::NMSBoxes(boxes, scores, 0.f, nms_thresh_, indices);
-//     for (int i = 0; i < count; ++i) {
-//         h_decode[1 + i * 7 + 6] = 0.f;  // 全部先标 ignore
-//     }
-//     for (int idx : indices) {
-//         h_decode[1 + idx * 7 + 6] = 1.f;
-//     }
-// }

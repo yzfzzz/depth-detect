@@ -7,7 +7,6 @@
 #include <cuda_runtime_api.h>
 #include <NvInfer.h>
 
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,6 +54,4 @@ class TensorRTBackend : public InferenceBackend {
     size_t           input_byte_size_;
     std::string      input_tensor_name_;
 
-    // 输出维度信息, Tensor 名称
-    std::vector<OutputTensorInfo> output_tensor_;
 };

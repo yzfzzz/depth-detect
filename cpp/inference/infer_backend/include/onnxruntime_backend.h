@@ -42,5 +42,4 @@ class OnnxRuntimeBackend : public InferenceBackend {
     size_t               input_byte_size_;
 
     std::string                   input_name_;
-    std::vector<OutputTensorInfo> output_tensor_;
 };

@@ -92,6 +92,24 @@ class BaseModel {
 
     virtual void getInferOutputResult(InferOutputContext & infer_output_context) = 0;
 
+    virtual size_t getOutputIndexFromName(const std::string & name) const {
+        size_t error_index = static_cast<size_t>(-1);
+        if (!backend_) {
+            APP_ERROR("Backend not initialized, cannot get output index for name: {}", name);
+            return error_index;
+        }
+        if (name.empty()) {
+            APP_ERROR("Output name is empty, cannot get output index");
+            return error_index;
+        }
+        if (backend_->getOutputIndexFromName(name) == -1) {
+            APP_ERROR("Output name {} not found", name);
+            return error_index;
+        }
+        return backend_->getOutputIndexFromName(name);
+    }
+
+
   protected:
     // 原始图像分辨率
     int raw_img_w_;

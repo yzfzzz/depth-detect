@@ -1,13 +1,11 @@
 #include "depth_model.h"
 
-#include "cub_utils.h"
 #include "frame.h"
 #include "postprocess.h"
 #include "preprocess.h"
 #include "public.h"
 
 #include <cstring>
-#include <fstream>
 #include <map>
 #include <memory>
 #include <string>
@@ -50,9 +48,6 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         d_buffer_norm_colormap_.reset(
             static_cast<uchar3 *>(alloc_cuda(input_h_ * input_w_ * sizeof(uchar3))));
 
-        // ── 归约标量：min + max 合并为 float[2] ──
-        d_depth_minmax_.reset(static_cast<float *>(alloc_cuda(2 * sizeof(float))));
-
         // ── 预处理参数：mean[3] + std[3] 合并为 float[6]，一次拷贝到 GPU ──
         d_normalize_params_.reset(static_cast<float *>(alloc_cuda(6 * sizeof(float))));
         float h_params[6];
@@ -60,15 +55,6 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         std::memcpy(h_params + 3, h_std_.data(), 3 * sizeof(float));
         CHECK_CUDA(cudaMemcpy(d_normalize_params_.get(), h_params, 6 * sizeof(float),
                               cudaMemcpyHostToDevice));
-
-        // ── CUB 归约临时空间（min/max 串行调用，复用同一 buffer）──
-        {
-            size_t min_bytes = 0, max_bytes = 0;
-            cub_get_min_max_temp_bytes(static_cast<float *>(d_infer_io_[1].get()),
-                                       input_h_ * input_w_, &min_bytes, &max_bytes, stream_);
-            cub_temp_bytes_ = std::max(min_bytes, max_bytes);
-        }
-        d_cub_temp_.reset(alloc_cuda(cub_temp_bytes_));
 
         // ── 主机端 pinned memory ──
         auto alloc_pinned_cuda = [](size_t bytes) {
@@ -133,10 +119,10 @@ void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 
 void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     // 归一化 + 颜色映射 + resize
-    normalize_colormap_resize(static_cast<float *>(d_infer_io_[1].get()),
-                              d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(),
-                              d_buffer_dst_depth_.get(), d_buffer_dst_colormap_.get(), input_w_,
-                              input_h_, raw_img_w_, raw_img_h_, stream_);
+    normalize_colormap_resize(
+        static_cast<float *>(d_infer_io_[getOutputIndexFromName("disp_output")].get()),
+        d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(), d_buffer_dst_depth_.get(),
+        d_buffer_dst_colormap_.get(), input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
 
     // 异步 D2H 拷贝
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_output_data_.get(), d_buffer_dst_depth_.get(),
@@ -150,7 +136,8 @@ void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 void DepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
     synchronizeStream();
     infer_output_context.depth_raw_infer_out.resize(input_h_ * input_w_);
-    cudaMemcpy(infer_output_context.depth_raw_infer_out.data(), d_infer_io_[2].get(),
+    cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
+               d_infer_io_[getOutputIndexFromName("logit_output")].get(),
                input_h_ * input_w_ * sizeof(float), cudaMemcpyDeviceToHost);
     infer_output_context.result_depth =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
@@ -176,8 +163,9 @@ std::vector<float> DepthModel::cvMatPreProcess(FrameInputContext & frame_input_c
 }
 
 void DepthModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-    infer_output_context.depth_raw_infer_out = h_infer_out_[1];
-    cv::Mat depth_mat(input_h_, input_w_, CV_32FC1, h_infer_out_[0].data());
+    infer_output_context.depth_raw_infer_out = h_infer_out_[getOutputIndexFromName("logit_output")];
+    cv::Mat depth_mat(input_h_, input_w_, CV_32FC1,
+                      h_infer_out_[getOutputIndexFromName("disp_output")].data());
     cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
 
     cv::Mat colormap;
