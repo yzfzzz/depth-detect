@@ -59,13 +59,13 @@ class PipelineBenchmark : public benchmark::Fixture {
 
 // ---- 端到端流水线 ----
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_Process_Sync)(benchmark::State & state) {
-    RunPipelineBench(state,
-                     [](auto & ctx, auto & out, auto & s) { pipeline.process(ctx, out); });
+    RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) { pipeline.process(ctx, out); });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)(benchmark::State & state) {
-    RunPipelineBench(
-        state, [](auto & ctx, auto & out, auto & s) { pipeline.processOverlap(ctx, out); });
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
+(benchmark::State & state) {
+    RunPipelineBench(state,
+                     [](auto & ctx, auto & out, auto & s) { pipeline.processOverlap(ctx, out); });
 }
 
 // ---- YOLO 检测各阶段 ----
@@ -76,7 +76,8 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPreprocess)(benchmark::S
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_YoloInferenceAsync)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_YoloInferenceAsync)
+(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
         pipeline.detector_.cudaPreProcess(ctx);
@@ -118,7 +119,8 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)(benchmark::
     });
 }
 
-BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)
+(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
         pipeline.depth_model_.cudaPreProcess(ctx);
@@ -153,7 +155,8 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)(benchmark:
 }
 
 // ---- 后处理 ----
-BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)(benchmark::State & state) {
+BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
+(benchmark::State & state) {
     for (auto _ : state) {
         state.PauseTiming();
         FrameInputContext ctx(num_frames_, frame_meta);
@@ -174,36 +177,47 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)(ben
 // 注册（无 ->Name，名称由 BENCHMARK_DEFINE_F 的宏名决定）
 // ============================================================================
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_Process_Sync)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_CUDA_YoloPreprocess)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_YoloInference)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_YoloInferenceAsync)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_CUDA_YoloPostprocess)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_DepthInference)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
-    ->Unit(benchmark::kMillisecond)->Iterations(100);
+    ->Unit(benchmark::kMillisecond)
+    ->Iterations(100);
 
 BENCHMARK_MAIN();

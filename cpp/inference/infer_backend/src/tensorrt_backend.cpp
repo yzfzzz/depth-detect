@@ -93,15 +93,15 @@ bool TensorRTBackend::loadEngine(const std::string & engine_path) {
 void TensorRTBackend::setupInputOutputDims() {
 #if NV_TENSORRT_MAJOR < 10
     // TRT 8.x 及以下版本
-    int nb_bindings = engine_->getNbBindings();
+    int nb_bindings    = engine_->getNbBindings();
     input_tensor_name_ = engine_->getBindingName(0);
-    num_outputs_ = nb_bindings - 1;  // 第0个是输入，其余是输出
+    num_outputs_       = nb_bindings - 1;  // 第0个是输入，其余是输出
 
     output_tensor_.resize(num_outputs_);
 
     for (int i = 0; i < num_outputs_; ++i) {
         output_tensor_[i].name = engine_->getBindingName(i + 1);
-        auto od = engine_->getBindingDimensions(i + 1);
+        auto od                = engine_->getBindingDimensions(i + 1);
         output_tensor_[i].dims.clear();
         for (int j = 0; j < od.nbDims; ++j) {
             output_tensor_[i].dims.push_back(od.d[j]);

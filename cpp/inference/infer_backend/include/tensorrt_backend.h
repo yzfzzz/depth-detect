@@ -53,5 +53,4 @@ class TensorRTBackend : public InferenceBackend {
     std::vector<int> input_dims_;
     size_t           input_byte_size_;
     std::string      input_tensor_name_;
-
 };

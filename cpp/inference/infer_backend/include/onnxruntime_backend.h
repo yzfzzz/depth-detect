@@ -41,5 +41,5 @@ class OnnxRuntimeBackend : public InferenceBackend {
     std::vector<int64_t> input_dims_;
     size_t               input_byte_size_;
 
-    std::string                   input_name_;
+    std::string input_name_;
 };
