@@ -25,9 +25,30 @@ struct FrameMeta {
     FrameSource frame_source;
 };
 
-struct MotionStateInfoRecord;
 class STrack;
 class Detection;
+
+enum MotionState {
+    INVAILD   = 0,
+    UNKNOWN   = 1,
+    STABLE    = 2,
+    APPROACH  = 3,
+    MOVE_AWAY = 4,
+    ACCELE    = 5,
+    DECELE    = 6,
+    CONSTANT  = 7
+};
+
+struct MotionStateInfoRecord {
+    MotionStateInfoRecord(MotionState state_vec, MotionState state_acc, float velocity) :
+        state_vec(state_vec),
+        state_acc(state_acc),
+        velocity(velocity) {}
+
+    MotionState state_vec;
+    MotionState state_acc;
+    float       velocity;
+};
 
 struct InferOutputContext {
     std::vector<Detection>                         detections;
