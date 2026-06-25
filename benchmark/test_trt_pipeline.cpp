@@ -72,8 +72,8 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
 // ---- YOLO 检测各阶段 ----
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().cudaPreProcess(ctx);
+        pipeline.getDetector().synchronizeStream();
     });
 }
 
@@ -82,42 +82,42 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_YoloInferenceAsync)
 (benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().cudaPreProcess(ctx);
+        pipeline.getDetector().synchronizeStream();
         s.ResumeTiming();
-        pipeline.detector_.runInferenceAsync(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().runInferenceAsync(ctx);
+        pipeline.getDetector().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_YoloInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().cudaPreProcess(ctx);
+        pipeline.getDetector().synchronizeStream();
         s.ResumeTiming();
-        pipeline.detector_.runInference(ctx, out);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().runInference(ctx, out);
+        pipeline.getDetector().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.detector_.cudaPreProcess(ctx);
-        pipeline.detector_.runInferenceAsync(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDetector().cudaPreProcess(ctx);
+        pipeline.getDetector().runInferenceAsync(ctx);
+        pipeline.getDetector().synchronizeStream();
         s.ResumeTiming();
-        pipeline.detector_.cudaPostProcess(ctx);
-        pipeline.detector_.getInferOutputResult(out);
+        pipeline.getDetector().cudaPostProcess(ctx);
+        pipeline.getDetector().getInferOutputResult(out);
     });
 }
 
 // ---- 深度估计各阶段 ----
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.detector_.synchronizeStream();
+        pipeline.getDepthModel().cudaPreProcess(ctx);
+        pipeline.getDetector().synchronizeStream();
     });
 }
 
@@ -126,34 +126,34 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)
 (benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.getDepthModel().cudaPreProcess(ctx);
+        pipeline.getDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.depth_model_.runInferenceAsync(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.getDepthModel().runInferenceAsync(ctx);
+        pipeline.getDepthModel().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.getDepthModel().cudaPreProcess(ctx);
+        pipeline.getDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.depth_model_.runInference(ctx, out);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.getDepthModel().runInference(ctx, out);
+        pipeline.getDepthModel().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.depth_model_.cudaPreProcess(ctx);
-        pipeline.depth_model_.runInferenceAsync(ctx);
-        pipeline.depth_model_.synchronizeStream();
+        pipeline.getDepthModel().cudaPreProcess(ctx);
+        pipeline.getDepthModel().runInferenceAsync(ctx);
+        pipeline.getDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.depth_model_.cudaPostProcess(ctx);
-        pipeline.depth_model_.getInferOutputResult(out);
+        pipeline.getDepthModel().cudaPostProcess(ctx);
+        pipeline.getDepthModel().getInferOutputResult(out);
     });
 }
 
@@ -172,7 +172,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
         InferOutputContext out;
         pipeline.processOverlap(ctx, out);
         state.ResumeTiming();
-        pipeline.postProcess(ctx, out);
+        pipeline.updateMotionStates(ctx, out);
     }
     state.SetItemsProcessed(state.iterations());
 }
