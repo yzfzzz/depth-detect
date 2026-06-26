@@ -30,10 +30,11 @@ git checkout release/v1.0
 - 💻 语言：C++14
 - 📦 构建：CMake 3.10
 - 🎯 推理后端：TensorRT（兼容 8.x / 10.x）
-- ⚙️ 并行/加速：CUDA、cuBLAS、cuDNN、CUB
+- ⚙️ 并行/加速：CUDA、cuBLAS、cuDNN
 - 🖼️ 视觉处理：OpenCV 4.x
 - 📊 基准测试：Google Benchmark
 - 🤖 算法：Yolo，DepthAnything，LiteMono，BYTETracker
+- 😀 平台：x86(Linux)、Jetson
 
 ---
 
@@ -43,43 +44,19 @@ git checkout release/v1.0
 1. 克隆仓库：
 
 ```bash
+# Linux 和 Jeston 步骤相同
 git clone https://github.com/yzfzzz/depth-detect.git
 cd depth-detect
 ```
 
-2. 初始化子模块：
+2. 一键运行
 
 ```bash
 ./start.sh
 ```
 
-3. 准备模型：
 
-- 将已转换的 `.engine` 放到 `model/engine/`。常见路径示例：
-
-```
-model/engine/
-  ├─ yolo26m/yolo26m_640_op11_fp16_trt10.9.engine
-  └─ lite-mono-8m_192x640_op11_fp16_trt10.9.engine
-```
-
-4. 依赖安装（Jetson）
-
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential cmake git libyaml-cpp-dev libopencv-dev libbenchmark-dev
-# Jetson 需安装对应的 TensorRT SDK 与 CUDA（通常系统自带或通过 NVIDIA JetPack 安装）
-```
-
-5. 构建项目：
-
-```bash
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-```
-
-6. 构建 Docker 镜像（推荐）：
+3. 构建 Docker 镜像（推荐）：
 
 - 如果你希望在容器中运行项目，可以使用仓库根目录的 Dockerfile 构建镜像（以 Win11 为例，注意 Dockerfile 需拉取对应版本的镜像）：
 
@@ -108,24 +85,11 @@ xhost +local:root
 
 # 运行镜像
 docker run --gpus all -it --restart=unless-stopped --name depth_detect  -v ./work:/home/work  -e DISPLAY=host.docker.internal:0.0  depth-detect:latest
+
+# 一键运行
+./start.sh
 ```
 
-- 镜像内的构建与运行（容器内示例）：
-
-```bash
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
-cd ../bin
-./main ../data//1shu_east_0514.mp4
-```
-
-7. 运行主程序（示例）：
-
-```bash
-cd ../bin
-./main ../data/1shu_east_0514.mp4
-```
 
 
 
