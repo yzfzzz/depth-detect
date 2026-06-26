@@ -50,7 +50,7 @@ cd depth-detect
 2. 初始化子模块：
 
 ```bash
-./env.sh
+./start.sh
 ```
 
 3. 准备模型：
@@ -59,8 +59,8 @@ cd depth-detect
 
 ```
 model/engine/
-  ├─ yolov8s_s640_ws1024_fp16.engine
-  └─ lite_mono-8m_op12_s640_ws-all_fp16.engine
+  ├─ yolo26m/yolo26m_640_op11_fp16_trt10.9.engine
+  └─ lite-mono-8m_192x640_op11_fp16_trt10.9.engine
 ```
 
 4. 依赖安装（Jetson）
@@ -117,14 +117,14 @@ mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
 cd ../bin
-./main ../data/shu/1shu_east_0514.mp4
+./main ../data//1shu_east_0514.mp4
 ```
 
 7. 运行主程序（示例）：
 
 ```bash
 cd ../bin
-./main ../data/shu/1shu_east_0514.mp4
+./main ../data/1shu_east_0514.mp4
 ```
 
 
@@ -147,6 +147,67 @@ cd ../bin
 ```bash
 cd ./bin && ./test_trt_pipeline && ./test_onnx_pipeline
 ```
+从你的 benchmark 数据中提取关键指标，整理如下：
+
+### 性能对比总表：Jetson TX2 vs GeForce RTX 5060
+- GeForce RTX 5060（x86）：yolo26m + lite_mono-8m
+- Jetson TX2（aarch64）：yolo8n + lite_mono-tiny
+#### 1. 端到端延迟 (E2E Pipeline)
+
+| 阶段 | TX2 (ONNX CPU) | TX2 (TRT GPU) | 5060 (ONNX CPU) | 5060 (TRT GPU) | TX2 加速比 | 5060 加速比 |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| E2E Sync | 716 ms | 62 ms | 297 ms | 7.04 ms | **11.5×** | **42.2×** |
+| E2E Overlap | — | 59 ms | — | 6.70 ms | — | — |
+
+#### 2. 逐阶段延迟拆解
+
+| 阶段 | TX2 ONNX/OpenCV | TX2 TRT/CUDA | 5060 ONNX/OpenCV | 5060 TRT/CUDA |
+|------|:---:|:---:|:---:|:---:|
+| YOLO Preprocess | 15 ms | 2 ms | 2.44 ms | 0.560 ms |
+| YOLO Inference | 432 ms | 25 ms | 215 ms | 3.90 ms |
+| YOLO Postprocess | 5 ms | 2 ms | 1.14 ms | 0.354 ms |
+| Depth Preprocess | 7 ms | 1 ms | 1.25 ms | 0.325 ms |
+| Depth Inference | 348 ms | 36 ms | 89.0 ms | 3.28 ms |
+| Depth Postprocess | 8 ms | 2 ms | 1.64 ms | 0.827 ms |
+| MSE Postprocess | 5 ms | 0 ms | 1.60 ms | 0.251 ms |
+
+#### 3. 量化延迟对比 (TRT FP32 vs FP16 vs INT8)
+
+| 精度 | TX2 Sync | TX2 Overlap | 5060 Sync | 5060 Overlap |
+|------|:---:|:---:|:---:|:---:|
+| FP32 | 76 ms | 75 ms | 13.4 ms | 11.2 ms |
+| FP16 | 61 ms | 59 ms | 7.19 ms | 6.29 ms |
+| INT8 | — | — | 7.05 ms | 6.36 ms |
+
+| 加速比 | TX2 | 5060 |
+|------|:---:|:---:|
+| FP16 vs FP32 | **1.25×** | **1.86×** |
+| INT8 vs FP32 | — | **1.90×** |
+
+#### 4. 量化精度误差 (vs FP32 Baseline)
+
+| 指标 | TX2 FP16 | 5060 FP16 | 5060 INT8 |
+|------|:---:|:---:|:---:|
+| Depth MAE | 0.000762 | 0.000896 | 0.164756 |
+| Depth RMSE | 0.001356 | 0.001307 | 0.223658 |
+| Depth Rel% | **0.89%** | **0.81%** | **56.25%** ⚠️ |
+| YOLO Avg IoU | 0.9843 | 0.9980 | 0.9267 |
+| YOLO Conf Diff | 0.001656 | 0.001107 | 0.106715 |
+| Class Mismatches | 27 | 12 | 1070 |
+
+---
+
+**关键结论：**
+
+| | TX2 | 5060 |
+|------|:---:|:---:|
+| ONNX→TRT 加速 | 11.5× | 42.2× |
+| FP16 精度损失 | 可忽略 (~1%) | 可忽略 (~0.8%) |
+| INT8 精度 | — | Depth 退化严重 (56%) ⚠️ |
+| 推荐配置 | TRT FP16 Overlap | TRT FP16 Overlap |
+
+TX2 不支持 INT8，两个平台 **FP16 是最佳平衡点**——延迟减半、精度几乎无损。
+
 GeForce 5060（x86）基准测试结果：
 ![geforce5060_benchmark_test.png](./doc/geforce_5060_benchmark_combined.png)
 Jetson TX2（aarch64）基准测试结果：
