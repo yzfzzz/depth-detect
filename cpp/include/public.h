@@ -8,9 +8,12 @@
 #include <unistd.h>
 
 #include <cmath>
-#include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
+
+#ifdef HAS_NVTX3
+#    include <nvtx3/nvtx3.hpp>
+#endif
 
 #define CHECK_CUDA(call)                                                          \
     do {                                                                          \

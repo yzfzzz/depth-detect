@@ -8,8 +8,15 @@ ONNX_DIR="${SCRIPT_DIR}/third_party/onnxruntime"
 
 # ---------- 1. 初始化 git submodule ----------
 echo "[1/7] Initializing git submodules..."
+
+# 将仓库根目录及其所有子模块的 gitdir 都加入安全列表
 git config --global --add safe.directory "$(pwd)" || true
-git submodule update --init --recursive
+git config --global --add safe.directory "$(pwd)/model" || true
+git config --global --add safe.directory "$(pwd)/third_party/spdlog" || true
+
+# 获取子模块最新信息，然后拉取
+git submodule sync --recursive
+git submodule update --init --recursive --force
 
 # ---------- 2. 下载 ONNX Runtime ----------
 # 如果头文件和库已存在则跳过
@@ -27,10 +34,15 @@ else
     echo "[2/7] Downloading ONNX Runtime ${ONNX_VERSION}..."
 
     TARBALL="onnxruntime-linux-${ARCH}-${ONNX_VERSION}.tgz"
-    URL="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${TARBALL}"
+    URL_GITHUB="https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${TARBALL}"
+    URL_MIRROR="https://mirror.ghproxy.com/https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${TARBALL}"
 
-    # 下载
-    wget -q --show-progress "${URL}" -O "/tmp/${TARBALL}"
+    # 下载（优先 GitHub 原站，失败后回退国内镜像）
+    if ! wget -q --show-progress "${URL_GITHUB}" -O "/tmp/${TARBALL}" 2>/dev/null; then
+        echo "  → GitHub direct download failed, trying mirror..."
+        wget -q --show-progress "${URL_MIRROR}" -O "/tmp/${TARBALL}"
+    fi
+
 
     # 解压到临时目录
     TMP_DIR="$(mktemp -d)"
@@ -143,21 +155,21 @@ if [ "$ARCH" ]; then
     fi
 fi
 
-# ---- yolo26n ----
+# ---- yolov8n ----
 if [ "$ARCH" ]; then
     # 检查架构，如果是 aarch64 则不导出 INT8
     if [ "$ARCH" = "aarch64" ]; then
         echo "  [INFO] aarch64 architecture detected, skipping INT8 export"
-        export_model ./onnx/yolo26n/yolo26n_640_op11.onnx \
+        export_model ./onnx/yolov8n/yolov8n_640_op11.onnx \
             "--fp16" "" "yolo"
-        export_model ./onnx/yolo26n/yolo26n_640_op11.onnx \
+        export_model ./onnx/yolov8n/yolov8n_640_op11.onnx \
             "" "" "yolo"
     else
-        export_model ./onnx/yolo26n/yolo26n_640_op11.onnx \
+        export_model ./onnx/yolov8n/yolov8n_640_op11.onnx \
             "--int8" "$CALIB_VIDEO" "yolo"
-        export_model ./onnx/yolo26n/yolo26n_640_op11.onnx \
+        export_model ./onnx/yolov8n/yolov8n_640_op11.onnx \
             "--fp16" "" "yolo"
-        export_model ./onnx/yolo26n/yolo26n_640_op11.onnx \
+        export_model ./onnx/yolov8n/yolov8n_640_op11.onnx \
             "" "" "yolo"
     fi
 fi
@@ -225,8 +237,17 @@ if [ ! -d "build" ]; then
     mkdir build
 fi
 
-cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j4 && cd ../
+echo "[7/7] Building project..."
+cd build || { echo "FATAL: cd build failed"; exit 1; }
+
+cmake -DCMAKE_BUILD_TYPE=Release .. || { echo "FATAL: cmake failed"; exit 1; }
+
+make -j$(nproc) || { echo "FATAL: make failed"; exit 1; }
+
+cd ../
+echo "[OK] Build succeeded."
 echo "[7/7] Running main..."
 cd ./bin/ && ./main ../data/1shu_east_0514.mp4 config.yaml
-echo "🤗 You can now run the main program with: ./bin/main <video_path> config.yaml"
+echo "[OK] Main program finished. Results saved in ./bin/out_dir"
+echo "🤗 You can now run the main program with: ./bin/main <video_path> ./bin/config.yaml"
 echo "✅ All done. 😀 Give me a star on GitHub if you like it: https://github.com/yzfzzz/depth-detect"

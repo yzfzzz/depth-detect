@@ -81,7 +81,9 @@ void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
 
 void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
                                   InferOutputContext & infer_output_context) {
+#ifdef HAS_NVTX3
     nvtx3::scoped_range tracker_scope("pipeline updateMotionStates");
+#endif
     infer_output_context.motion_records.clear();
     const std::vector<STrack> & tracked_objects = infer_output_context.tracked_objects;
     for (int i = 0; i < tracked_objects.size(); i++) {
