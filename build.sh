@@ -232,7 +232,6 @@ main() {
     echo ""
     echo "Run container:"
     echo "  docker run --gpus all -it --restart=unless-stopped --name depth_detect  -v ./:/home/work/depth-detect  -e DISPLAY=host.docker.internal:0.0  ${IMAGE_NAME}"
- ${IMAGE_NAME}"
 }
 
 main
