@@ -174,29 +174,49 @@ if ! python3 model/update_config.py --project-root "$SCRIPT_DIR"; then
 fi
 
 # ---------- 6. 安装依赖 ----------
-echo "[6/7] Installing dependencies..."
-apt-get update && apt-get install -y --no-install-recommends \
-    libyaml-cpp-dev \
-    libeigen3-dev \
-    libopencv-dev \
-    pybind11-dev \
-    clangd \
-    clang-format \
-    build-essential \
-    gcc \
-    g++ \
-    make \
-    cmake \
-    gdb \
-    git \
-    libbenchmark-dev \
-    libbenchmark-tools \
-    libgl1 \
-    libglib2.0-0 \
-    libxcb1 \
-    libgl1 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+echo "[6/7] Checking and installing dependencies..."
+
+REQUIRED_PKGS=(
+    libyaml-cpp-dev
+    libeigen3-dev
+    libopencv-dev
+    pybind11-dev
+    clangd
+    clang-format
+    build-essential
+    gcc
+    g++
+    make
+    cmake
+    gdb
+    git
+    libbenchmark-dev
+    libbenchmark-tools
+    libgl1
+    libglib2.0-0
+    libxcb1
+)
+
+# 筛选缺失的包
+MISSING=()
+for pkg in "${REQUIRED_PKGS[@]}"; do
+    if dpkg -s "$pkg" &>/dev/null; then
+        echo "  ✓ $pkg"
+    else
+        echo "  ✗ $pkg"
+        MISSING+=("$pkg")
+    fi
+done
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+    echo "  Installing ${#MISSING[@]} missing package(s)..."
+    apt-get update
+    apt-get install -y --no-install-recommends "${MISSING[@]}"
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+else
+    echo "  All dependencies already installed, skipping apt."
+fi
 
 # ---------- 7. 编译运行 ----------
 echo "[7/7] Checking for build directory..."
@@ -207,7 +227,6 @@ fi
 
 cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make -j4 && cd ../
 echo "[7/7] Running main..."
-echo "  [INFO] You can now run the main program with: ./bin/main <video_path> config.yaml"
 cd ./bin/ && ./main ../data/1shu_east_0514.mp4 config.yaml
-
+echo "🤗 You can now run the main program with: ./bin/main <video_path> config.yaml"
 echo "✅ All done. 😀 Give me a star on GitHub if you like it: https://github.com/yzfzzz/depth-detect"
