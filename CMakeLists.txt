@@ -88,17 +88,33 @@ if(TARGET_CUDA_ARCHS STREQUAL "")
     elseif(TARGET_PLATFORM STREQUAL "TX2")
         set(TARGET_CUDA_ARCHS 62)
     else()
-        set(TARGET_CUDA_ARCHS 120)
+        execute_process(
+            COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+            OUTPUT_VARIABLE GPU_CC
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE NVSMI_RESULT
+        )
+        if(NVSMI_RESULT EQUAL 0 AND GPU_CC)
+            # Extract only first GPU (handle multi-GPU systems)
+            string(REGEX MATCH "[0-9]+\\.[0-9]+" GPU_CC_FIRST "${GPU_CC}")
+            string(REPLACE "." "" TARGET_CUDA_ARCHS "${GPU_CC_FIRST}")
+            message(STATUS "Auto-detected GPU compute capability: sm_${TARGET_CUDA_ARCHS}")
+        else()
+            message(WARNING "nvidia-smi not available, defaulting to compute_90 (H100)")
+            set(TARGET_CUDA_ARCHS 90)
+        endif()
     endif()
 endif()
+
+# 设置 CMake 标准的 CUDA 架构变量（消除 CMP0104 警告）
+set(CMAKE_CUDA_ARCHITECTURES ${TARGET_CUDA_ARCHS})
+
+# 同时维护手工 CUDA flags（兼容旧写法）
 set(CUDA_ARCH_FLAGS "")
 foreach(ARCH ${TARGET_CUDA_ARCHS})
     list(APPEND CUDA_ARCH_FLAGS "-gencode=arch=compute_${ARCH},code=sm_${ARCH}")
 endforeach()
-if(POLICY CMP0104)
-    # 将用户设置的架构列表（如 "90" 或 "53;62"）赋给标准属性
-    set(CMAKE_CUDA_ARCHITECTURES ${TARGET_CUDA_ARCHS})
-endif()
 message(STATUS "CUDA_ARCH_FLAGS = ${CUDA_ARCH_FLAGS}")
 
 # ==================== Compiler Options ====================
@@ -164,27 +180,33 @@ if(NOT EIGEN3_INCLUDE_DIR)
     message(FATAL_ERROR "Eigen3 not found, please install: sudo apt install libeigen3-dev")
 endif()
 
+# NVTX3 detection — works on both Jetson and x86_64
+set(NVTX3_INCLUDE_DIR "")
 if(IS_JETSON)
-    # 动态搜索 Nsight Systems 下的 nvtx3 头文件路径，适配不同版本号
-    set(NVTX3_INCLUDE_DIR "")
     file(GLOB _nsight_dirs LIST_DIRECTORIES true "/opt/nvidia/nsight-systems/*/target-linux-tegra-armv8/nvtx/include")
     if(_nsight_dirs)
         list(GET _nsight_dirs 0 _first_nsight_dir)
         set(NVTX3_INCLUDE_DIR "${_first_nsight_dir}")
         message(STATUS "Found NVTX3 in Nsight Systems: ${NVTX3_INCLUDE_DIR}")
-    else()
-        # 如果在 Nsight 中未找到，回退到标准 CUDA 路径搜索
-        find_path(NVTX3_INCLUDE_DIR NAMES nvtx3/nvtx3.hpp
-            HINTS 
-            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-            /usr/local/cuda/include
-        )
-        if(NVTX3_INCLUDE_DIR)
-            message(STATUS "Found NVTX3 in CUDA Toolkit: ${NVTX3_INCLUDE_DIR}")
-        else()
-            message(WARNING "nvtx3/nvtx3.hpp not found. NVTX profiling features might be disabled.")
-        endif()
     endif()
+endif()
+
+# Fallback: search in CUDA toolkit (works for x86_64)
+if(NOT NVTX3_INCLUDE_DIR)
+    find_path(NVTX3_INCLUDE_DIR NAMES nvtx3/nvtx3.hpp
+        HINTS
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        /usr/local/cuda/include
+        /usr/local/cuda-12*/include
+        /usr/local/cuda-11*/include
+    )
+endif()
+
+if(NVTX3_INCLUDE_DIR)
+    message(STATUS "NVTX3 include: ${NVTX3_INCLUDE_DIR}")
+    add_definitions(-DHAS_NVTX3)
+else()
+    message(WARNING "nvtx3/nvtx3.hpp not found — NVTX profiling disabled")
 endif()
 
 
