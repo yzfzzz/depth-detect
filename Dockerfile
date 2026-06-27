@@ -1,5 +1,7 @@
-# 指定基础镜像
-FROM nvcr.io/nvidia/tensorrt:25.04-py3
+# 基础镜像 — 由 build.sh 自动检测 CUDA 版本后传入，也可手动指定：
+#   docker build --build-arg BASE_IMAGE=nvcr.io/nvidia/tensorrt:25.04-py3 .
+ARG BASE_IMAGE=nvcr.io/nvidia/tensorrt:25.04-py3
+FROM ${BASE_IMAGE}
 
 # 设置时区为上海
 ENV TZ=Asia/Shanghai
