@@ -131,12 +131,12 @@ cd ./bin && ./test_trt_pipeline && ./test_onnx_pipeline
 
 | 指标 | TX2 FP16 | 5060 FP16 | 5060 INT8 |
 |------|:---:|:---:|:---:|
-| Depth MAE | 0.000762 | 0.000896 | 0.164756 |
-| Depth RMSE | 0.001356 | 0.001307 | 0.223658 |
-| Depth Rel% | **0.89%** | **0.81%** | **56.25%** ⚠️ |
-| YOLO Avg IoU | 0.9843 | 0.9980 | 0.9267 |
-| YOLO Conf Diff | 0.001656 | 0.001107 | 0.106715 |
-| Class Mismatches | 27 | 12 | 1070 |
+| Depth MAE | 0.000762 | 0.000088 | 0.014663 |
+| Depth RMSE | 0.001356 | 0.000125 | 0.022231 |
+| Depth Rel% | **0.89%** | **0.05%** | **10.22%** ⚠️ |
+| YOLO Avg IoU | 0.9843 | 0.9982 | 0.9041 |
+| YOLO Conf Diff | 0.001656 | 0.000857 | 0.214586 |
+| Class Mismatches | 27 | 9 | 2592 |
 
 ---
 
@@ -145,16 +145,12 @@ cd ./bin && ./test_trt_pipeline && ./test_onnx_pipeline
 | | TX2 | 5060 |
 |------|:---:|:---:|
 | ONNX→TRT 加速 | 11.5× | 42.2× |
-| FP16 精度损失 | 可忽略 (~1%) | 可忽略 (~0.8%) |
-| INT8 精度 | — | Depth 退化严重 (56%) ⚠️ |
+| FP16 精度损失 | 可忽略 (~0.9%) | 可忽略 (~0.05%) |
+| INT8 精度 | — | Depth Rel 10.22%, YOLO IoU 0.90 ⚠️ |
 | 推荐配置 | TRT FP16 Overlap | TRT FP16 Overlap |
 
 TX2 不支持 INT8，两个平台 **FP16 是最佳平衡点**——延迟减半、精度几乎无损。
 
-GeForce 5060（x86）基准测试结果：
-![geforce5060_benchmark_test.png](./doc/geforce_5060_benchmark_combined.png)
-Jetson TX2（aarch64）基准测试结果：
-![jetson_benchmark_test.png](./doc/jeston_tx2_benchmark_combined.png)
 ps. 测试结果仅供参考，实际性能可能因硬件配置、模型大小、输入分辨率等因素而有所不同
 
 
