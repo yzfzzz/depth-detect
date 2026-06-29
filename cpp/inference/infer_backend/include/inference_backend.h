@@ -13,17 +13,6 @@ enum class BackendType {
     Unkown,
 };
 
-static inline std::string backendTypeToString(BackendType type) {
-    switch (type) {
-        case BackendType::TensorRT:
-            return "TensorRT";
-        case BackendType::OnnxRuntime:
-            return "ONNX Runtime (CPU)";
-        default:
-            return "Unknown";
-    }
-}
-
 // 推理后端抽象接口，支持多种推理后端：TensorRT (GPU)、ONNX Runtime (CPU/GPU)
 class InferenceBackend {
   public:
@@ -55,29 +44,17 @@ class InferenceBackend {
     virtual size_t getOutputByteSize(int output_index = 0) const = 0;
 
     // 获取后端类型
-    virtual BackendType getBackendType() const = 0;
+    virtual BackendType getBackendType() const     = 0;
+    virtual std::string getBackendTypeName() const = 0;
 
     // 检查后端是否可用
     virtual bool isAvailable() const = 0;
-
-    void * getOutputData(size_t index) const;
 
     // 获取输出个数
     virtual size_t getNumOutputs() const { return num_outputs_; }
 
     // 根据输出名获取输出索引
-    virtual size_t getOutputIndexFromName(const std::string & name) const {
-        for (size_t i = 0; i < output_tensor_.size(); ++i) {
-            if (output_tensor_[i].name == name) {
-                if (getBackendType() == BackendType::OnnxRuntime) {
-                    return i;      // ONNX Runtime 后端输出索引从 0 开始
-                } else if (getBackendType() == BackendType::TensorRT) {
-                    return i + 1;  // TensorRT 后端输出索引从 1 开始, 0是输入
-                }
-            }
-        }
-        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
-    }
+    virtual size_t getOutputIndexFromName(const std::string & name) const = 0;
 
   protected:
     struct OutputTensorInfo {

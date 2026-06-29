@@ -32,10 +32,21 @@ class TensorRTBackend : public InferenceBackend {
 
     BackendType getBackendType() const override { return BackendType::TensorRT; }
 
+    std::string getBackendTypeName() const override { return "TensorRT"; }
+
     bool isAvailable() const override;
 
     // TensorRT 特有方法
     nvinfer1::IExecutionContext * getContext() const { return context_.get(); }
+
+    virtual size_t getOutputIndexFromName(const std::string & name) const override {
+        for (size_t i = 0; i < output_tensor_.size(); ++i) {
+            if (output_tensor_[i].name == name) {
+                return i + 1;
+            }
+        }
+        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
+    }
 
   private:
     bool loadEngine(const std::string & engine_path);
