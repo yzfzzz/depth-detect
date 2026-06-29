@@ -57,7 +57,7 @@ class PipelineBenchmark : public benchmark::Fixture {
     int num_frames_ = 0;
 };
 
-// ---- 端到端流水线 ----
+// 端到端流水线 - 同步推理
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_Process_Sync)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) { pipeline.process(ctx, out); });
 }
@@ -69,7 +69,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
                      [](auto & ctx, auto & out, auto & s) { pipeline.processOverlap(ctx, out); });
 }
 
-// ---- YOLO 检测各阶段 ----
+// YOLO 检测各阶段拆解
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         pipeline.getDetector().cudaPreProcess(ctx);
@@ -113,7 +113,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPostprocess)(benchmark::
     });
 }
 
-// ---- 深度估计各阶段 ----
+// 深度估计各阶段拆解
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         pipeline.getDepthModel().cudaPreProcess(ctx);
@@ -157,7 +157,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)(benchmark:
     });
 }
 
-// ---- 后处理 ----
+// 后处理 - 运动状态引擎
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
 
 (benchmark::State & state) {
@@ -177,9 +177,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
     state.SetItemsProcessed(state.iterations());
 }
 
-// ============================================================================
-// 注册（无 ->Name，名称由 BENCHMARK_DEFINE_F 的宏名决定）
-// ============================================================================
+// 注册 Benchmark（名称由 BENCHMARK_DEFINE_F 宏名决定）
 BENCHMARK_REGISTER_F(PipelineBenchmark, Pipeline_TensorRT_ProcessOverlap_Async)
     ->Unit(benchmark::kMillisecond)
     ->Iterations(100);

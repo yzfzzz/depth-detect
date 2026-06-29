@@ -18,7 +18,7 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
     is_normalize_ = is_normalize;
 
-    // 设置归一化参数
+    // 设置归一化参数：不归一化时保持原值 [0,255]，归一化时使用 ImageNet 标准均值/标准差
     if (!is_normalize_) {
         h_mean_ = { 0.0f, 0.0f, 0.0f };
         h_std_  = { 1.0f, 1.0f, 1.0f };
@@ -29,26 +29,27 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
 
     // 初始化 CUDA 资源（仅 TensorRT 后端）
     if (backend_->getBackendType() == BackendType::TensorRT) {
+        // 封装 cudaMalloc 为返回裸指针的 lambda，配合 unique_ptr_cuda 自动管理显存生命周期
         auto alloc_cuda = [](size_t bytes) {
             void * ptr = nullptr;
             CHECK_CUDA(cudaMalloc(&ptr, bytes));
             return ptr;
         };
 
-        // ── 推理 I/O 缓冲区 ──
+        // 推理 I/O 缓冲区：d_infer_io_[0]=输入，d_infer_io_[1..N]=各输出，按索引对应 TRT binding
         d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
         d_infer_io_[0].reset(alloc_cuda(getInputByteSize()));
         for (int i = 0; i < getNumOutputs(); ++i) {
             d_infer_io_[i + 1].reset(alloc_cuda(getOutputByteSize(i)));
         }
 
-        // ── 后处理中间 buffer（模型分辨率）──
+        // 后处理中间 buffer：模型分辨率下的归一化深度图和颜色映射图
         d_buffer_norm_depth_.reset(
             static_cast<uchar *>(alloc_cuda(input_h_ * input_w_ * sizeof(uchar))));
         d_buffer_norm_colormap_.reset(
             static_cast<uchar3 *>(alloc_cuda(input_h_ * input_w_ * sizeof(uchar3))));
 
-        // ── 预处理参数：mean[3] + std[3] 合并为 float[6]，一次拷贝到 GPU ──
+        // 预处理参数：mean[3]+std[3] 合并为 float[6]，一次 H2D 拷贝到设备常量内存
         d_normalize_params_.reset(static_cast<float *>(alloc_cuda(6 * sizeof(float))));
         float h_params[6];
         std::memcpy(h_params, h_mean_.data(), 3 * sizeof(float));
@@ -56,7 +57,8 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         CHECK_CUDA(cudaMemcpy(d_normalize_params_.get(), h_params, 6 * sizeof(float),
                               cudaMemcpyHostToDevice));
 
-        // ── 主机端 pinned memory ──
+        // 主机端 pinned memory：作为 D2H 异步拷贝的目标，避免同步等待
+        // 封装 cudaMallocHost，分配页锁定内存用于异步 D2H 拷贝，避免 cudaMemcpy 阻塞 CPU
         auto alloc_pinned_cuda = [](size_t bytes) {
             void * ptr = nullptr;
             CHECK_CUDA(cudaMallocHost(&ptr, bytes));
@@ -68,7 +70,8 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         host_pinned_depth_colormap_data_.reset(
             static_cast<uchar3 *>(alloc_pinned_cuda(raw_img_h_ * raw_img_w_ * sizeof(uchar3))));
 
-        // ── 后处理输出 buffer（原始分辨率）──
+        // 后处理输出 buffer（原始分辨率）
+        // Jetson 统一内存架构下使用 cudaMallocManaged 避免显式拷贝；x86 平台用设备内存 + pinned memory D2H
 #if defined(__aarch64__) && defined(ENABLE_JESTON_MEM_MANAGED)
         void * dst_depth    = nullptr;
         void * dst_colormap = nullptr;
@@ -99,10 +102,7 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
     return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// GPU 推理链路 (TensorRT)
-// ═══════════════════════════════════════════════════════════════════════
-
+// GPU 推理链路 (TensorRT) - 预处理、后处理均在 GPU 侧执行
 void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
     if (frame_input_context.d_raw_img_ == nullptr) {
         APP_ERROR("Input image buffer is not allocated on GPU");
@@ -117,7 +117,7 @@ void DepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 }
 
 void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
-    // 归一化 + 颜色映射 + resize
+    // 深度归一化 + 颜色映射 + resize 到原始分辨率
     normalize_colormap_resize(
         static_cast<float *>(d_infer_io_[getOutputIndexFromName("disp_output")].get()),
         d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(), d_buffer_dst_depth_.get(),
@@ -133,6 +133,7 @@ void DepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 }
 
 void DepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+    // 同步等待所有异步操作完成（预处理→推理→后处理→D2H拷贝），然后读取结果
     synchronizeStream();
     infer_output_context.depth_raw_infer_out.resize(input_h_ * input_w_);
     cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
@@ -168,6 +169,7 @@ void DepthModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
     cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
 
     cv::Mat colormap;
+    // 归一化到 [0,255] 后用 INFERNO 色谱着色（近=亮黄，远=深紫黑）
     cv::applyColorMap(depth_mat, colormap, cv::COLORMAP_INFERNO);
     cv::resize(colormap, colormap, cv::Size(raw_img_w_, raw_img_h_));
     infer_output_context.result_depth = depth_mat;

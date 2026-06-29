@@ -8,9 +8,7 @@
 
 #include <opencv2/opencv.hpp>
 
-// ============================================================================
-// 全局配置 & 三套 Pipeline（INT8 / FP16 / FP32）
-// ============================================================================
+// 全局配置：三套 Pipeline（INT8 / FP16 / FP32）
 std::string config_path = "benchmark.yaml";
 std::string task_name   = "test_quant_latency";
 YAML::Node  root        = YAML::LoadFile(config_path);
@@ -32,9 +30,7 @@ std::string depth_fp32_path = task_node["depth_fp32_path"].as<std::string>();
 Pipeline    g_fp16_pipe(depth_fp16_path, yolo_fp16_path, frame_meta, true);
 Pipeline    g_fp32_pipe(depth_fp32_path, yolo_fp32_path, frame_meta, true);
 
-// ============================================================================
-// Fixture
-// ============================================================================
+// Fixture：量化延迟 Benchmark 共享基类，负责预热和帧迭代
 class QuantLatencyBench : public benchmark::Fixture {
   public:
     void SetUp(const ::benchmark::State & state) override {
@@ -78,11 +74,9 @@ class QuantLatencyBench : public benchmark::Fixture {
     int num_frames_ = 0;
 };
 
-// ============================================================================
-// Benchmarks
-// ============================================================================
+// Benchmarks：各精度/模式延迟对比
 
-// ---------- INT8 ----------
+// INT8 精度
 #ifndef __aarch64__
 BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_INT8_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_int8_pipe.process(ctx, out); });
@@ -93,7 +87,7 @@ BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_INT8_Process_Overlap)(benchma
 }
 #endif
 
-// ---------- FP16 ----------
+// FP16 精度
 BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP16_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp16_pipe.process(ctx, out); });
 }
@@ -102,7 +96,7 @@ BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP16_Process_Overlap)(benchma
     run(state, [](auto & ctx, auto & out) { g_fp16_pipe.processOverlap(ctx, out); });
 }
 
-// ---------- FP32 ----------
+// FP32 精度
 BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP32_Process_Sync)(benchmark::State & state) {
     run(state, [](auto & ctx, auto & out) { g_fp32_pipe.process(ctx, out); });
 }
@@ -111,9 +105,7 @@ BENCHMARK_DEFINE_F(QuantLatencyBench, QuantLatency_FP32_Process_Overlap)(benchma
     run(state, [](auto & ctx, auto & out) { g_fp32_pipe.processOverlap(ctx, out); });
 }
 
-// ============================================================================
-// 注册（无 ->Name，1.7 兼容）
-// ============================================================================
+// 注册 Benchmark（名称由 BENCHMARK_DEFINE_F 宏名决定）
 #ifndef __aarch64__
 BENCHMARK_REGISTER_F(QuantLatencyBench, QuantLatency_INT8_Process_Sync)
     ->Unit(benchmark::kMillisecond)

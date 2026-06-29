@@ -15,7 +15,7 @@ BYTETracker::BYTETracker(int frame_rate, int track_buffer) {
 BYTETracker::~BYTETracker() {}
 
 std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
-    ////////////////// Step 1: Get detections //////////////////
+    // Step 1: 获取当前帧检测结果，按置信度分流高低阈值两组
     this->frame_id_++;
     std::vector<STrack> activated_stracks;
     std::vector<STrack> refind_stracks;
@@ -63,7 +63,7 @@ std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
         }
     }
 
-    ////////////////// Step 2: First association, with IoU //////////////////
+    // Step 2: 第一次关联 — 高置信度检测与已有轨迹基于 IoU 匹配
     strack_pool = jointStracks(tracked_stracks, this->lost_stracks_);
     STrack::multiPredict(strack_pool, this->kalman_filter_);
 
@@ -88,8 +88,7 @@ std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
         }
     }
 
-    ////////////////// Step 3: Second association, using low score dets
-    /////////////////////
+    // Step 3: 第二次关联 — 低置信度检测与剩余未匹配轨迹匹配 (IoU 阈值降至 0.5)
     for (int i = 0; i < u_detection.size(); i++) {
         detections_cp.push_back(detections[u_detection[i]]);
     }
@@ -130,7 +129,7 @@ std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
         }
     }
 
-    // Deal with unconfirmed tracks, usually tracks with only one beginning frame
+    // 处理未确认轨迹（通常只有首帧匹配的轨迹），与剩余高置信度检测匹配
     detections.clear();
     detections.assign(detections_cp.begin(), detections_cp.end());
 
@@ -153,7 +152,7 @@ std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
         removed_stracks.push_back(*track);
     }
 
-    ////////////////// Step 4: Init new stracks //////////////////
+    // Step 4: 初始化新轨迹 — 高置信度未匹配检测作为新轨迹起点
     for (int i = 0; i < u_detection.size(); i++) {
         STrack * track = &detections[u_detection[i]];
         if (track->score_ < this->high_thresh_) {
@@ -163,7 +162,7 @@ std::vector<STrack> BYTETracker::update(const std::vector<Object> & objects) {
         activated_stracks.push_back(*track);
     }
 
-    ////////////////// Step 5: Update state //////////////////
+    // Step 5: 更新状态 — 清理超时丢失轨迹，更新 tracked/lost/removed 列表
     for (int i = 0; i < this->lost_stracks_.size(); i++) {
         if (this->frame_id_ - this->lost_stracks_[i].endFrame() > this->max_time_lost_) {
             this->lost_stracks_[i].markRemoved();

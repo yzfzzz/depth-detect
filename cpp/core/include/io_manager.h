@@ -29,7 +29,7 @@ class IOManager {
     // 递归创建文件夹
     static void makeDir(const std::string & path);
 
-    // ===== 视频读取和延迟模拟 =====
+    // 视频读取和延迟模拟
     // 打开视频源（支持视频文件或相机）
     bool openVideoSource(const std::string & video_path);
 

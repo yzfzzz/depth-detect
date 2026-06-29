@@ -64,6 +64,8 @@ bool IOManager::dirExists(const std::string & path) {
 }
 
 void IOManager::makeDir(const std::string & path) {
+    // 通过 shell 创建目录（跨平台兼容性注意：Windows 需改为 _mkdir）
+    // TODO：考虑跨平台兼容性
     std::string cmd = "mkdir -p " + path;
     int         ret = system(cmd.c_str());
     if (ret != 0) {
@@ -104,11 +106,13 @@ FrameMeta IOManager::getVideoFrameMeta() const {
 }
 
 bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simulate_delay) {
+    // TODO: 异步读取
     if (!video_capture_.isOpened()) {
         return false;
     }
 
-    // 第一帧或者不模拟延迟时，直接读取
+    // 帧延迟模拟：若上一帧处理耗时超过帧间隔，跳过多余帧以追赶实时播放进度
+    // 避免视频播放与实际处理速度脱节导致的帧积压
     if (is_first_frame_ || !simulate_delay) {
         is_first_frame_ = false;
     } else {
@@ -131,7 +135,7 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
             }
         }
     }
-    // 读取处理用的当前帧
+    // 读取当前帧并同步拷贝到 GPU，供 CUDA 预处理使用
     bool        result       = video_capture_.read(frame_input_context.raw_img);
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);

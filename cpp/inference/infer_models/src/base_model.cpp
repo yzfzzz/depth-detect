@@ -32,10 +32,9 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
         APP_ERROR("Failed to initialize inference backend");
         return;
     }
-    // 获取输入输出维度
+    // 从后端获取模型要求的输入尺寸（如 640x640），用于后续预处理 resize
     auto input_dims  = getInputDims();
     auto output_dims = getOutputDims();
-    // 设置输入尺寸
     input_h_         = input_dims[2];
     input_w_         = input_dims[3];
 }
@@ -49,13 +48,14 @@ bool BaseModel::isGPUAvailable() {
 std::unique_ptr<InferenceBackend> BaseModel::createBackend(
     std::map<std::string, std::string> model_path,
     bool                               use_gpu) {
-    // 优先尝试 TensorRT（如果 GPU 可用且用户偏好 GPU）
+    // 后端选择策略：GPU 可用 + 用户偏好 GPU → 优先 TensorRT（.engine），兜底 ONNX（.onnx）
+    // 仅 CPU 模式 → 直接走 ONNX Runtime
     APP_INFO("Checking for GPU availability: {}", isGPUAvailable() ? "Yes" : "No");
     APP_INFO("GPU preference: {}", use_gpu ? "Yes" : "No");
     if (use_gpu && isGPUAvailable()) {
         auto it = model_path.find("engine");
         if (it != model_path.end()) {
-            // TODO: 需要自动检测gpu id
+            // 创建 TRT 后端，默认 device=0（暂时不支持多 GPU 场景）
             auto trt_backend = std::make_unique<TensorRTBackend>(0);
             if (trt_backend->loadModel(it->second)) {
                 APP_INFO("TensorRT backend initialized successfully");
@@ -124,9 +124,8 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
             "instead");
         return false;
     } else if (backend_->getBackendType() == BackendType::TensorRT) {
-        // 异步预处理
+        // TensorRT 异步路径：预处理→推理→后处理全在 GPU Stream 上排队，CPU 不等待
         cudaPreProcess(frame_input_context);
-        // 异步推理
         std::vector<void *> output_buffers;
         output_buffers.reserve(d_infer_io_.size() - 1);
         std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
@@ -156,10 +155,9 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
         cvMatPostProcess(infer_output_context);
         return true;
     } else if (backend_->getBackendType() == BackendType::TensorRT) {
-        // 异步预处理
+        // TensorRT 同步路径：异步预处理 → 等待完成 → 同步推理 → 异步后处理 → 取结果
         cudaPreProcess(frame_input_context);
-        synchronizeStream();  // 等待预处理完成
-                              // 同步推理
+        synchronizeStream();  // 确保预处理数据就绪后再推理
         std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
                        std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
         backend_->runInference(d_infer_io_[0].get(), output_buffers);

@@ -59,14 +59,14 @@ class PipelineBenchmark : public benchmark::Fixture {
     int num_frames_ = 0;
 };
 
-// ---- 端到端流水线 ----
+// 端到端流水线 - 同步推理
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_Onnx_Process_Sync)(benchmark::State & state) {
     RunPipelineBench(state,
                      [](auto & ctx, auto & out, auto & state) { pipeline.process(ctx, out); });
 }
 
-// ---- YOLO 检测各阶段 ----
+// YOLO 检测各阶段拆解
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
@@ -96,7 +96,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPostprocess)(benchmar
     });
 }
 
-// ---- 深度估计各阶段 ----
+// 深度估计各阶段拆解
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
@@ -127,7 +127,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPostprocess)(benchma
     });
 }
 
-// ---- 后处理 ----
+// 后处理 - 运动状态引擎
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_MotionStateEnginePostprocess)
 

@@ -2,7 +2,7 @@
 
 #include <cstdio>
 
-// ------------------ transpose --------------------
+// transpose kernel - 将检测输出从 [numBboxes, numElements] 转置为 [numElements, numBboxes]
 __global__ void transpose_kernel(float * src,
                                  float * dst,
                                  int     numBboxes,
@@ -23,7 +23,7 @@ void transpose(float * src, float * dst, int numBboxes, int numElements, cudaStr
     transpose_kernel<<<gridSize, blockSize, 0, stream>>>(src, dst, numBboxes, numElements, edge);
 }
 
-// ------------------ decode ( get class and conf ) --------------------
+// decode kernel - 解析检测框坐标、类别置信度和标签，过滤低置信度结果
 __global__ void decode_kernel(float * src,
                               float * dst,
                               int     numBboxes,
@@ -51,6 +51,7 @@ __global__ void decode_kernel(float * src,
         return;
     }
 
+    // atomicAdd 保证多线程并发写入时不冲突：返回写入前的旧值作为当前框的写入位置
     int index = (int) atomicAdd(dst, 1);
     if (index >= maxObjects) {
         return;
@@ -91,7 +92,7 @@ void decode(float *      src,
                                                       maxObjects, numBoxElement);
 }
 
-// ------------------ nms --------------------
+// NMS - 交并比计算，用于非极大值抑制的框重叠度评估
 __device__ float box_iou(float aleft,
                          float atop,
                          float aright,
@@ -131,6 +132,8 @@ __global__ void nms_kernel(float * data, float kNmsThresh, int maxObjects, int n
             continue;
         }
 
+        // NMS 抑制规则：同一类别中，置信度更高的框抑制低置信度框
+        // 置信度相同时按线程 ID 打破平局，避免双方互相抑制
         if (pitem[4] >= pcurrent[4]) {
             if (pitem[4] == pcurrent[4] && i < position) {
                 continue;
@@ -191,8 +194,7 @@ __global__ void resize_kernel(uchar *  src_depth,
     int   src_idx;
     int   src_idy;
 
-    // scale is src/dst, i.e. scale > 1, image will be smaller than before
-    // CentralAligned
+    // 中心对齐双线性插值：将源坐标 +0.5 偏移后再缩放，避免边缘像素偏移
     resize_src_x = (dst_idx + 0.5f) * resize_scale_w - 0.5f;
     resize_src_y = (dst_idy + 0.5f) * resize_scale_h - 0.5f;
 
@@ -254,11 +256,9 @@ void normalize_colormap_resize(float *      src,
     dim3 block_size(32, 8);
     dim3 grid_size((input_w + 31) >> 5, (input_h + 7) >> 3);
 
-    // 1. normalize
-    // 2. colormap
+    // 深度归一化 + 颜色映射 + resize：三个步骤在同一 stream 上顺序执行，无同步点
     normlize_color_kernel<<<grid_size, block_size, 0, stream>>>(src, norm_depth, norm_colormap,
                                                                 input_w, input_h);
-    // 3. resize
     grid_size = dim3((resized_w + 31) >> 5, (resized_h + 7) >> 3);
     resize_kernel<<<grid_size, block_size, 0, stream>>>(
         norm_depth, norm_colormap, dst_depth, dst_colormap, input_w, input_h, resized_w, resized_h,
@@ -266,6 +266,8 @@ void normalize_colormap_resize(float *      src,
 }
 
 void initColorMapTable() {
+    // INFERNO 颜色映射表：将 [0,255] 灰度深度值映射为伪彩色（深紫黑→暗红→亮橙→亮黄）
+    // 数据从 matplotlib 提取，编译为 device __constant__ 内存供所有 kernel 只读访问
     static const float r[] = {
         0.001462f, 0.002267f, 0.003299f, 0.004547f, 0.006006f, 0.007676f, 0.009561f, 0.011663f,
         0.013995f, 0.016561f, 0.019373f, 0.022447f, 0.025793f, 0.029432f, 0.033385f, 0.037668f,

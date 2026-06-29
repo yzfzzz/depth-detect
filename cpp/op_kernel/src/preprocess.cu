@@ -16,9 +16,9 @@ __global__ void letterbox(const uchar * srcData,
     int idx3 = idx * 3;
 
     if (ix > tgtW || iy > tgtH) {
-        return;  // thread out of target range
+        return;
     }
-    // gray region on target image
+    // 灰边填充区域：实图像范围外的像素填充灰色 (128,128,128)
     if (iy < startY || iy > (startY + rszH - 1)) {
         tgtData[idx3]     = 128;
         tgtData[idx3 + 1] = 128;
@@ -35,12 +35,10 @@ __global__ void letterbox(const uchar * srcData,
     float scaleY = (float) rszH / (float) srcH;
     float scaleX = (float) rszW / (float) srcW;
 
-    // (ix,iy)为目标图像坐标
-    // (before_x,before_y)原图坐标
+    // 中心对齐反向映射：目标坐标 → 源坐标，+0.5 偏移避免边缘伪影
     float beforeX = float(ix - startX + 0.5) / scaleX - 0.5;
     float beforeY = float(iy - startY + 0.5) / scaleY - 0.5;
-    // 原图像坐标四个相邻点
-    // 获得变换前最近的四个顶点,取整
+    // 双线性插值：计算源坐标相邻四个整像素及小数偏移
     int   topY    = static_cast<int>(beforeY);
     int   bottomY = topY + 1;
     int   leftX   = static_cast<int>(beforeX);
@@ -84,9 +82,9 @@ __global__ void process(const uchar * srcData, float * tgtData, const int h, con
     int idx3 = idx * 3;
 
     if (ix < w && iy < h) {
-        tgtData[idx]             = (float) srcData[idx3 + 2] / 255.0;  // R pixel
-        tgtData[idx + h * w]     = (float) srcData[idx3 + 1] / 255.0;  // G pixel
-        tgtData[idx + h * w * 2] = (float) srcData[idx3] / 255.0;      // B pixel
+        tgtData[idx]             = (float) srcData[idx3 + 2] / 255.0;  // BGR→RGB: R=src[2]
+        tgtData[idx + h * w]     = (float) srcData[idx3 + 1] / 255.0;  // G=src[1]
+        tgtData[idx + h * w * 2] = (float) srcData[idx3] / 255.0;      // B=src[0]
     }
 }
 
@@ -99,7 +97,7 @@ void preprocess(const cv::Mat & srcImg,
                 int             input_h,
                 int             input_w,
                 cudaStream_t    stream) {
-    // calculate width and height after resize
+    // Letterbox 计算：选择较小缩放比例保持宽高比，不足部分居中填充灰边
     int   w, h, x, y;
     float r_w = input_w / (raw_img_w * 1.0);
     float r_h = input_h / (raw_img_h * 1.0);
@@ -122,13 +120,13 @@ void preprocess(const cv::Mat & srcImg,
     dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
                   (input_h + blockSize.y - 1) / blockSize.y);
 
-    // letterbox and resize
+    // GPU 预处理流水线：letterbox→HWC2CHW/BGR2RGB/归一化，同一 stream 顺序执行
     letterbox<<<gridSize, blockSize, 0, stream>>>(srcDevData, raw_img_h, raw_img_w, midDevData,
                                                   input_h, input_w, h, w, y, x);
-    // hwc to chw / bgr to rgb / normalize
     process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
 }
 
+// preprocess_v2：与 preprocess 逻辑相同，但输入已是 GPU 端数据，省略 H2D 拷贝
 void preprocess_v2(float *      dstDevData,
                    uchar *      srcDevData,
                    uchar *      midDevData,
@@ -137,7 +135,7 @@ void preprocess_v2(float *      dstDevData,
                    int          input_h,
                    int          input_w,
                    cudaStream_t stream) {
-    // calculate width and height after resize
+    // Letterbox 计算：选择较小缩放比例保持宽高比，不足部分居中填充灰边
     int   w, h, x, y;
     float r_w = input_w / (raw_img_w * 1.0);
     float r_h = input_h / (raw_img_h * 1.0);
@@ -157,10 +155,8 @@ void preprocess_v2(float *      dstDevData,
     dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
                   (input_h + blockSize.y - 1) / blockSize.y);
 
-    // letterbox and resize
     letterbox<<<gridSize, blockSize, 0, stream>>>(srcDevData, raw_img_h, raw_img_w, midDevData,
                                                   input_h, input_w, h, w, y, x);
-    // hwc to chw / bgr to rgb / normalize
     process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
 }
 
@@ -185,8 +181,7 @@ __global__ void resize_mat2tensor_norm_kernel(uchar * src,
     int   src_idx;
     int   src_idy;
 
-    // scale is src/dst, i.e. scale > 1, image will be smaller than before
-    // CentralAligned
+    // 中心对齐反向映射：目标坐标 → 源坐标，+0.5 偏移避免边缘像素偏差
     resize_src_x = (dst_idx + 0.5f) * resize_scale_w - 0.5f;
     resize_src_y = (dst_idy + 0.5f) * resize_scale_h - 0.5f;
 
@@ -200,17 +195,16 @@ __global__ void resize_mat2tensor_norm_kernel(uchar * src,
     float fx1y0  = resize_src_x - fx1y1;
     float fx0y1  = resize_src_y - fx1y1;
 
+    // 合并 resize + BGR→RGB + 归一化 + HWC→CHW，遍历三个通道
 #pragma unroll
-    // resize + bgr2rgb + norm + chw
     for (int c = 0; c < 3; ++c) {
-        // clamp indices used for neighbours
+        // 边界 clamp 防止越界
         int sx0 = min(max(src_idx, 0), input_w - 1);
         int sy0 = min(max(src_idy, 0), input_h - 1);
         int sx1 = min(sx0 + 1, input_w - 1);
         int sy1 = min(sy0 + 1, input_h - 1);
 
-        // read BGR from src but map to dst channel c as RGB:
-        // read channel (2 - c) from src (so c==0 gets R)
+        // BGR→RGB 通道重映射：c=0→R(读src channel 2), c=1→G(读src channel 1), c=2→B(读src channel 0)
         float p00 = src[(sy0 * input_w + sx0) * 3 + (2 - c)];
         float p10 = src[(sy0 * input_w + sx1) * 3 + (2 - c)];
         float p01 = src[(sy1 * input_w + sx0) * 3 + (2 - c)];
@@ -218,7 +212,7 @@ __global__ void resize_mat2tensor_norm_kernel(uchar * src,
 
         float val = p00 * fx0y0 + p10 * fx1y0 + p01 * fx0y1 + p11 * fx1y1;
 
-        // normalize and write to CHW float dst
+        // 归一化后写入 CHW 布局：out[c * H * W + y * W + x]
         int out_idx  = c * resized_h * resized_w + dst_idy * resized_w + dst_idx;
         dst[out_idx] = (val / 255.0f - mean[c]) / std[c];
     }
@@ -236,7 +230,7 @@ void depthPreprocess(uchar *      src,
     dim3 blockSize(32, 8);
     dim3 gridSize((resized_w + 31) >> 5, (resized_h + 7) >> 3);
 
-    // mat2tensor = bgr2rgb、hwc2chw
+    // 深度图预处理：resize + BGR→RGB + 归一化，一步完成，与 YOLO 预处理共享同一 kernel
     resize_mat2tensor_norm_kernel<<<gridSize, blockSize, 0, stream>>>(
         src, dst, input_w, input_h, resized_w, resized_h, (float) input_w / resized_w,
         (float) input_h / resized_h, mean, std);

@@ -26,19 +26,13 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
     // 1. 获取或创建对应 track_id 的滤波状态
     auto & state = kf_states_[track_id];
 
-    // ================== 卡尔曼滤波初始化 ==================
+    // 卡尔曼滤波初始化：状态维度=3 [位置,速度,加速度]，测量维度=1（仅观测位置）
     if (!state.is_initialized) {
-        // 状态维度 3: [值, 速度, 加速度]^T
-        // 测量维度 1: [观测到的值（视差/深度）]
+        // 状态转移矩阵 F 在预测时根据 dt 动态更新
+        // x_k = x_{k-1} + v*dt + 0.5*a*dt^2, v_k = v_{k-1} + a*dt, a_k = a_{k-1}
         state.kf.init(3, 1, 0);
 
-        // 初始化状态转移矩阵 F  (在预测时会根据 dt 更新)
-        // x_k = x_{k-1} + v*dt + 0.5*a*dt^2
-        // v_k = v_{k-1} + a*dt
-        // a_k = a_{k-1}
-        cv::setIdentity(state.kf.transitionMatrix);
-
-        // 测量矩阵 H (我们只测量到了第一个元素)
+        // 测量矩阵 H - 仅测量位置（第一个元素）
         state.kf.measurementMatrix                 = cv::Mat::zeros(1, 3, CV_32F);
         state.kf.measurementMatrix.at<float>(0, 0) = 1.0f;
 
@@ -62,7 +56,7 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
         return MotionStateInfoRecord(MotionState::STABLE, MotionState::CONSTANT, 0.0f);
     }
 
-    // ================== 卡尔曼滤波预测与更新 ==================
+    // 卡尔曼滤波预测与更新：根据时间间隔 dt 更新状态转移矩阵
     float dt = static_cast<float>(timestamp - state.last_timestamp);
     if (dt <= 0.0f) {
         dt = 0.033f;  // 兜底保护，假设默认30fps
@@ -85,16 +79,15 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
     float current_velocity = estimated_state.at<float>(1, 0);
     float current_accel    = estimated_state.at<float>(2, 0);
 
-    state.last_timestamp = timestamp;  // 记录本帧时间供下一帧用
+    state.last_timestamp = timestamp;
 
-    // ================== 状态判定 ==================
-    // 注意：如果是视差 (Disparity)，物体靠近 => 视差变大 => 速度应为 正数 (>0)
-    // 如果是确切深度 (Depth)，物体靠近 => 深度变小 => 速度应为 负数 (<0)
+    // 运动状态判定：基于卡尔曼滤波估算的速度和加速度
+    // 注意：此逻辑基于视差（值变大=物体靠近），若使用绝对深度则需要反转方向判断
 
     MotionState direction_state = MotionState::STABLE;
     MotionState accel_state     = MotionState::CONSTANT;
 
-    // 此处假设为视差逻辑 (值变大=靠近)
+    // 当前按视差逻辑处理：值变大 → 靠近，若使用深度则需反转符号
     if (current_velocity > velocity_threshold_) {
         direction_state = MotionState::APPROACH;
         if (current_accel > acceleration_threshold_) {
@@ -107,7 +100,7 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
     else if (current_velocity < -velocity_threshold_) {
         direction_state = MotionState::MOVE_AWAY;
         if (current_accel < -acceleration_threshold_) {
-            accel_state = MotionState::ACCELE;  // 远离时加速跑
+            accel_state = MotionState::ACCELE;  // 远离且加速远离（加速度与速度同向）
         } else if (current_accel > acceleration_threshold_) {
             accel_state = MotionState::DECELE;
         }
@@ -155,24 +148,13 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
     // 存储当前目标收集到的有效深度点
     std::vector<float> sampled_depths;
 
-    int   grid_size = static_cast<int>(std::sqrt(num_samples));
-    float step_x    = static_cast<float>(width) / std::max(1, grid_size - 1);
-    float step_y    = static_cast<float>(height) / std::max(1, grid_size - 1);
-
-    // 提前构建需要排除的遮挡区域（假设交并面积大且目前只做简单的框剔除）
-    // 为了防止互相剔除，我们需要大致知道谁在前谁在后。
-    // 但是这里我们用一个简单粗暴的方法：只要这个像素落在了任何其他 bbox 内，
-    // 我们在这个提取阶段暂时不能武断地全剔除（因为可能它是被检测错了），
-    // 所以这里的优化着重在第 2 步的统计过滤。但为了减少影响，如果中心点靠近边缘的，你可以剔除。
-
-    // 重点优化：网格区域智能采样
-    // 1. 尽量往目标框的核心（中心）区域聚集采样，因为边缘更有可能是背景遮挡
+    // 在目标框内均匀网格采样，统计有效深度值
+    // 采样策略：缩进 20% 边界以避开边缘背景，按 grid_size × grid_size 在框内均匀采点
+    int   grid_size    = static_cast<int>(std::sqrt(num_samples));
+    float shrink_ratio = 0.2f;
     for (int i = 0; i < grid_size; ++i) {
         for (int j = 0; j < grid_size; ++j) {
-            // 这里可以在 i, j 循环里可以加一个高斯权重或者边界缩收
-            // 比如只采样框的中心 60% 区域：
-            float shrink_ratio = 0.2f;  // 上下左右各缩进20%
-            int   x            = left + static_cast<int>(width * shrink_ratio) +
+            int x = left + static_cast<int>(width * shrink_ratio) +
                     static_cast<int>(i * (width * (1.0f - 2 * shrink_ratio)) /
                                      std::max(1, grid_size - 1));
             int y = top + static_cast<int>(height * shrink_ratio) +
@@ -200,17 +182,9 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
         return 0.0f;
     }
 
-    // 重点优化：基于统计学的鲁棒均值选取（截断均值法 Truncated Mean / 一维中值聚类）
-    // 对收集到的所有像素点进行排序
+    // 截断均值法：先排序，剔除两端 25% 异常值（前 25% 可能是前景遮挡，后 25% 可能是背景噪声）
+    // 再对中间 50% 的数据取均值，得到该目标在当前帧的鲁棒深度估计
     std::sort(sampled_depths.begin(), sampled_depths.end());
-
-    // 在一个框里，背景的深度值一定远大于前景的目标值。如果该目标框是被遮挡在后面的，
-    // 那么被遮挡到的那部分像素值一定是非常小（前景）的。
-    // 如果框本身偏大，框进去了后面的背景，那部分像素值一定非常大。
-    // 因此，如果是为了获取**本物体**最真实的深度，需要剔除两头：
-    // 极小值（可能是挡在它前面的物体）；极大值（可能是穿透过去打在远处墙上的深度）。
-
-    // 因此，我们计算去除掉最小的 25% (可能的前景遮挡) 和最大的 25% (背景透视) 后的均值
     int num_valid = sampled_depths.size();
     if (num_valid < 4) {
         // 数据太少，直接取中位数

@@ -3,7 +3,8 @@
 #include "config_manager.h"
 #include "logger_manager.h"
 
-// 全局鼠标回调函数
+// OpenCV 全局鼠标回调：将点击事件转发给对应窗口的 DisplayManager 实例
+// userdata 必须是 DisplayManager 指针，由 cv::setMouseCallback 设置
 void onMouse(int event, int x, int y, int flags, void * userdata) {
     DisplayManager * dm = static_cast<DisplayManager *>(userdata);
     if (!dm || !dm->isEnabled()) {
@@ -36,21 +37,19 @@ DisplayManager::~DisplayManager() {
 }
 
 float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
-    // 调试：检查深度图状态
+    // 交互式深度查询的简化版均值计算：均匀网格采样 + 简单平均
+    // 注意：此函数仅用于鼠标点击时显示目标信息，精度要求低于运动状态引擎中的截断均值法
     if (depth_map_.empty()) {
-        APP_DEBUG("depth_map is empty!");
+        APP_INFO("depth_map is empty!");
         return 0.0f;
     }
-
-    APP_DEBUG("depth_map: size={}, type={}, channels={}", depth_map_.size(), depth_map_.type(),
-              depth_map_.channels());
 
     const int num_samples = 64;  // 采样点数（5x5网格）
     float     sum_depth   = 0.0f;
     int       valid_count = 0;
     int       zero_count  = 0;
 
-    // BBox 边界
+    // BBox 边界钳位到深度图范围内，防止越界访问
     int left   = static_cast<int>(tlwh[0]);
     int top    = static_cast<int>(tlwh[1]);
     int right  = static_cast<int>(tlwh[0] + tlwh[2]);
@@ -62,7 +61,6 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
     right  = std::max(0, std::min(right, depth_map_.cols - 1));
     bottom = std::max(0, std::min(bottom, depth_map_.rows - 1));
 
-    // 计算采样步长
     int width  = right - left;
     int height = bottom - top;
 
@@ -91,20 +89,18 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
             } else if (depth_map_.type() == CV_8UC1) {
                 depth = static_cast<float>(depth_map_.at<uchar>(y, x));
             } else {
-                // 处理其他类型
-                APP_DEBUG("Unsupported depth map type: {}", depth_map_.type());
+                APP_INFO("Unsupported depth map type: {}", depth_map_.type());
+                continue;  // 跳过不支持的深度图格式
             }
 
-            if (depth == 0) {
-                zero_count++;
-            } else if (depth > 0) {
+            if (depth > 0) {
                 sum_depth += depth;
                 valid_count++;
             }
         }
     }
 
-    APP_DEBUG("Samples: total={}, valid={}, zero={}", num_samples, valid_count, zero_count);
+    APP_INFO("Depth samples: total={}, valid={}", num_samples, valid_count);
 
     return (valid_count > 0) ? (sum_depth / valid_count) : 0.0f;
 }
