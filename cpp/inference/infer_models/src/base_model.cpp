@@ -38,8 +38,6 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
     // 设置输入尺寸
     input_h_         = input_dims[2];
     input_w_         = input_dims[3];
-
-    APP_INFO("Model input size: {}x{}", input_w_, input_h_);
 }
 
 bool BaseModel::isGPUAvailable() {
@@ -110,8 +108,7 @@ bool BaseModel::initInferenceBackend(std::map<std::string, std::string> model_pa
     }
 
     initialized_ = true;
-    APP_INFO("Model initialized successfully with backend: {}",
-             backendTypeToString(backend_->getBackendType()));
+    APP_INFO("Model initialized successfully with backend: {}", backend_->getBackendTypeName());
     return true;
 }
 

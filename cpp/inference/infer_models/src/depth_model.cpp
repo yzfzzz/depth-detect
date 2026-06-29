@@ -95,8 +95,7 @@ bool DepthModel::init(std::map<std::string, std::string> model_path,
         }
     }
 
-    APP_INFO("DepthModel initialized successfully with backend: {}",
-             backendTypeToString(backend_->getBackendType()));
+    APP_INFO("DepthModel initialized successfully");
     return true;
 }
 
