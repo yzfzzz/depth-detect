@@ -137,7 +137,7 @@ void DepthModel::getInferOutputResult(InferOutputContext & infer_output_context)
     synchronizeStream();
     infer_output_context.depth_raw_infer_out.resize(input_h_ * input_w_);
     cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
-               d_infer_io_[getOutputIndexFromName("logit_output")].get(),
+               d_infer_io_[getOutputIndexFromName("disp_output")].get(),
                input_h_ * input_w_ * sizeof(float), cudaMemcpyDeviceToHost);
     infer_output_context.result_depth =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
@@ -163,7 +163,7 @@ std::vector<float> DepthModel::cvMatPreProcess(FrameInputContext & frame_input_c
 }
 
 void DepthModel::cvMatPostProcess(InferOutputContext & infer_output_context) {
-    infer_output_context.depth_raw_infer_out = h_infer_out_[getOutputIndexFromName("logit_output")];
+    infer_output_context.depth_raw_infer_out = h_infer_out_[getOutputIndexFromName("disp_output")];
     cv::Mat depth_mat(input_h_, input_w_, CV_32FC1,
                       h_infer_out_[getOutputIndexFromName("disp_output")].data());
     cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);

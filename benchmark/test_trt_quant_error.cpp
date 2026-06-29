@@ -20,11 +20,13 @@ struct DepthErrorMetrics {
     int    valid_px = 0;    // 有效像素数
 };
 
-DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp16,
+DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp_quant,
                                     const std::vector<float> & depth_fp32) {
     DepthErrorMetrics metrics;
-    if (depth_fp16.empty() || depth_fp32.empty() || depth_fp16.size() != depth_fp32.size()) {
-        APP_ERROR("Depth vector size mismatch: fp16({}) vs fp32({})", depth_fp16.size(),
+
+    if (depth_fp_quant.empty() || depth_fp32.empty() ||
+        depth_fp_quant.size() != depth_fp32.size()) {
+        APP_ERROR("Depth vector size mismatch: fp_quant({}) vs fp32({})", depth_fp_quant.size(),
                   depth_fp32.size());
         return metrics;
     }
@@ -32,8 +34,8 @@ DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp16,
     double       sum_abs = 0.0, sum_sq = 0.0, sum_rel = 0.0;
     double       max_val = 0.0;
     const double eps     = 1e-6;
-    for (int i = 0; i < depth_fp16.size() && i < depth_fp32.size(); ++i) {
-        float v16 = depth_fp16[i];
+    for (int i = 0; i < depth_fp_quant.size() && i < depth_fp32.size(); ++i) {
+        float v16 = depth_fp_quant[i];
         float v32 = depth_fp32[i];
         if (std::isfinite(v16) && std::isfinite(v32) && v16 > 0 && v32 > 0) {
             double diff = std::abs(v16 - v32);
