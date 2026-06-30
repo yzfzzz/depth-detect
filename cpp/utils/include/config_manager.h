@@ -28,6 +28,8 @@ class ConfigManager {
     std::string                        getLogLevel() const;
     void                               setUseGPU(bool use_gpu);
     void                               setLogLevel(const std::string & log_level);
+    std::string                        getSendTcpIp() const;
+    int                                getSendTcpPort() const;
 
   private:
     YAML::Node config_;
@@ -126,4 +128,12 @@ inline bool ConfigManager::isOverlapEnabled() const {
 
 inline void ConfigManager::setLogLevel(const std::string & log_level) {
     config_["logger"]["log_level"] = log_level;
+}
+
+inline std::string ConfigManager::getSendTcpIp() const {
+    return config_["io_manager"]["send_tcp_ip"].as<std::string>("127.0.0.1");
+}
+
+inline int ConfigManager::getSendTcpPort() const {
+    return config_["io_manager"]["send_tcp_port"].as<int>(12345);
 }
