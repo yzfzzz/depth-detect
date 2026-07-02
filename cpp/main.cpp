@@ -1,5 +1,6 @@
 
 #include "config_manager.h"
+#include "danger_alert_handler.h"
 #include "frame.h"
 #include "io_manager.h"
 #include "logger_manager.h"
@@ -22,6 +23,7 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      InferOutputContext &           infer_output_context,
                      const ConfigManager &          config_manager,
                      DrawingManager &               drawing_manager,
+                     AlertMessage &                 alert_msg,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us) {
     if (infer_output_context.tracked_objects.size() <= 0) {
@@ -38,9 +40,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 #if defined(ENABLE_TIMER)
             DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
                 "6.Drawing Manager", drawing_manager, drawTrackedObject,
-                frame_input_context.raw_img, track, it->second, get_color_func(track.track_id_));
+                frame_input_context.raw_img, track, alert_msg, get_color_func(track.track_id_));
 #else
-            drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, it->second,
+            drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, alert_msg,
                                               get_color_func(track.track_id_));
 #endif
         }
@@ -64,16 +66,17 @@ int run(char * video_path, char * config_path) {
     LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
     // 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
-    IOManager      io_manager(config_manager);
-    FrameMeta      frame_meta = io_manager.Init(video_path);
+    IOManager          io_manager(config_manager);
+    FrameMeta          frame_meta = io_manager.Init(video_path);
     // 推理流水线（负责目标检测、深度估计、跟踪、运动状态判断等核心功能）
-    Pipeline       pipeline(config_manager, frame_meta);
+    Pipeline           pipeline(config_manager, frame_meta);
     // 绘制管理器（负责绘制结果）
-    DrawingManager drawing_manager(V_CLASS_NAMES);
+    DrawingManager     drawing_manager(V_CLASS_NAMES);
     // 显示管理器（负责窗口管理、显示、鼠标点击等）
-    DisplayManager display_manager(config_manager, "Detection Result",
-                                   cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
-
+    DisplayManager     display_manager(config_manager, "Detection Result",
+                                       cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
+    // 报警管理器（负责报警信息生成）
+    DangerAlertHandler alert_handler(config_manager);
     int                num_frames = 0;
     double             total_us   = 0;
     FrameInputContext  frame_input_context(num_frames, frame_meta);
@@ -122,14 +125,14 @@ int run(char * video_path, char * config_path) {
         }
         // 画图
         cv::Mat out_frame = drawOneFrame(
-            frame_input_context, infer_output_context, config_manager, drawing_manager,
+            frame_input_context, infer_output_context, config_manager, drawing_manager, alert,
             [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us);
         // 保存结果
         io_manager.saveFrame(out_frame, num_frames);
 
         // 显示图像（通过 DisplayManager）
-        display_manager.updateData(infer_output_context.tracked_objects,
-                                   infer_output_context.result_depth);
+        // display_manager.updateData(infer_output_context.tracked_objects,
+        //                            infer_output_context.result_depth);
         if (display_manager.isEnabled()) {
             display_manager.show(out_frame);
             char c      = display_manager.waitKey(1);
