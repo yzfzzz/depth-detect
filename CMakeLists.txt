@@ -191,15 +191,39 @@ if(IS_JETSON)
     endif()
 endif()
 
-# Fallback: search in CUDA toolkit (works for x86_64)
 if(NOT NVTX3_INCLUDE_DIR)
+    # Step 1: 先尝试 CMAKE 已知的 CUDA 路径 + PATH_SUFFIXES
     find_path(NVTX3_INCLUDE_DIR NAMES nvtx3/nvtx3.hpp
-        HINTS
-        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
-        /usr/local/cuda/include
-        /usr/local/cuda-12*/include
-        /usr/local/cuda-11*/include
+        HINTS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        PATH_SUFFIXES
+            targets/x86_64-linux/include
+            targets/aarch64-linux/include
+        NO_DEFAULT_PATH
     )
+endif()
+
+if(NOT NVTX3_INCLUDE_DIR)
+    # Step 2: 用 file(GLOB) 搜索版本化安装路径（find_path 不支持通配符）
+    file(GLOB _cuda_roots LIST_DIRECTORIES true
+        /usr/local/cuda
+        /usr/local/cuda-1[0-9]*
+    )
+    foreach(_cuda_root ${_cuda_roots})
+        find_path(_nvtx3_try NAMES nvtx3/nvtx3.hpp
+            HINTS ${_cuda_root}
+            PATH_SUFFIXES
+                targets/x86_64-linux/include
+                targets/aarch64-linux/include
+                include
+            NO_DEFAULT_PATH
+        )
+        if(_nvtx3_try)
+            set(NVTX3_INCLUDE_DIR "${_nvtx3_try}")
+            break()
+        endif()
+    endforeach()
+    unset(_cuda_roots)
+    unset(_nvtx3_try)
 endif()
 
 if(NVTX3_INCLUDE_DIR)
@@ -276,21 +300,20 @@ target_link_libraries(inference PRIVATE
     onnxruntime
 )
 
-
-
 # core
+add_subdirectory(third_party/JsonSenderTest)
 file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
 add_library(core SHARED ${CORE_SRCS})
 configure_common_includes(core)
 target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(core PUBLIC  inference utils ${OpenCV_LIBS})
+target_link_libraries(core PUBLIC  inference utils ${OpenCV_LIBS} JsonSender)
 
 # tools
 file(GLOB_RECURSE TOOL_SRCS ${PROJECT_CPP_DIR}/tools/src/*.cpp)
 add_library(tools SHARED ${TOOL_SRCS})
 configure_common_includes(tools)
 target_include_directories(tools PUBLIC ${PROJECT_CPP_DIR}/tools/include ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS})
+target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS} core)
 
 # ==================== Main Executable ====================
 add_executable(main ${PROJECT_CPP_DIR}/main.cpp)

@@ -3,7 +3,6 @@
 #include "logger_manager.h"
 
 #include <cstdio>
-#include <iostream>
 #include <opencv2/core/operations.hpp>
 
 MotionStateEngine::MotionStateEngine(float velocity_threshold,
