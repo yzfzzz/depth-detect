@@ -313,7 +313,7 @@ file(GLOB_RECURSE TOOL_SRCS ${PROJECT_CPP_DIR}/tools/src/*.cpp)
 add_library(tools SHARED ${TOOL_SRCS})
 configure_common_includes(tools)
 target_include_directories(tools PUBLIC ${PROJECT_CPP_DIR}/tools/include ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS})
+target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS} core)
 
 # ==================== Main Executable ====================
 add_executable(main ${PROJECT_CPP_DIR}/main.cpp)
