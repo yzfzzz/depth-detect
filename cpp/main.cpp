@@ -116,8 +116,10 @@ int run(char * video_path, char * config_path) {
                      (total_us > 0 ? (num_frames * 1000000LL / total_us) : 0));
         }
         // 发送报警信息
-        io_manager.sendJsonMessage(frame_input_context, infer_output_context);
-
+        auto alert = alert_handler.buildAlert(frame_input_context, infer_output_context);
+        if (alert.has_value()) {
+            io_manager.sendAlert(alert);
+        }
         // 画图
         cv::Mat out_frame = drawOneFrame(
             frame_input_context, infer_output_context, config_manager, drawing_manager,

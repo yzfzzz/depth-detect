@@ -30,6 +30,9 @@ class ConfigManager {
     void                               setLogLevel(const std::string & log_level);
     std::string                        getSendTcpIp() const;
     int                                getSendTcpPort() const;
+    bool                               isSendTcpEnabled() const;
+    bool                               isFilterSmallObjectsEnabled() const;
+    float                              getMinObjectArea() const;
 
   private:
     YAML::Node config_;
@@ -136,4 +139,16 @@ inline std::string ConfigManager::getSendTcpIp() const {
 
 inline int ConfigManager::getSendTcpPort() const {
     return config_["io_manager"]["send_tcp_port"].as<int>(12345);
+}
+
+inline bool ConfigManager::isSendTcpEnabled() const {
+    return config_["io_manager"]["send_tcp"].as<bool>(false);
+}
+
+inline bool ConfigManager::isFilterSmallObjectsEnabled() const {
+    return config_["danger_alert"]["is_filter_small_objects"].as<bool>(true);
+}
+
+inline float ConfigManager::getMinObjectArea() const {
+    return config_["danger_alert"]["min_object_area"].as<float>(20.0f);
 }

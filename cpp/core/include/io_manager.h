@@ -1,5 +1,6 @@
 #pragma once
 #include "config_manager.h"
+#include "danger_alert_handler.h"
 #include "frame.h"
 #include "JsonSender.hpp"
 
@@ -16,9 +17,10 @@ class IOManager {
     // 构造函数，传入配置管理器以获取保存模式和保存路径，同时传入视频参数
     IOManager(const ConfigManager & config_manager);
     IOManager(std::string save_mode,
-              std::string out_dir       = "out_dir",
-              std::string send_tcp_ip   = "127.0.0.1",
-              int         send_tcp_port = 12345);
+              std::string out_dir          = "out_dir",
+              std::string send_tcp_ip      = "127.0.0.1",
+              int         send_tcp_port    = 12345,
+              bool        send_tcp_enabled = false);
 
     FrameMeta Init(const std::string & video_path);
 
@@ -46,14 +48,10 @@ class IOManager {
 
     // 获取视频信息
     FrameMeta getVideoFrameMeta() const;
-    bool      sendJsonMessage(FrameInputContext &  frame_input_context,
-                              InferOutputContext & infer_output_context) const;
-
+    // 发送告警信息
+    bool      sendAlert(const AlertMessage & alert) const;
 
   private:
-    nlohmann::json  inferOutContextToJson(FrameInputContext &  frame_input_context,
-                                          InferOutputContext & infer_output_context) const;
-    bool            sendJsonMessage(const nlohmann::json & j) const;
     std::string     save_mode_;
     std::string     out_dir_;
     cv::VideoWriter video_writer_;
@@ -66,6 +64,7 @@ class IOManager {
     std::unique_ptr<JsonSender> json_sender_ptr_ = nullptr;    // 用于发送 JSON 数据的对象
     std::string                 send_tcp_ip_;                  // 发送 JSON 数据的 TCP 地址
     int                         send_tcp_port_;                // 发送 JSON 数据的 TCP 端口
+    bool                        send_tcp_enabled_;             // 是否启用 TCP 发送
     bool is_json_sender_ok_ = false;  // 标记 JsonSender 是否初始化成功
 };
 

@@ -3,7 +3,6 @@
 #include "frame.h"
 #include "logger_manager.h"
 #include "public.h"
-#include "STrack.h"
 
 #include <cstdlib>  // For system()
 
@@ -11,16 +10,19 @@ IOManager::IOManager(const ConfigManager & config_manager) :
     IOManager(config_manager.getSaveMode(),
               config_manager.getOutDir(),
               config_manager.getSendTcpIp(),
-              config_manager.getSendTcpPort()) {}
+              config_manager.getSendTcpPort(),
+              config_manager.isSendTcpEnabled()) {}
 
 IOManager::IOManager(std::string save_mode,
                      std::string out_dir,
                      std::string send_tcp_ip,
-                     int         send_tcp_port) :
+                     int         send_tcp_port,
+                     bool        send_tcp_enabled) :
     save_mode_(std::move(save_mode)),
     out_dir_(std::move(out_dir)),
     send_tcp_ip_(std::move(send_tcp_ip)),
-    send_tcp_port_(send_tcp_port) {}
+    send_tcp_port_(send_tcp_port),
+    send_tcp_enabled_(send_tcp_enabled) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
@@ -43,16 +45,21 @@ FrameMeta IOManager::Init(const std::string & video_path) {
             APP_ERROR("Failed to initialize VideoWriter at {}", video_save_path);
         }
     }
-
-    json_sender_ptr_   = std::make_unique<JsonSender>(send_tcp_ip_, send_tcp_port_);
-    is_json_sender_ok_ = (json_sender_ptr_->get_fd() >= 0);
-    if (!is_json_sender_ok_) {
-        APP_WARN("Failed to initialize JsonSender for {}:{}, we will not send json data to server.",
-                 send_tcp_ip_, send_tcp_port_);
+    if (send_tcp_enabled_) {
+        APP_INFO("TCP sending is enabled. Will send JSON data to {}:{}", send_tcp_ip_,
+                 send_tcp_port_);
+        json_sender_ptr_   = std::make_unique<JsonSender>(send_tcp_ip_, send_tcp_port_);
+        is_json_sender_ok_ = (json_sender_ptr_->get_fd() >= 0);
+        if (!is_json_sender_ok_) {
+            APP_WARN(
+                "Failed to initialize JsonSender for {}:{}, we will not send json data to server.",
+                send_tcp_ip_, send_tcp_port_);
+        } else {
+            // 对端处理慢或 TCP 发送缓冲区满了，会导致发送失败，因此需要设置非阻塞，直接放弃发送防止卡死
+            json_sender_ptr_->set_nonblocking();
+        }
     } else {
-        // 对端处理慢或 TCP 发送缓冲区满了，会导致发送失败，因此需要设置非阻塞，直接放弃发送防止卡死
-        json_sender_ptr_->set_nonblocking();
-        APP_INFO("Initialized JsonSender for {}:{}", send_tcp_ip_, send_tcp_port_);
+        APP_WARN("TCP sending is disabled.");
     }
     return frame_meta;
 }
@@ -176,68 +183,16 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     return result;
 }
 
-nlohmann::json IOManager::inferOutContextToJson(FrameInputContext &  frame_input_context,
-                                                InferOutputContext & infer_output_context) const {
-    std::vector<STrack>         tracked_objects = infer_output_context.tracked_objects;
-    std::vector<SendObjectData> object_data_array;
-    SendMessage                 message;
-    for (const auto & track : tracked_objects) {
-        const std::vector<float> & tlwh     = track.tlwh_;
-        int                        class_id = track.class_id_;
-        int                        track_id = track.track_id_;
-        if (infer_output_context.motion_records.find(track_id) ==
-            infer_output_context.motion_records.end()) {
-            continue;  // 如果没有运动状态记录，则跳过该目标
-        }
-        auto motion_state = infer_output_context.motion_records.at(track_id);
-
-        bool is_danger = (motion_state.state_vec == MotionState::APPROACH &&
-                          motion_state.state_acc == MotionState::ACCELE);
-
-        if (!is_danger) {
-            continue;  // 如果不是危险状态，则跳过该目标
-        }
-
-        int x = static_cast<int>(tlwh[0]);
-        int y = static_cast<int>(tlwh[1]);
-        int w = static_cast<int>(tlwh[2]);
-        int h = static_cast<int>(tlwh[3]);
-
-        int vec = static_cast<int>(motion_state.velocity);
-        object_data_array.push_back({ x, y, w, h, class_id, track_id, vec, is_danger });
-    }
-    if (object_data_array.empty()) {
-        APP_INFO("Not Dangerous objects detected");
-        return nlohmann::json();
-    }
-    message.object_data_array = object_data_array;
-    message.timestamp         = frame_input_context.timestamp;
-    message.frame_id          = frame_input_context.frame_id;
-    message.img_w             = frame_input_context.meta.img_w;
-    message.img_h             = frame_input_context.meta.img_h;
-
-    return nlohmann::json(message);
-}
-
-bool IOManager::sendJsonMessage(const nlohmann::json & j) const {
-    if (!is_json_sender_ok_) {
+bool IOManager::sendAlert(const AlertMessage & alert) const {
+    if (!is_json_sender_ok_ || !send_tcp_enabled_) {
         return false;
     }
-    bool success = json_sender_ptr_->send(j);
+    nlohmann::json j(alert);
+    bool           success = json_sender_ptr_->send(j);
     if (!success) {
         APP_WARN("Failed to send JSON message: {}", j.dump());
         return false;
     }
     APP_INFO("Send JSON message: {}", j.dump());
     return true;
-}
-
-bool IOManager::sendJsonMessage(FrameInputContext &  frame_input_context,
-                                InferOutputContext & infer_output_context) const {
-    auto j = inferOutContextToJson(frame_input_context, infer_output_context);
-
-    if (j.empty()) {
-        return false;
-    }
-    return sendJsonMessage(j);
 }
