@@ -75,6 +75,9 @@ class LoggerManager {
     // 获取全局 logger
     std::shared_ptr<spdlog::logger> getLogger() const { return logger_; }
 
+    // 打印 ConfigManager 中的所有配置项
+    static void logConfig(const ConfigManager & config);
+
   private:
     explicit LoggerManager(bool save_file, bool console_output, const std::string & log_level_str);
 

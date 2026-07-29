@@ -64,6 +64,7 @@ int run(char * video_path, char * config_path) {
     ConfigManager   config_manager(config_path);
     // 初始化日志系统
     LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
+    LoggerManager::logConfig(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
     // 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
     IOManager          io_manager(config_manager);
