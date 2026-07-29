@@ -7,11 +7,8 @@
 
 #include <opencv2/opencv.hpp>
 
-// ============================================================================
-// 误差度量工具函数
-// ============================================================================
-
 // 计算两个 cv::Mat 的深度误差指标
+// MAE: 平均绝对误差, RMSE: 均方根误差, max_abs: 最大绝对误差, rel_err: 平均相对误差
 struct DepthErrorMetrics {
     double mae      = 0.0;  // Mean Absolute Error
     double rmse     = 0.0;  // Root Mean Square Error
@@ -20,11 +17,13 @@ struct DepthErrorMetrics {
     int    valid_px = 0;    // 有效像素数
 };
 
-DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp16,
+DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp_quant,
                                     const std::vector<float> & depth_fp32) {
     DepthErrorMetrics metrics;
-    if (depth_fp16.empty() || depth_fp32.empty() || depth_fp16.size() != depth_fp32.size()) {
-        APP_ERROR("Depth vector size mismatch: fp16({}) vs fp32({})", depth_fp16.size(),
+
+    if (depth_fp_quant.empty() || depth_fp32.empty() ||
+        depth_fp_quant.size() != depth_fp32.size()) {
+        APP_ERROR("Depth vector size mismatch: fp_quant({}) vs fp32({})", depth_fp_quant.size(),
                   depth_fp32.size());
         return metrics;
     }
@@ -32,8 +31,8 @@ DepthErrorMetrics computeDepthError(const std::vector<float> & depth_fp16,
     double       sum_abs = 0.0, sum_sq = 0.0, sum_rel = 0.0;
     double       max_val = 0.0;
     const double eps     = 1e-6;
-    for (int i = 0; i < depth_fp16.size() && i < depth_fp32.size(); ++i) {
-        float v16 = depth_fp16[i];
+    for (int i = 0; i < depth_fp_quant.size() && i < depth_fp32.size(); ++i) {
+        float v16 = depth_fp_quant[i];
         float v32 = depth_fp32[i];
         if (std::isfinite(v16) && std::isfinite(v32) && v16 > 0 && v32 > 0) {
             double diff = std::abs(v16 - v32);
@@ -153,20 +152,18 @@ void printReport(const YoloDetectionError & yolo_err_sum,
                  const DepthErrorMetrics &  depth_err_sum,
                  int                        processed_frames,
                  std::string                type = "FP16") {
-    // ========================================================================
     // 输出量化误差报告
-    // ========================================================================
     APP_INFO("========== {} vs FP32 Quantization Error Report ==========", type);
     APP_INFO("Total frames processed: {}", processed_frames);
 
-    // --- 深度误差 ---
+    // 深度误差
     APP_INFO("--- Depth Map Error ---");
     APP_INFO("  MAE:  {:.6f}", depth_err_sum.mae / depth_err_sum.valid_px);
     APP_INFO("  RMSE: {:.6f}", std::sqrt(depth_err_sum.rmse / depth_err_sum.valid_px));
     APP_INFO("  Max Absolute Error: {:.6f}", depth_err_sum.max_abs);
     APP_INFO("  Rel:  {:.2f}%", depth_err_sum.rel_err / depth_err_sum.valid_px * 100.0);
 
-    // --- YOLO 检测误差 ---
+    // YOLO 检测误差
     APP_INFO("--- YOLO Detection Error ---");
     if (yolo_err_sum.paired_count > 0) {
         APP_INFO("  Avg IoU (paired):   {:.4f}", yolo_err_sum.avg_iou / processed_frames);
@@ -178,9 +175,7 @@ void printReport(const YoloDetectionError & yolo_err_sum,
     APP_INFO("=============================================================\n");
 }
 
-// ============================================================================
-// 主函数
-// ============================================================================
+// 主函数：量化误差评测入口，比较 INT8/FP16 vs FP32 深度估计与检测结果的偏差
 int main() {
     std::string config_path = "benchmark.yaml";
     std::string task_name   = "test_quant_error";
@@ -215,7 +210,7 @@ int main() {
     FrameInputContext  frame_input_context(num_frames, frame_meta);
     InferOutputContext infer_output_context_fp16, infer_output_context_fp32;
 
-    // ---- 累积误差统计 ----
+    // 累积误差统计
     DepthErrorMetrics  depth_err_sum_fp16;
     YoloDetectionError yolo_err_sum_fp16;
 

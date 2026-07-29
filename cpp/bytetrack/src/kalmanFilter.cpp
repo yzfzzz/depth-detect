@@ -52,7 +52,7 @@ KAL_DATA KalmanFilter::initiate(const DETECTBOX & measurement) {
 }
 
 void KalmanFilter::predict(KAL_MEAN & mean, KAL_COVA & covariance) {
-    // revise the data;
+    // 使用当前状态估计计算过程噪声协方差
     DETECTBOX std_pos;
     std_pos << std_weight_position_ * mean(3), std_weight_position_ * mean(3), 1e-2,
         std_weight_position_ * mean(3);

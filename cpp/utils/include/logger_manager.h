@@ -10,10 +10,7 @@
 
 #include <memory>
 
-/**
- * @class Logger
- * @brief TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog
- */
+// TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog
 class Logger : public nvinfer1::ILogger {
   public:
     nvinfer1::ILogger::Severity reportable_severity_;
@@ -50,23 +47,15 @@ class Logger : public nvinfer1::ILogger {
     }
 };
 
-/**
- * @class LoggerManager
- * @brief 日志管理器 - 单例模式
- * 
- * 负责初始化和管理spdlog日志系统
- * 支持多个sink：控制台输出和文件保存（按日期和latest）
- * 支持CUDA日志通过spdlog集成
- */
+// 日志管理器 - 单例模式
+// 负责初始化和管理 spdlog 日志系统
+// 支持多个 sink：控制台输出和文件保存（按日期和 latest）
 class LoggerManager {
   public:
-    /**
-     * @brief 获取单例实例，初始化日志系统
-     * @param save_file 是否保存日志文件
-     * @param console_output 是否在终端显示日志
-     * @param log_level_str 日志级别字符串
-     * @return LoggerManager单例引用
-     */
+    // 获取单例实例，初始化日志系统
+    // save_file: 是否保存日志文件
+    // console_output: 是否在终端显示日志
+    // log_level_str: 日志级别字符串 ("trace"/"debug"/"info"/"warn"/"err"/"critical")
     static LoggerManager & getInstance(bool                save_file,
                                        bool                console_output,
                                        const std::string & log_level_str) {
@@ -83,33 +72,24 @@ class LoggerManager {
     LoggerManager(const LoggerManager &)             = delete;
     LoggerManager & operator=(const LoggerManager &) = delete;
 
-    /**
-     * @brief 获取全局logger
-     * @return spdlog::logger指针
-     */
+    // 获取全局 logger
     std::shared_ptr<spdlog::logger> getLogger() const { return logger_; }
+
+    // 打印 ConfigManager 中的所有配置项
+    static void logConfig(const ConfigManager & config);
 
   private:
     explicit LoggerManager(bool save_file, bool console_output, const std::string & log_level_str);
 
     std::shared_ptr<spdlog::logger> logger_;
 
-    /**
-     * @brief 创建日期格式的日志文件名
-     * @return 日期格式: "logs/YYYY-MM-DD.log"
-     */
+    // 创建日期格式的日志文件名，如 "logs/YYYY-MM-DD_HH-MM.log"
     static std::string getDateLogFilePath();
 
-    /**
-     * @brief 创建logs目录
-     */
+    // 创建 logs 目录
     static void createLogsDirectory();
 
-    /**
-     * @brief 将spdlog日志级别字符串转换为spdlog::level::level_enum
-     * @param level_str 级别字符串: "trace"/"debug"/"info"/"warn"/"err"/"critical"
-     * @return spdlog::level::level_enum
-     */
+    // 将日志级别字符串转换为 spdlog::level::level_enum
     static spdlog::level::level_enum stringToLogLevel(const std::string & level_str);
 };
 

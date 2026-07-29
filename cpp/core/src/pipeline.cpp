@@ -47,7 +47,7 @@ Pipeline::Pipeline(std::string depth_model_path,
 
 void Pipeline::init() {}
 
-// 同步
+// 同步串行推理：YOLO检测 → 深度估计 → 跟踪 → 运动状态，按顺序串行执行
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
     detector_.runInference(frame_input_context, infer_output_context);
@@ -56,6 +56,9 @@ void Pipeline::process(FrameInputContext &  frame_input_context,
     updateMotionStates(frame_input_context, infer_output_context);
 }
 
+// CPU/GPU 重叠推理：YOLO 和 Depth 通过各自 CUDA Stream 异步执行，实现并行
+// 流程：同时启动 YOLO 和 Depth 异步推理 → YOLO 结果先返回（延迟更低）→ 先做跟踪
+//       → Depth 结果随后返回 → 运动状态判定
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
     detector_.runInferenceAsync(frame_input_context);
@@ -67,6 +70,7 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
 }
 
 void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
+    // 从检测结果中筛选需要跟踪的类别（person/bicycle/car/motorcycle/bus/truck）
     std::vector<Detection> & res = infer_output_context.detections;
     std::vector<Object>      objects;
     for (size_t j = 0; j < res.size(); j++) {
@@ -87,6 +91,7 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
     infer_output_context.motion_records.clear();
     const std::vector<STrack> & tracked_objects = infer_output_context.tracked_objects;
     for (int i = 0; i < tracked_objects.size(); i++) {
+        // 过滤面积 ≤ 20 px² 的极小目标：深度估计在过小区域上不稳定，跳过
         if (tracked_objects[i].tlwh_[2] * tracked_objects[i].tlwh_[3] <= 20) {
             continue;
         }

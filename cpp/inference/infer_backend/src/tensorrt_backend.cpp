@@ -1,5 +1,6 @@
 #include "tensorrt_backend.h"
 
+#include "logger_manager.h"
 #include "public.h"
 
 #include <cstdint>
@@ -83,7 +84,7 @@ bool TensorRTBackend::loadEngine(const std::string & engine_path) {
             }
             dims_str += std::to_string(output_tensor_[i].dims[j]);
         }
-        APP_INFO("[{}] Output tensor['{}']: dims: [{}], byte size: {} bytes", i,
+        APP_INFO("[{}] Output dim: ['{}']: dims: [{}], byte size: {} bytes", i,
                  output_tensor_[i].name, dims_str, output_tensor_[i].byte_size);
     }
 

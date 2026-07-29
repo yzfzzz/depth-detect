@@ -3,7 +3,8 @@
 #include "config_manager.h"
 #include "logger_manager.h"
 
-// 全局鼠标回调函数
+// OpenCV 全局鼠标回调：将点击事件转发给对应窗口的 DisplayManager 实例
+// userdata 必须是 DisplayManager 指针，由 cv::setMouseCallback 设置
 void onMouse(int event, int x, int y, int flags, void * userdata) {
     DisplayManager * dm = static_cast<DisplayManager *>(userdata);
     if (!dm || !dm->isEnabled()) {
@@ -36,21 +37,19 @@ DisplayManager::~DisplayManager() {
 }
 
 float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
-    // 调试：检查深度图状态
+    // 交互式深度查询的简化版均值计算：均匀网格采样 + 简单平均
+    // 注意：此函数仅用于鼠标点击时显示目标信息，精度要求低于运动状态引擎中的截断均值法
     if (depth_map_.empty()) {
-        APP_DEBUG("depth_map is empty!");
+        APP_INFO("depth_map is empty!");
         return 0.0f;
     }
-
-    APP_DEBUG("depth_map: size={}, type={}, channels={}", depth_map_.size(), depth_map_.type(),
-              depth_map_.channels());
 
     const int num_samples = 64;  // 采样点数（5x5网格）
     float     sum_depth   = 0.0f;
     int       valid_count = 0;
     int       zero_count  = 0;
 
-    // BBox 边界
+    // BBox 边界钳位到深度图范围内，防止越界访问
     int left   = static_cast<int>(tlwh[0]);
     int top    = static_cast<int>(tlwh[1]);
     int right  = static_cast<int>(tlwh[0] + tlwh[2]);
@@ -62,7 +61,6 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
     right  = std::max(0, std::min(right, depth_map_.cols - 1));
     bottom = std::max(0, std::min(bottom, depth_map_.rows - 1));
 
-    // 计算采样步长
     int width  = right - left;
     int height = bottom - top;
 
@@ -91,20 +89,18 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
             } else if (depth_map_.type() == CV_8UC1) {
                 depth = static_cast<float>(depth_map_.at<uchar>(y, x));
             } else {
-                // 处理其他类型
-                APP_DEBUG("Unsupported depth map type: {}", depth_map_.type());
+                APP_INFO("Unsupported depth map type: {}", depth_map_.type());
+                continue;  // 跳过不支持的深度图格式
             }
 
-            if (depth == 0) {
-                zero_count++;
-            } else if (depth > 0) {
+            if (depth > 0) {
                 sum_depth += depth;
                 valid_count++;
             }
         }
     }
 
-    APP_DEBUG("Samples: total={}, valid={}, zero={}", num_samples, valid_count, zero_count);
+    APP_INFO("Depth samples: total={}, valid={}", num_samples, valid_count);
 
     return (valid_count > 0) ? (sum_depth / valid_count) : 0.0f;
 }
@@ -192,52 +188,60 @@ int DisplayManager::waitKey(int delay) {
 DrawingManager::DrawingManager(const std::vector<std::string> & class_names) :
     vClassNames_(class_names) {}
 
-void DrawingManager::drawTrackedObject(cv::Mat &                     img,
-                                       const STrack &                track,
-                                       const MotionStateInfoRecord & motion_state,
-                                       cv::Scalar                    color) {
+void DrawingManager::drawTrackedObject(cv::Mat &            img,
+                                       const STrack &       track,
+                                       const AlertMessage & alert_msg,
+                                       cv::Scalar           color) {
     const std::vector<float> & tlwh     = track.tlwh_;
     int                        class_id = track.class_id_;
     int                        track_id = track.track_id_;
 
-    // 1. 获取运动状态字符串
-    auto        it = MOTION_STR_MAP.find({ motion_state.state_vec, motion_state.state_acc });
-    std::string motion_state_str = (it != MOTION_STR_MAP.end()) ? it->second : "Unknown";
+    // 准备文字标签
+    std::string label = cv::format("%s #%d", vClassNames_[class_id].c_str(), track_id);
 
-    // 2. 准备文字标签
-    std::string label = cv::format("%s #%d [%s]", vClassNames_[class_id].c_str(), track_id,
-                                   motion_state_str.c_str());
-
-    // 3. 绘制文字背景框和文字
+    // 绘制文字背景框和文字
     int      baseLine   = 0;
     cv::Size label_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &baseLine);
     cv::Rect rect_bg(cv::Point((int) tlwh[0], (int) tlwh[1] - label_size.height - 8),
                      cv::Size(label_size.width + 8, label_size.height + 8));
 
+    // 绘制目标主体矩形框
+    // 检查物体是否危险
+    bool is_danger = false;
+    for (size_t i = 0; i < alert_msg.objects.size(); ++i) {
+        if (alert_msg.objects[i].track_id == track_id) {
+            is_danger = alert_msg.objects[i].is_danger;
+            break;
+        }
+    }
+
+    int x1 = static_cast<int>(tlwh[0]);
+    int y1 = static_cast<int>(tlwh[1]);
+    int x2 = static_cast<int>(tlwh[0] + tlwh[2]);
+    int y2 = static_cast<int>(tlwh[1] + tlwh[3]);
+
+    // 裁剪到图像范围内，防止 ROI 越界
+    x1 = std::max(0, std::min(x1, img.cols - 1));
+    y1 = std::max(0, std::min(y1, img.rows - 1));
+    x2 = std::max(0, std::min(x2, img.cols - 1));
+    y2 = std::max(0, std::min(y2, img.rows - 1));
+
+    int w = x2 - x1;
+    int h = y2 - y1;
+
+    if (is_danger && w > 0 && h > 0) {
+        // 半透明红色填充 (alpha ≈ 0.3)
+        cv::Mat roi = img(cv::Rect(x1, y1, w, h));
+        cv::Mat red_overlay(roi.size(), roi.type(), cv::Scalar(0, 0, 255));
+        cv::addWeighted(red_overlay, 0.2, roi, 0.7, 0, roi);
+
+        // 红色边框（用原始未裁剪的 bbox 绘制，保持视觉一致）
+        color = cv::Scalar(0, 0, 255);
+    }
+    cv::rectangle(img, cv::Rect(x1, y1, w, h), color, 2);
     cv::rectangle(img, rect_bg, color, cv::FILLED);
     cv::putText(img, label, cv::Point((int) tlwh[0] + 4, (int) tlwh[1] - 4),
                 cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
-
-    // 4. 绘制目标主体矩形框
-    cv::rectangle(img, cv::Rect((int) tlwh[0], (int) tlwh[1], (int) tlwh[2], (int) tlwh[3]), color,
-                  2);
-
-    // 5. 检查运动状态是否为"加速靠近"，如果是则绘制红色交叉
-    if (motion_state.state_vec == MotionState::APPROACH &&
-        motion_state.state_acc == MotionState::ACCELE) {
-        int x1 = static_cast<int>(tlwh[0]);
-        int y1 = static_cast<int>(tlwh[1]);
-        int x2 = static_cast<int>(tlwh[0] + tlwh[2]);
-        int y2 = static_cast<int>(tlwh[1] + tlwh[3]);
-
-        cv::Scalar red_color(0, 0, 255);  // BGR 格式的红色
-        int        line_thickness = 2;
-
-        // 绘制左上到右下的线
-        cv::line(img, cv::Point(x1, y1), cv::Point(x2, y2), red_color, line_thickness, cv::LINE_AA);
-        // 绘制左下到右上的线
-        cv::line(img, cv::Point(x1, y2), cv::Point(x2, y1), red_color, line_thickness, cv::LINE_AA);
-    }
 }
 
 void DrawingManager::drawGlobalInfo(cv::Mat & img,

@@ -101,15 +101,13 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 }
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
-    // 转置
+    // YOLO GPU 后处理流水线：转置 → 解码（提取类别/置信度） → NMS → 异步拷贝回主机
     transpose(static_cast<float *>(d_infer_io_[getOutputIndexFromName("output0")].get()),
               d_transpose_.get(), output_candidates_, num_class_ + 4, stream_);
 
-    // 解码
     decode(d_transpose_.get(), d_decode_.get(), output_candidates_, num_class_, conf_thresh_,
            MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 
-    // NMS
     nms(d_decode_.get(), nms_thresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 
     // 拷贝到主机
@@ -132,6 +130,8 @@ void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_con
             memcpy(det.bbox.data(), &h_infer_out_pinned_.get()[pos], 4 * sizeof(float));
             det.conf    = h_infer_out_pinned_.get()[pos + 4];
             det.classId = static_cast<int>(h_infer_out_pinned_.get()[pos + 5]);
+            // 将模型坐标系下的 bbox 反算回原始图像坐标系
+            // 模型输入经过了 letterbox 缩放 + 灰边填充，此处逆向：先减去灰边偏移，再除以缩放比例
             float r_w   = input_w_ / (raw_img_w_ * 1.0);
             float r_h   = input_h_ / (raw_img_h_ * 1.0);
             float r     = std::min(r_w, r_h);
@@ -149,22 +149,21 @@ void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_con
 }
 
 std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
-    // 1. letterbox resize
+    // Letterbox 缩放：保持宽高比缩放到模型输入尺寸，不足部分用灰色（128）填充
+    // 这样避免直接拉伸导致的形变，保留物体真实比例
     float scale = std::min((float) input_w_ / frame_input_context.raw_img.cols,
                            (float) input_h_ / frame_input_context.raw_img.rows);
     int   w     = (int) (frame_input_context.raw_img.cols * scale);
     int   h     = (int) (frame_input_context.raw_img.rows * scale);
 
     cv::Mat resized, padded;
-    // 先用 letterbox 计算的实际尺寸 resize
-    cv::resize(frame_input_context.raw_img, resized,
-               cv::Size(w, h));  // ← w, h，不是 input_w_, input_h_
-    // 再 pad 灰边到目标尺寸
+    // 先按 letterbox 比例缩放到实际尺寸，再四周补灰边到目标尺寸
+    cv::resize(frame_input_context.raw_img, resized, cv::Size(w, h));
     cv::copyMakeBorder(resized, padded, (input_h_ - h) / 2, input_h_ - h - (input_h_ - h) / 2,
                        (input_w_ - w) / 2, input_w_ - w - (input_w_ - w) / 2, cv::BORDER_CONSTANT,
                        cv::Scalar(128, 128, 128));
 
-    // 2. BGR→RGB + HWC→CHW + /255, 一次遍历
+    // BGR→RGB 通道交换 + HWC→CHW 布局转换 + /255 归一化，合并为一次遍历
     std::vector<float> onnx_input_tensor;
     for (int c = 0; c < 3; ++c) {
         for (int y = 0; y < input_h_; ++y) {
@@ -182,7 +181,8 @@ void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context
     int           num_bboxes   = output_candidates_;
     const float * raw_output   = h_infer_out_[getOutputIndexFromName("output0")].data();
 
-    // 1. 解码：直接从原矩阵 [84, 8400] 读取，无需转置
+    // 解码：直接从 [84, 8400] 格式输出中提取检测框
+    // 每个候选框有 84 个值：前 4 个是 bbox 坐标，后 80 个是类别置信度
     std::vector<cv::Rect2d> boxes;
     std::vector<float>      scores;
     std::vector<int>        classIds;

@@ -13,6 +13,8 @@ echo "[1/7] Initializing git submodules..."
 git config --global --add safe.directory "$(pwd)" || true
 git config --global --add safe.directory "$(pwd)/model" || true
 git config --global --add safe.directory "$(pwd)/third_party/spdlog" || true
+git config --global --add safe.directory "$(pwd)/third_party/onnxruntime" || true
+git config --global --add safe.directory "$(pwd)/third_party/JsonSenderTest" || true
 
 # 获取子模块最新信息，然后拉取
 git submodule sync --recursive

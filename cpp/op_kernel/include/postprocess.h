@@ -42,7 +42,7 @@ void normalize_colormap_resize(float *      src,
                                int          resized_h,
                                cudaStream_t stream);
 
-void initColorMapTable();  // init color map table
+void initColorMapTable();  // INFERNO 颜色映射表初始化，仅需调用一次
 
 __inline__ void scale_bbox(const cv::Mat & img, float bbox[4], int input_w, int input_h) {
     float r_w   = input_w / (img.cols * 1.0);

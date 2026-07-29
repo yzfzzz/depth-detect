@@ -7,12 +7,22 @@
 #include <cstdlib>  // For system()
 
 IOManager::IOManager(const ConfigManager & config_manager) :
-    save_mode_(config_manager.getSaveMode()),
-    out_dir_(config_manager.getOutDir()) {}
+    IOManager(config_manager.getSaveMode(),
+              config_manager.getOutDir(),
+              config_manager.getSendTcpIp(),
+              config_manager.getSendTcpPort(),
+              config_manager.isSendTcpEnabled()) {}
 
-IOManager::IOManager(std::string save_mode, std::string out_dir) :
-    save_mode_(save_mode),
-    out_dir_(out_dir) {}
+IOManager::IOManager(std::string save_mode,
+                     std::string out_dir,
+                     std::string send_tcp_ip,
+                     int         send_tcp_port,
+                     bool        send_tcp_enabled) :
+    save_mode_(std::move(save_mode)),
+    out_dir_(std::move(out_dir)),
+    send_tcp_ip_(std::move(send_tcp_ip)),
+    send_tcp_port_(send_tcp_port),
+    send_tcp_enabled_(send_tcp_enabled) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
@@ -34,6 +44,22 @@ FrameMeta IOManager::Init(const std::string & video_path) {
         if (!video_writer_.isOpened()) {
             APP_ERROR("Failed to initialize VideoWriter at {}", video_save_path);
         }
+    }
+    if (send_tcp_enabled_) {
+        APP_INFO("TCP sending is enabled. Will send JSON data to {}:{}", send_tcp_ip_,
+                 send_tcp_port_);
+        json_sender_ptr_   = std::make_unique<JsonSender>(send_tcp_ip_, send_tcp_port_);
+        is_json_sender_ok_ = (json_sender_ptr_->get_fd() >= 0);
+        if (!is_json_sender_ok_) {
+            APP_WARN(
+                "Failed to initialize JsonSender for {}:{}, we will not send json data to server.",
+                send_tcp_ip_, send_tcp_port_);
+        } else {
+            // 对端处理慢或 TCP 发送缓冲区满了，会导致发送失败，因此需要设置非阻塞，直接放弃发送防止卡死
+            json_sender_ptr_->set_nonblocking();
+        }
+    } else {
+        APP_WARN("TCP sending is disabled.");
     }
     return frame_meta;
 }
@@ -64,6 +90,8 @@ bool IOManager::dirExists(const std::string & path) {
 }
 
 void IOManager::makeDir(const std::string & path) {
+    // 通过 shell 创建目录（跨平台兼容性注意：Windows 需改为 _mkdir）
+    // TODO：考虑跨平台兼容性
     std::string cmd = "mkdir -p " + path;
     int         ret = system(cmd.c_str());
     if (ret != 0) {
@@ -104,11 +132,13 @@ FrameMeta IOManager::getVideoFrameMeta() const {
 }
 
 bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simulate_delay) {
+    // TODO: 异步读取
     if (!video_capture_.isOpened()) {
         return false;
     }
 
-    // 第一帧或者不模拟延迟时，直接读取
+    // 帧延迟模拟：若上一帧处理耗时超过帧间隔，跳过多余帧以追赶实时播放进度
+    // 避免视频播放与实际处理速度脱节导致的帧积压
     if (is_first_frame_ || !simulate_delay) {
         is_first_frame_ = false;
     } else {
@@ -131,7 +161,7 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
             }
         }
     }
-    // 读取处理用的当前帧
+    // 读取当前帧并同步拷贝到 GPU，供 CUDA 预处理使用
     bool        result       = video_capture_.read(frame_input_context.raw_img);
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);
@@ -147,6 +177,22 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     }
     // 更新下一帧的处理开始时间
     last_frame_start_time_ = std::chrono::steady_clock::now();
+    frame_input_context.timestamp =
+        std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     return result;
+}
+
+bool IOManager::sendAlert(const AlertMessage & alert) const {
+    if (!is_json_sender_ok_ || !send_tcp_enabled_) {
+        return false;
+    }
+    nlohmann::json j(alert);
+    bool           success = json_sender_ptr_->send(j);
+    if (!success) {
+        APP_WARN("Failed to send JSON message: {}", j.dump());
+        return false;
+    }
+    APP_INFO("Send JSON message: {}", j.dump());
+    return true;
 }

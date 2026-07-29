@@ -29,9 +29,17 @@ motion_state_engine:      # 目标追踪与状态转换引擎
   kf_process_noise_cov: 0.02  # 卡尔曼过程噪声
   kf_measurement_noise_cov: 0.05
 
+danger_alert:
+  is_filter_small_objects: true   # 是否过滤小目标
+  min_object_area: 20              # 小目标过滤阈值
+
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
   save_mode: images        # 保存输出: video / images / both / none
+  send_tcp: true          # 是否发送TCP数据包
+  send_tcp_ip: "192.168.137.225"  # 发送TCP数据包的IP地址
+  send_tcp_port: 3333     # 发送TCP数据包的端口号
+  
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
   console_output: true    # 是否在终端显示日志

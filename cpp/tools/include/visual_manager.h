@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config_manager.h"
+#include "danger_alert_handler.h"
 #include "motion_state_engine.h"
 #include "public.h"
 #include "STrack.h"
@@ -78,10 +79,10 @@ class DrawingManager {
     DrawingManager(const std::vector<std::string> & class_names);
 
     // 核心绘制函数，画框、文字、以及特殊状态的红叉
-    void drawTrackedObject(cv::Mat &                     img,
-                           const STrack &                track,
-                           const MotionStateInfoRecord & motion_state,
-                           cv::Scalar                    color_to_use);
+    void drawTrackedObject(cv::Mat &            img,
+                           const STrack &       track,
+                           const AlertMessage & alert_msg,
+                           cv::Scalar           color_to_use);
 
     // 绘制全局信息（FPS、帧数等）
     void drawGlobalInfo(cv::Mat & img, int num_frames, int show_fps, size_t num_tracks);
