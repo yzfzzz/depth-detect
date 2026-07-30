@@ -138,18 +138,15 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     APP_INFO("  [depth] depth_interval: {}", config.getDepthInterval());
 
     // motion_state_engine
-    APP_INFO("  [motion_state_engine] velocity_threshold: {}",
-             config.getMotionVelocityThreshold());
+    APP_INFO("  [motion_state_engine] velocity_threshold: {}", config.getMotionVelocityThreshold());
     APP_INFO("  [motion_state_engine] acceleration_threshold: {}",
              config.getMotionAccelerationThreshold());
-    APP_INFO("  [motion_state_engine] kf_process_noise_cov: {}",
-             config.getKfProcessNoiseCov());
+    APP_INFO("  [motion_state_engine] kf_process_noise_cov: {}", config.getKfProcessNoiseCov());
     APP_INFO("  [motion_state_engine] kf_measurement_noise_cov: {}",
              config.getKfMeasurementNoiseCov());
 
     // danger_alert
-    APP_INFO("  [danger_alert] is_filter_small_objects: {}",
-             config.isFilterSmallObjectsEnabled());
+    APP_INFO("  [danger_alert] is_filter_small_objects: {}", config.isFilterSmallObjectsEnabled());
     APP_INFO("  [danger_alert] min_object_area: {}", config.getMinObjectArea());
 
     // io_manager
