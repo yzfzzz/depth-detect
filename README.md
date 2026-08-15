@@ -77,7 +77,51 @@ cd depth-detect
 <a id="系统架构"></a>
 ## 📐 系统架构
 
-![架构图](./doc/arch.png)
+![架构图](./doc/arch3.png)
+
+单帧数据流：
+```mermaid
+sequenceDiagram
+    participant Main as main.cpp
+    participant IO as IOManager
+    participant Pipe as Pipeline
+    participant Yolo as YoloDetectModel
+    participant Depth as DepthModel
+    participant Track as BYTETracker
+    participant Motion as MotionStateEngine
+    participant Alert as DangerAlertHandler
+    participant Draw as DrawingManager
+
+    Main->>IO: readNextFrame(context)
+    IO-->>Main: raw_img，GPU 模式同时准备 d_raw_img
+    Main->>Pipe: process / processOverlap
+
+    alt 串行模式
+        Pipe->>Yolo: runInference()
+        Yolo-->>Pipe: detections
+        Pipe->>Depth: runInference()
+        Depth-->>Pipe: result_depth, depth_vis
+    else GPU 重叠模式
+        Pipe->>Yolo: runInferenceAsync()
+        Pipe->>Depth: runInferenceAsync()
+        Pipe->>Yolo: getInferOutputResult()
+        Yolo-->>Pipe: detections
+        Pipe->>Depth: getInferOutputResult()
+        Depth-->>Pipe: result_depth, depth_vis
+    end
+
+    Pipe->>Track: update(筛选后的检测目标)
+    Track-->>Pipe: tracked_objects
+    Pipe->>Motion: 对每个轨迹采样深度并更新卡尔曼状态
+    Motion-->>Pipe: motion_records
+    Pipe-->>Main: InferOutputContext
+
+    Main->>Alert: buildAlert()
+    Alert-->>Main: AlertMessage
+    Main->>IO: sendAlert() / saveFrame()
+    Main->>Draw: 绘制轨迹、危险状态、FPS、深度图
+    Draw-->>Main: 拼接输出帧
+```
 
 ---
 
