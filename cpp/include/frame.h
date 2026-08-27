@@ -40,14 +40,23 @@ enum MotionState {
 };
 
 struct MotionStateInfoRecord {
-    MotionStateInfoRecord(MotionState state_vec, MotionState state_acc, float velocity) :
+    // ttc / ttc_danger 带默认值：现有 3 参构造调用点无需改动（增量兼容）
+    MotionStateInfoRecord(MotionState state_vec,
+                          MotionState state_acc,
+                          float       velocity,
+                          float       ttc        = -1.0f,
+                          bool        ttc_danger = false) :
         state_vec(state_vec),
         state_acc(state_acc),
-        velocity(velocity) {}
+        velocity(velocity),
+        ttc(ttc),
+        ttc_danger(ttc_danger) {}
 
     MotionState state_vec;
     MotionState state_acc;
     float       velocity;
+    float       ttc;  // 碰撞时间（秒）；-1 表示无效/静止/远离
+    bool ttc_danger;  // TTC 危险报警（引擎内延迟阻塞判定）；false 表示无报警
 };
 
 struct InferOutputContext {

@@ -41,6 +41,7 @@ class Pipeline {
 
     YoloDetectModel detector_;
     DepthModel      depth_model_;
+    bool            depth_enabled_ = false;  // 由 config 的 depth.enabled 控制
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {

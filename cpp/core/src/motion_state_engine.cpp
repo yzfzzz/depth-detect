@@ -7,22 +7,74 @@
 
 MotionStateEngine::MotionStateEngine(float velocity_threshold,
                                      float acceleration_threshold,
+                                     float velocity_hysteresis,
+                                     float acceleration_hysteresis,
                                      float kf_process_noise_cov,
-                                     float kf_measurement_noise_cov) :
-
+                                     float kf_measurement_noise_cov,
+                                     float min_scale_for_ttc,
+                                     float min_velocity_for_ttc,
+                                     float ema_alpha,
+                                     float bbox_jump_ratio_threshold,
+                                     float ttc_warn_threshold,
+                                     float ttc_clear_threshold,
+                                     int   ttc_enter_frames,
+                                     int   ttc_exit_frames) :
     velocity_threshold_(velocity_threshold),
     acceleration_threshold_(acceleration_threshold),
+    velocity_hysteresis_(std::max(0.0f, velocity_hysteresis)),
+    acceleration_hysteresis_(std::max(0.0f, acceleration_hysteresis)),
     kf_process_noise_cov_(kf_process_noise_cov),
-    kf_measurement_noise_cov_(kf_measurement_noise_cov) {}
+    kf_measurement_noise_cov_(kf_measurement_noise_cov),
+    min_scale_for_ttc_(min_scale_for_ttc),
+    min_velocity_for_ttc_(std::max(0.0f, min_velocity_for_ttc)),
+    ema_alpha_(ema_alpha),
+    bbox_jump_ratio_threshold_(bbox_jump_ratio_threshold),
+    ttc_warn_threshold_(std::max(0.0f, ttc_warn_threshold)),
+    ttc_clear_threshold_(std::max(ttc_warn_threshold_, std::max(0.0f, ttc_clear_threshold))),
+    ttc_enter_frames_(std::max(1, ttc_enter_frames)),
+    ttc_exit_frames_(std::max(1, ttc_exit_frames)) {}
 
-MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
-                                                            float  raw_value,
-                                                            double timestamp) {
-    if (raw_value <= 0.0f) {
+MotionStateInfoRecord MotionStateEngine::computeMotionStateFromDepth(int    track_id,
+                                                                     float  raw_depth,
+                                                                     double timestamp) {
+    const auto filtered = computeStateImpl(track_id, raw_depth, timestamp);
+    if (!filtered.valid) {
         return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f);
     }
 
-    // 1. 获取或创建对应 track_id 的滤波状态
+    MotionState direction   = MotionState::STABLE;
+    MotionState accel_state = MotionState::CONSTANT;
+    float       ttc         = -1.0f;
+    bool        ttc_danger  = false;
+
+    if (!filtered.first_frame) {
+        // 深度模型输出可能是视差（近大远小）或深度（近小远大），符号约定不定，
+        // 状态判定与 TTC 均按 |速度| 处理，与符号无关
+        determineMotionStates(track_id, filtered.velocity, filtered.acceleration, direction,
+                              accel_state);
+
+        // TTC = 深度值 / |速度|；跳变帧拒绝，相对变化率过小（TTC 巨大）或值近 0 视为无效
+        const float speed = std::abs(filtered.velocity);
+        if (!filtered.is_large_jump && speed > 1e-4f && raw_depth > 0.0f) {
+            ttc = raw_depth / speed;
+            if (ttc > 50.0f) {
+                ttc = -1.0f;  // 相对变化率 < 2%/s，无实际碰撞风险
+            }
+        }
+        ttc_danger = updateTtcDanger(track_id, ttc, filtered.is_large_jump);
+    }
+    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
+}
+
+MotionStateEngine::FilteredState MotionStateEngine::computeStateImpl(int    track_id,
+                                                                     float  raw_value,
+                                                                     double timestamp) {
+    if (raw_value <= 0.0f) {
+        FilteredState fs;
+        fs.valid = false;
+        return fs;
+    }
+
     auto & state = kf_states_[track_id];
 
     // 卡尔曼滤波初始化：状态维度=3 [位置,速度,加速度]，测量维度=1（仅观测位置）
@@ -31,7 +83,6 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
         // x_k = x_{k-1} + v*dt + 0.5*a*dt^2, v_k = v_{k-1} + a*dt, a_k = a_{k-1}
         state.kf.init(3, 1, 0);
 
-        // 测量矩阵 H - 仅测量位置（第一个元素）
         state.kf.measurementMatrix                 = cv::Mat::zeros(1, 3, CV_32F);
         state.kf.measurementMatrix.at<float>(0, 0) = 1.0f;
 
@@ -47,65 +98,182 @@ MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
         // 误差协方差矩阵 P (初始的置信度，随便设个稍微大点的值)
         cv::setIdentity(state.kf.errorCovPost, cv::Scalar::all(1));
 
-        // 状态初始化
         state.kf.statePost   = (cv::Mat_<float>(3, 1) << raw_value, 0.0f, 0.0f);
         state.last_timestamp = timestamp;
         state.is_initialized = true;
 
-        return MotionStateInfoRecord(MotionState::STABLE, MotionState::CONSTANT, 0.0f);
+        FilteredState fs;
+        fs.position    = raw_value;
+        fs.first_frame = true;
+        return fs;
     }
 
-    // 卡尔曼滤波预测与更新：根据时间间隔 dt 更新状态转移矩阵
     float dt = static_cast<float>(timestamp - state.last_timestamp);
     if (dt <= 0.0f) {
         dt = 0.033f;  // 兜底保护，假设默认30fps
     }
 
-    // 动态更新状态转移矩阵 (根据 dt)
     state.kf.transitionMatrix.at<float>(0, 1) = dt;
     state.kf.transitionMatrix.at<float>(0, 2) = 0.5f * dt * dt;
     state.kf.transitionMatrix.at<float>(1, 2) = dt;
 
-    // 1. 预测 (Predict)
     state.kf.predict();
 
-    // 2. 更新 (Correct) 融入当前观测值
-    cv::Mat measurement     = (cv::Mat_<float>(1, 1) << raw_value);
-    cv::Mat estimated_state = state.kf.correct(measurement);
+    const float predicted_value = state.kf.statePre.at<float>(0, 0);
+    const bool  is_large_jump =
+        predicted_value > 0.0f &&
+        std::abs(raw_value - predicted_value) / predicted_value > bbox_jump_ratio_threshold_;
 
-    // 获取滤波后的最优状态
-    float smoothed_value   = estimated_state.at<float>(0, 0);
-    float current_velocity = estimated_state.at<float>(1, 0);
-    float current_accel    = estimated_state.at<float>(2, 0);
+    // EMA 先平滑正常观测；异常跳变时保留预测值，避免检测框抖动污染速度
+    if (!is_large_jump) {
+        if (state.ema_value <= 0.0f) {
+            state.ema_value = raw_value;
+        } else {
+            state.ema_value = ema_alpha_ * raw_value + (1.0f - ema_alpha_) * state.ema_value;
+        }
+    }
+    const float filtered_value = is_large_jump ? predicted_value : state.ema_value;
+
+    const cv::Mat measurement     = (cv::Mat_<float>(1, 1) << filtered_value);
+    const cv::Mat estimated_state = state.kf.correct(measurement);
 
     state.last_timestamp = timestamp;
 
-    // 运动状态判定：基于卡尔曼滤波估算的速度和加速度
-    // 注意：此逻辑基于视差（值变大=物体靠近），若使用绝对深度则需要反转方向判断
+    FilteredState fs;
+    fs.position      = estimated_state.at<float>(0, 0);
+    fs.velocity      = estimated_state.at<float>(1, 0);
+    fs.acceleration  = estimated_state.at<float>(2, 0);
+    fs.is_large_jump = is_large_jump;
+    return fs;
+}
 
-    MotionState direction_state = MotionState::STABLE;
-    MotionState accel_state     = MotionState::CONSTANT;
+void MotionStateEngine::determineMotionStates(int           track_id,
+                                              float         velocity,
+                                              float         accel,
+                                              MotionState & direction,
+                                              MotionState & accel_state) {
+    auto & state = kf_states_[track_id];
 
-    // 当前按视差逻辑处理：值变大 → 靠近，若使用深度则需反转符号
-    if (current_velocity > velocity_threshold_) {
-        direction_state = MotionState::APPROACH;
-        if (current_accel > acceleration_threshold_) {
+    // 迟滞规则：进入状态用高阈值（触发线），解除状态用低阈值（触发线 - 迟滞区间）。
+    // 例如 velocity_threshold=20、velocity_hysteresis=5 时：速度 > 20 进入 APPROACH，
+    // 已进入后要等速度回落到 < 15 才解除，避免在阈值边界来回抖动。
+    direction   = state.prev_direction_state;
+    accel_state = state.prev_accel_state;
+
+    if (velocity > velocity_threshold_) {
+        direction = MotionState::APPROACH;
+    } else if (velocity < -velocity_threshold_) {
+        direction = MotionState::MOVE_AWAY;
+    } else {
+        // 处于触发线以内：仅当回落越过解除线（触发线 - 迟滞）时才退出已激活的状态
+        if (direction == MotionState::APPROACH &&
+            velocity < velocity_threshold_ - velocity_hysteresis_) {
+            direction = MotionState::STABLE;
+        } else if (direction == MotionState::MOVE_AWAY &&
+                   velocity > -velocity_threshold_ + velocity_hysteresis_) {
+            direction = MotionState::STABLE;
+        } else if (direction != MotionState::APPROACH && direction != MotionState::MOVE_AWAY) {
+            direction = MotionState::STABLE;
+        }
+    }
+
+    // 加速度迟滞：只在方向状态激活（趋近/远离）时判定加减速
+    if (direction == MotionState::APPROACH || direction == MotionState::MOVE_AWAY) {
+        if (accel > acceleration_threshold_) {
             accel_state = MotionState::ACCELE;
-        } else if (current_accel < -acceleration_threshold_) {
+        } else if (accel < -acceleration_threshold_) {
             accel_state = MotionState::DECELE;
+        } else {
+            if (accel_state == MotionState::ACCELE &&
+                accel < acceleration_threshold_ - acceleration_hysteresis_) {
+                accel_state = MotionState::CONSTANT;
+            } else if (accel_state == MotionState::DECELE &&
+                       accel > -acceleration_threshold_ + acceleration_hysteresis_) {
+                accel_state = MotionState::CONSTANT;
+            } else if (accel_state != MotionState::ACCELE && accel_state != MotionState::DECELE) {
+                accel_state = MotionState::CONSTANT;
+            }
         }
-    }
-    // 视差变小=远离
-    else if (current_velocity < -velocity_threshold_) {
-        direction_state = MotionState::MOVE_AWAY;
-        if (current_accel < -acceleration_threshold_) {
-            accel_state = MotionState::ACCELE;  // 远离且加速远离（加速度与速度同向）
-        } else if (current_accel > acceleration_threshold_) {
-            accel_state = MotionState::DECELE;
-        }
+    } else {
+        // 方向状态未激活时，加速度状态复位，等待下一轮重新触发
+        accel_state = MotionState::CONSTANT;
     }
 
-    return MotionStateInfoRecord(direction_state, accel_state, current_velocity);
+    state.prev_direction_state = direction;
+    state.prev_accel_state     = accel_state;
+}
+
+bool MotionStateEngine::updateTtcDanger(int track_id, float ttc, bool is_jump) {
+    auto & state = kf_states_[track_id];
+
+    // 跳变帧：尺度/速度不可信，ttc 无效。保持当前报警状态与计数不动，
+    // 不当作"安全"帧去清零进入计数——否则抖动会让报警永远攒不满连续低帧
+    if (is_jump) {
+        return state.ttc_danger;
+    }
+
+    const bool low = ttc > 0.0f && ttc < ttc_warn_threshold_;
+    const bool high = ttc <= 0.0f || ttc > ttc_clear_threshold_;  // 无效/静止/远离 或 已远离危险区
+
+    if (low) {
+        state.ttc_low_frames++;
+        state.ttc_high_frames = 0;
+    } else if (high) {
+        state.ttc_low_frames = 0;
+        state.ttc_high_frames++;
+    }
+    // [warn, clear] 灰色区：保持现状，防止在阈值边界抖动
+
+    if (state.ttc_danger) {
+        // 已报警：需连续 ttc_exit_frames 帧处于 high（高于 clear 或无效）才解除（阻塞保持）
+        if (state.ttc_high_frames >= ttc_exit_frames_) {
+            state.ttc_danger      = false;
+            state.ttc_high_frames = 0;
+            APP_INFO("[ControlPanel] track {} TTC alarm cleared: ttc={:.2f}s > clear {:.2f}s",
+                     track_id, ttc, ttc_clear_threshold_);
+        }
+    } else if (state.ttc_low_frames >= ttc_enter_frames_) {
+        // 未报警：需连续 ttc_enter_frames 帧低于 warn 才触发（进入防抖）
+        state.ttc_danger      = true;
+        state.ttc_low_frames  = 0;
+        state.ttc_high_frames = 0;
+        APP_INFO("[ControlPanel] track {} TTC alarm triggered: ttc={:.2f}s < warn {:.2f}s",
+                 track_id, ttc, ttc_warn_threshold_);
+    }
+    return state.ttc_danger;
+}
+
+MotionStateInfoRecord MotionStateEngine::computeMotionStateFromBBox(const STrack & track,
+                                                                    double         timestamp) {
+    const auto & tlwh = track.tlwh_;
+    if (tlwh.size() < 4 || tlwh[2] <= 0.0f || tlwh[3] <= 0.0f) {
+        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f, -1.0f);
+    }
+
+    // 用 bbox 线性尺度代替深度：sqrt(area)
+    const float scale    = std::sqrt(tlwh[2] * tlwh[3]);
+    const auto  filtered = computeStateImpl(track.track_id_, scale, timestamp);
+
+    MotionState direction   = MotionState::STABLE;
+    MotionState accel_state = MotionState::CONSTANT;
+    float       ttc         = -1.0f;
+    bool        ttc_danger  = false;
+
+    if (filtered.valid && !filtered.first_frame) {
+        determineMotionStates(track.track_id_, filtered.velocity, filtered.acceleration, direction,
+                              accel_state);
+
+        // 跳变帧（is_large_jump）尺度突变，速度/尺度不可信，拒绝 TTC；
+        // 速度过小（分母小 -> TTC 巨大）或非正、目标尺度低于下限同样视为无有效 TTC
+        if (!filtered.is_large_jump && filtered.velocity > min_velocity_for_ttc_ &&
+            scale > min_scale_for_ttc_) {
+            ttc = scale / filtered.velocity;
+        }
+
+        ttc_danger = updateTtcDanger(track.track_id_, ttc, filtered.is_large_jump);
+    }
+
+    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
 }
 
 float MotionStateEngine::getObjectDepth(cv::Mat depth, const STrack & track, cv::Size image_size) {
@@ -171,7 +339,7 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
                 depth_value = static_cast<float>(depth.at<uchar>(y, x));
             }
 
-            if (depth_value > 0.01f) {
+            if (depth_value > 0.0f) {
                 sampled_depths.push_back(depth_value);
             }
         }

@@ -11,16 +11,28 @@ class ConfigManager {
     std::map<std::string, std::string> getYoloModelPath() const;
     std::map<std::string, std::string> getDepthModelPath() const;
     int                                getDepthInterval() const;
+    bool                               isDepthEnabled() const;
     std::string                        getSaveMode() const;
     std::string                        getOutDir() const;
     bool                               isDisplayEnabled() const;
+    bool                               isControlPanelEnabled() const;
     bool                               isSaveEnabled() const;
     float                              getMotionVelocityThreshold() const;
     float                              getMotionAccelerationThreshold() const;
+    float                              getMotionVelocityHysteresis() const;
+    float                              getMotionAccelerationHysteresis() const;
     float                              getYoloNmsThresh() const;
     float                              getYoloConfThresh() const;
     float                              getKfProcessNoiseCov() const;
     float                              getKfMeasurementNoiseCov() const;
+    float                              getTtcWarnThreshold() const;
+    float                              getTtcClearThreshold() const;
+    int                                getTtcEnterFrames() const;
+    int                                getTtcExitFrames() const;
+    float                              getMinScaleForTtc() const;
+    float                              getMinVelocityForTtc() const;
+    float                              getEmaAlpha() const;
+    float                              getBboxJumpRatioThreshold() const;
     bool                               isUseGPU() const;
     bool                               isOverlapEnabled() const;
     bool                               isLogFileSaveEnabled() const;
@@ -65,6 +77,10 @@ inline int ConfigManager::getDepthInterval() const {
     return config_["depth"]["depth_interval"].as<int>(1);
 }
 
+inline bool ConfigManager::isDepthEnabled() const {
+    return config_["depth"]["enabled"].as<bool>(true);
+}
+
 inline std::string ConfigManager::getSaveMode() const {
     return config_["io_manager"]["save_mode"].as<std::string>("none");
 }
@@ -77,6 +93,10 @@ inline bool ConfigManager::isDisplayEnabled() const {
     return config_["display_manager"]["is_display"].as<bool>(false);
 }
 
+inline bool ConfigManager::isControlPanelEnabled() const {
+    return config_["display_manager"]["enable_control_panel"].as<bool>(true);
+}
+
 inline bool ConfigManager::isSaveEnabled() const {
     return config_["io_manager"]["is_save"].as<bool>(false);
 }
@@ -87,6 +107,14 @@ inline float ConfigManager::getMotionVelocityThreshold() const {
 
 inline float ConfigManager::getMotionAccelerationThreshold() const {
     return config_["motion_state_engine"]["acceleration_threshold"].as<float>(1.5f);
+}
+
+inline float ConfigManager::getMotionVelocityHysteresis() const {
+    return config_["motion_state_engine"]["velocity_hysteresis"].as<float>(2.0f);
+}
+
+inline float ConfigManager::getMotionAccelerationHysteresis() const {
+    return config_["motion_state_engine"]["acceleration_hysteresis"].as<float>(1.0f);
 }
 
 inline float ConfigManager::getYoloNmsThresh() const {
@@ -103,6 +131,38 @@ inline float ConfigManager::getKfProcessNoiseCov() const {
 
 inline float ConfigManager::getKfMeasurementNoiseCov() const {
     return config_["motion_state_engine"]["kf_measurement_noise_cov"].as<float>(5e-2f);
+}
+
+inline float ConfigManager::getTtcWarnThreshold() const {
+    return config_["danger_alert"]["ttc_warn_threshold"].as<float>(3.0f);
+}
+
+inline float ConfigManager::getTtcClearThreshold() const {
+    return config_["danger_alert"]["ttc_clear_threshold"].as<float>(4.0f);
+}
+
+inline int ConfigManager::getTtcEnterFrames() const {
+    return config_["danger_alert"]["ttc_enter_frames"].as<int>(3);
+}
+
+inline int ConfigManager::getTtcExitFrames() const {
+    return config_["danger_alert"]["ttc_exit_frames"].as<int>(10);
+}
+
+inline float ConfigManager::getMinScaleForTtc() const {
+    return config_["motion_state_engine"]["min_scale_for_ttc"].as<float>(20.0f);
+}
+
+inline float ConfigManager::getMinVelocityForTtc() const {
+    return config_["motion_state_engine"]["min_velocity_for_ttc"].as<float>(1.0f);
+}
+
+inline float ConfigManager::getEmaAlpha() const {
+    return config_["motion_state_engine"]["ema_alpha"].as<float>(0.3f);
+}
+
+inline float ConfigManager::getBboxJumpRatioThreshold() const {
+    return config_["motion_state_engine"]["bbox_jump_ratio_threshold"].as<float>(0.35f);
 }
 
 inline bool ConfigManager::isLogFileSaveEnabled() const {

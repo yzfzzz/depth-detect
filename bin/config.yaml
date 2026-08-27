@@ -1,5 +1,6 @@
 display_manager:
-  is_display: false    # 是否启用本机的 GUI 交互窗口
+  is_display: true    # 是否启用本机的 GUI 交互窗口
+  enable_control_panel: true   # 是否启用运行时参数控制面板（纯滑动条，拖动实时生效，需 is_display 开启）
 
 prefer:
   use_gpu: true      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
@@ -23,15 +24,26 @@ depth:
     - type: onnx
       path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
 
-motion_state_engine:      # 目标追踪与状态转换引擎
+motion_state_engine:      # 目标追踪与状态转换引擎（bbox 尺度驱动：滤波 + 运动状态 + TTC）
   velocity_threshold: 20      # 判断趋近/远离的速度触发线
   acceleration_threshold: 10   # 加减速缓冲界限
-  kf_process_noise_cov: 0.02  # 卡尔曼过程噪声
-  kf_measurement_noise_cov: 0.05
+  velocity_hysteresis: 5.0     # 速度迟滞区间：进入用触发线，解除用(触发线-迟滞)，防阈值边界抖动
+  acceleration_hysteresis: 3.0 # 加速度迟滞区间
+  kf_process_noise_cov: 0.2   # 卡尔曼过程噪声（0.02→0.2：更信观测，速度跟踪跟手，避免 TTC 高估）
+  kf_measurement_noise_cov: 0.05  # 卡尔曼测量噪声
+  ema_alpha: 0.7              # EMA平滑系数：0~1，越大越跟手、越小越平滑（0.5→0.7）
+  bbox_jump_ratio_threshold: 0.5  # 目标跳动比例阈值：|观测-预测|/预测 超过该值则改用KF预测值（TTC 跳变保护）
+  min_scale_for_ttc: 20       # 计算TTC的最小目标尺度（sqrt(w*h)）
+  min_velocity_for_ttc: 1.0   # 计算TTC的最小目标尺度变化速度：分母过小则 TTC 巨大，视为无效（勿设过小）
 
 danger_alert:
   is_filter_small_objects: true   # 是否过滤小目标
   min_object_area: 20              # 小目标过滤阈值
+  ttc_warn_threshold: 8.0          # TTC 报警触发阈值（秒）：连续 ttc_enter_frames 帧 ttc < 该值则报警（0.5→3.0）
+  ttc_clear_threshold: 15.0         # TTC 报警解除阈值（秒）：须 >= warn，连续 ttc_exit_frames 帧 ttc > 该值才解除
+  ttc_enter_frames: 3              # 报警进入防抖：连续几帧 ttc < warn 才触发
+  ttc_exit_frames: 3              # 报警退出阻塞：连续几帧 ttc > clear 或无效才解除
+
 
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称

@@ -1,5 +1,6 @@
 
 #include "config_manager.h"
+#include "control_panel.h"
 #include "danger_alert_handler.h"
 #include "frame.h"
 #include "io_manager.h"
@@ -38,12 +39,13 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
         auto it = infer_output_context.motion_records.find(track.track_id_);
         if (it != infer_output_context.motion_records.end()) {
 #if defined(ENABLE_TIMER)
-            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
-                "6.Drawing Manager", drawing_manager, drawTrackedObject,
-                frame_input_context.raw_img, track, alert_msg, get_color_func(track.track_id_));
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("6.Drawing Manager", drawing_manager,
+                                                   drawTrackedObject, frame_input_context.raw_img,
+                                                   track, alert_msg, it->second,
+                                                   get_color_func(track.track_id_));
 #else
             drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, alert_msg,
-                                              get_color_func(track.track_id_));
+                                              it->second, get_color_func(track.track_id_));
 #endif
         }
     }
@@ -53,7 +55,7 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     drawing_manager.drawGlobalInfo(frame_input_context.raw_img, frame_input_context.frame_id,
                                    show_fps, infer_output_context.tracked_objects.size());
 
-    // 上下拼接
+    // 上下拼接（深度未启用时 depth_vis 为空，自动退回仅显示原图）
     cv::Mat out_frame = drawing_manager.concatenateFrames(frame_input_context.raw_img,
                                                           infer_output_context.depth_vis);
     return out_frame;
@@ -76,6 +78,9 @@ int run(char * video_path, char * config_path) {
     // 显示管理器（负责窗口管理、显示、鼠标点击等）
     DisplayManager     display_manager(config_manager, "Detection Result",
                                        cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
+    // 运行时参数控制面板：纯滑动条，挂载在主显示窗口上
+    ControlPanel       control_panel(pipeline.getMotionStateEngine(), config_manager,
+                                     display_manager.windowName());
     // 报警管理器（负责报警信息生成）
     DangerAlertHandler alert_handler(config_manager);
     int                num_frames = 0;
@@ -136,6 +141,8 @@ int run(char * video_path, char * config_path) {
         //                            infer_output_context.result_depth);
         if (display_manager.isEnabled()) {
             display_manager.show(out_frame);
+            // 刷新控制面板（无编辑状态，无需转发按键）
+            control_panel.update();
             char c      = display_manager.waitKey(1);
             int  result = display_manager.handleKey(c);
             if (result == Key_Input::ESC) {  // 用户按下 ESC 键退出

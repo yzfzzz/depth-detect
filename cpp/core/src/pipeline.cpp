@@ -11,15 +11,29 @@
 #include <array>
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
+    depth_enabled_(config_manager.isDepthEnabled()),
     tracker_(30, 30),  // 假设fps=30，或从config读取
     motion_state_engine_(config_manager.getMotionVelocityThreshold(),
                          config_manager.getMotionAccelerationThreshold(),
+                         config_manager.getMotionVelocityHysteresis(),
+                         config_manager.getMotionAccelerationHysteresis(),
                          config_manager.getKfProcessNoiseCov(),
-                         config_manager.getKfMeasurementNoiseCov()) {
+                         config_manager.getKfMeasurementNoiseCov(),
+                         config_manager.getMinScaleForTtc(),
+                         config_manager.getMinVelocityForTtc(),
+                         config_manager.getEmaAlpha(),
+                         config_manager.getBboxJumpRatioThreshold(),
+                         config_manager.getTtcWarnThreshold(),
+                         config_manager.getTtcClearThreshold(),
+                         config_manager.getTtcEnterFrames(),
+                         config_manager.getTtcExitFrames()) {
     bool is_normalize = false;
 
-    depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
-                      is_normalize, config_manager.isUseGPU());
+    // 是否加载深度模型由 config 的 depth.enabled 控制
+    if (config_manager.isDepthEnabled()) {
+        depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
+                          is_normalize, config_manager.isUseGPU());
+    }
     detector_.init(config_manager.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
                    config_manager.isUseGPU());
@@ -33,6 +47,7 @@ Pipeline::Pipeline(std::string depth_model_path,
                    float       yolo_conf_thresh) {
     bool        is_normalize = false;
     std::string backend_type = use_gpu ? "engine" : "onnx";
+    depth_enabled_           = true;
     depth_model_.init(
         {
             { backend_type, depth_model_path }
@@ -47,26 +62,66 @@ Pipeline::Pipeline(std::string depth_model_path,
 
 void Pipeline::init() {}
 
-// 同步串行推理：YOLO检测 → 深度估计 → 跟踪 → 运动状态，按顺序串行执行
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
     detector_.runInference(frame_input_context, infer_output_context);
-    depth_model_.runInference(frame_input_context, infer_output_context);
+    if (depth_enabled_) {
+        depth_model_.runInference(frame_input_context, infer_output_context);
+    }
     updateTracker(infer_output_context);
     updateMotionStates(frame_input_context, infer_output_context);
 }
 
-// CPU/GPU 重叠推理：YOLO 和 Depth 通过各自 CUDA Stream 异步执行，实现并行
-// 流程：同时启动 YOLO 和 Depth 异步推理 → YOLO 结果先返回（延迟更低）→ 先做跟踪
-//       → Depth 结果随后返回 → 运动状态判定
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
     detector_.runInferenceAsync(frame_input_context);
-    depth_model_.runInferenceAsync(frame_input_context);
+    if (depth_enabled_) {
+        depth_model_.runInferenceAsync(frame_input_context);
+    }
     detector_.getInferOutputResult(infer_output_context);
     updateTracker(infer_output_context);
-    depth_model_.getInferOutputResult(infer_output_context);
+    if (depth_enabled_) {
+        depth_model_.getInferOutputResult(infer_output_context);
+    }
     updateMotionStates(frame_input_context, infer_output_context);
+}
+
+void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
+                                  InferOutputContext & infer_output_context) {
+    infer_output_context.motion_records.clear();
+
+    // 深度推理开启且本帧有原始视差输出时，用深度做运动状态/TTC 估计，否则退回 bbox 尺度
+    cv::Mat depth_metric;
+    if (depth_enabled_ && !infer_output_context.depth_raw_infer_out.empty()) {
+        const auto dims = depth_model_.getInputDims();
+        if (dims.size() >= 4 && dims[2] > 0 && dims[3] > 0) {
+            cv::Mat raw_depth_map(dims[2], dims[3], CV_32FC1,
+                                  infer_output_context.depth_raw_infer_out.data());
+            cv::resize(raw_depth_map, depth_metric,
+                       cv::Size(frame_input_context.meta.img_w, frame_input_context.meta.img_h));
+        }
+    }
+
+    for (const auto & track : infer_output_context.tracked_objects) {
+        if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
+            continue;
+        }
+        // 深度路径用均值视差（视差 ∝ 1/深度，TTC 即真实碰撞时间）；
+        // 深度值无效（≤0）或深度不可用时，该目标退回 bbox 尺度
+        const MotionStateInfoRecord motion = [&]() -> MotionStateInfoRecord {
+            if (!depth_metric.empty()) {
+                const float raw_depth =
+                    motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+                if (raw_depth > 0.0f) {
+                    return motion_state_engine_.computeMotionStateFromDepth(
+                        track.track_id_, raw_depth, frame_input_context.timestamp);
+                }
+            }
+            return motion_state_engine_.computeMotionStateFromBBox(track,
+                                                                   frame_input_context.timestamp);
+        }();
+        infer_output_context.motion_records.insert({ track.track_id_, motion });
+    }
 }
 
 void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
@@ -81,28 +136,4 @@ void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
         }
     }
     infer_output_context.tracked_objects = tracker_.update(objects);
-}
-
-void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
-                                  InferOutputContext & infer_output_context) {
-#ifdef HAS_NVTX3
-    nvtx3::scoped_range tracker_scope("pipeline updateMotionStates");
-#endif
-    infer_output_context.motion_records.clear();
-    const std::vector<STrack> & tracked_objects = infer_output_context.tracked_objects;
-    for (int i = 0; i < tracked_objects.size(); i++) {
-        // 过滤面积 ≤ 20 px² 的极小目标：深度估计在过小区域上不稳定，跳过
-        if (tracked_objects[i].tlwh_[2] * tracked_objects[i].tlwh_[3] <= 20) {
-            continue;
-        }
-        int track_id = tracked_objects[i].track_id_;
-
-        float current_depth = motion_state_engine_.getObjectDepth(
-            infer_output_context.result_depth, tracked_objects[i],
-            frame_input_context.raw_img.size());
-
-        infer_output_context.motion_records.insert(
-            { track_id, motion_state_engine_.computeMotionState(track_id, current_depth,
-                                                                frame_input_context.timestamp) });
-    }
 }

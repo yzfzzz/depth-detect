@@ -188,10 +188,11 @@ int DisplayManager::waitKey(int delay) {
 DrawingManager::DrawingManager(const std::vector<std::string> & class_names) :
     vClassNames_(class_names) {}
 
-void DrawingManager::drawTrackedObject(cv::Mat &            img,
-                                       const STrack &       track,
-                                       const AlertMessage & alert_msg,
-                                       cv::Scalar           color) {
+void DrawingManager::drawTrackedObject(cv::Mat &                     img,
+                                       const STrack &                track,
+                                       const AlertMessage &          alert_msg,
+                                       const MotionStateInfoRecord & motion,
+                                       cv::Scalar                    color) {
     const std::vector<float> & tlwh     = track.tlwh_;
     int                        class_id = track.class_id_;
     int                        track_id = track.track_id_;
@@ -204,6 +205,14 @@ void DrawingManager::drawTrackedObject(cv::Mat &            img,
     cv::Size label_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.6, 2, &baseLine);
     cv::Rect rect_bg(cv::Point((int) tlwh[0], (int) tlwh[1] - label_size.height - 8),
                      cv::Size(label_size.width + 8, label_size.height + 8));
+
+    // 每个目标框都在标签上方显示 TTC；无效（-1：静止/远离/过小）显示 --
+    const std::string ttc_text =
+        motion.ttc > 0.0f ? cv::format("TTC: %.2fs", motion.ttc) : std::string("TTC: --");
+    cv::Size  ttc_size = cv::getTextSize(ttc_text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+    const int ttc_bg_bottom = rect_bg.y - 6;  // 与标签保持 6px 间距
+    cv::Rect  ttc_bg(cv::Point((int) tlwh[0], ttc_bg_bottom - ttc_size.height - 8),
+                     cv::Size(ttc_size.width + 8, ttc_size.height + 8));
 
     // 绘制目标主体矩形框
     // 检查物体是否危险
@@ -241,7 +250,13 @@ void DrawingManager::drawTrackedObject(cv::Mat &            img,
     cv::rectangle(img, cv::Rect(x1, y1, w, h), color, 2);
     cv::rectangle(img, rect_bg, color, cv::FILLED);
     cv::putText(img, label, cv::Point((int) tlwh[0] + 4, (int) tlwh[1] - 4),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+
+    // 深色底 + 边框 + 青色文字，与标签区分
+    cv::rectangle(img, ttc_bg, cv::Scalar(30, 30, 30), cv::FILLED);
+    cv::rectangle(img, ttc_bg, color, 1);
+    cv::putText(img, ttc_text, cv::Point((int) tlwh[0] + 4, ttc_bg_bottom - 4),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
 }
 
 void DrawingManager::drawGlobalInfo(cv::Mat & img,

@@ -3,15 +3,12 @@
 #include "STrack.h"
 
 DangerAlertHandler::DangerAlertHandler(const ConfigManager & config) {
-    // 从 config 读取危险判定策略
     filter_small_objects_ = config.isFilterSmallObjectsEnabled();
     min_object_area_      = config.getMinObjectArea();
 }
 
 bool DangerAlertHandler::isDangerous(const MotionStateInfoRecord & motion) const {
-    // 当前规则：正在接近 + 加速中 = 危险
-    // 未来可扩展为策略链模式
-    return (motion.state_vec == MotionState::APPROACH && motion.state_acc == MotionState::ACCELE);
+    return motion.ttc_danger;
 }
 
 AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_input,
@@ -30,15 +27,15 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
             continue;
         }
 
-        // 危险判定
-        if (!isDangerous(it->second)) {
+        MotionStateInfoRecord motion = it->second;
+        if (!isDangerous(motion)) {
             continue;
         }
 
         dangerous_objects.push_back(
             { static_cast<int>(track.tlwh_[0]), static_cast<int>(track.tlwh_[1]),
               static_cast<int>(track.tlwh_[2]), static_cast<int>(track.tlwh_[3]), track.class_id_,
-              track.track_id_, static_cast<int>(it->second.velocity), true });
+              track.track_id_, static_cast<int>(motion.velocity), motion.ttc, true });
     }
 
     if (dangerous_objects.empty()) {
