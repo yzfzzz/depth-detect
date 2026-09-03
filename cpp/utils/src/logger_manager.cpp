@@ -5,8 +5,10 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
 
 std::string LoggerManager::getDateLogFilePath() {
@@ -110,6 +112,40 @@ LoggerManager::LoggerManager(bool                save_file,
     if (console_output) {
         APP_INFO("Console output enabled");
     }
+}
+
+void LoggerManager::saveTrackCsv(
+    const std::string &                                       path,
+    const std::unordered_map<int, std::vector<TrackRecord>> & track_log) {
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        out.open("track_log.csv", std::ios::out | std::ios::trunc);  // 回退到当前目录
+    }
+    if (!out.is_open()) {
+        APP_WARN("Failed to open track log CSV");
+        return;
+    }
+
+    out << "track_id,frame_id,class_id,area,raw_depth,"
+           "depth_velocity,bbox_velocity,depth_ttc,depth_ttc_danger,bbox_ttc,bbox_ttc_danger\n";
+
+    // unordered_map 无序，按 track_id 排序后输出，保证结果可复现、便于阅读
+    std::vector<int> ids;
+    ids.reserve(track_log.size());
+    for (const auto & kv : track_log) {
+        ids.push_back(kv.first);
+    }
+    std::sort(ids.begin(), ids.end());
+    for (const int id : ids) {
+        for (const auto & r : track_log.at(id)) {
+            out << id << ',' << r.frame_id << ',' << r.class_id << ',' << r.area << ','
+                << r.raw_depth << ',' << r.depth_velocity << ',' << r.bbox_velocity << ','
+                << r.depth_ttc << ',' << (r.depth_ttc_danger ? 1 : 0) << ',' << r.bbox_ttc << ','
+                << (r.bbox_ttc_danger ? 1 : 0) << '\n';
+        }
+    }
+    out.close();
+    APP_INFO("Track log saved to {} ({} tracks)", path, ids.size());
 }
 
 void LoggerManager::logConfig(const ConfigManager & config) {

@@ -45,12 +45,6 @@ class MotionStateEngine {
                       float ttc_clear_threshold = 4.0f,  // TTC 报警解除阈值（秒，须 >= warn）
                       int ttc_enter_frames = 3,  // 连续低于 warn 帧数后触发报警（防抖）
                       int ttc_exit_frames = 10);  // 连续高于 clear/无效帧数后才解除（阻塞）
-    // 基于深度/视差计算运动状态、TTC 与 TTC 危险报警（TTC = 深度值/趋近速度）
-    MotionStateInfoRecord computeMotionStateFromDepth(int    track_id,
-                                                      float  raw_depth,
-                                                      double timestamp);
-    // 基于目标框尺度变化计算运动状态、TTC 与 TTC 危险报警
-    MotionStateInfoRecord computeMotionStateFromBBox(const STrack & track, double timestamp);
 
     float getObjectDepth(cv::Mat depth, const STrack & track, cv::Size image_size);
 
@@ -84,20 +78,28 @@ class MotionStateEngine {
     };
 
     // 公共卡尔曼滤波逻辑：位置/速度/加速度（纯滤波，不判定运动状态）
-    FilteredState computeStateImpl(int track_id, float raw_value, double timestamp);
+    FilteredState computeMotionMetricImpl(int                                    track_id,
+                                          float                                  raw_value,
+                                          double                                 timestamp,
+                                          std::unordered_map<int, KalmanState> & kf_states);
 
     // 运动状态判定（迟滞防抖）：读写 kf_states_ 内持久化的上一帧状态
-    void determineMotionStates(int           track_id,
-                               float         velocity,
-                               float         accel,
-                               MotionState & direction,
-                               MotionState & accel_state);
+    void determineMotionStates(int                                    track_id,
+                               float                                  velocity,
+                               float                                  accel,
+                               MotionState &                          direction,
+                               MotionState &                          accel_state,
+                               std::unordered_map<int, KalmanState> & kf_states);
 
     // TTC 危险报警（延迟阻塞）：连续低于 warn 帧数后触发，
     // 连续高于 clear 或无效帧数后才解除；跳变帧（is_jump）中性处理，不参与计数
-    bool updateTtcDanger(int track_id, float ttc, bool is_jump);
+    bool updateTtcDanger(int                                    track_id,
+                         float                                  ttc,
+                         bool                                   is_jump,
+                         std::unordered_map<int, KalmanState> & kf_states);
 
-    std::unordered_map<int, KalmanState> kf_states_;
+    std::unordered_map<int, KalmanState> depth_kf_states_;
+    std::unordered_map<int, KalmanState> bbox_kf_states_;
 
     float velocity_threshold_;
     float acceleration_threshold_;
@@ -115,6 +117,16 @@ class MotionStateEngine {
     int   ttc_exit_frames_;
 
   public:
+    // 基于深度/视差计算运动状态、TTC 与 TTC 危险报警（TTC = 深度值/趋近速度）
+    MotionStateInfoRecord computeMotionStateFromDepth(int    track_id,
+                                                      float  raw_depth,
+                                                      double timestamp);
+    // 基于目标框尺度变化计算运动状态、TTC 与 TTC 危险报警
+    MotionStateInfoRecord computeMotionStateFromBBox(const STrack & track,
+                                                     double         timestamp,
+                                                     bool           use_muti_gated = false,
+                                                     float          raw_depth      = -1.0f);
+
     void setVelocityThreshold(float value) { velocity_threshold_ = std::max(0.0f, value); }
 
     void setAccelerationThreshold(float value) { acceleration_threshold_ = std::max(0.0f, value); }

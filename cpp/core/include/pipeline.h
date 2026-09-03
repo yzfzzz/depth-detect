@@ -3,6 +3,7 @@
 #include "config_manager.h"
 #include "depth_model.h"
 #include "frame.h"
+#include "logger_manager.h"
 #include "motion_state_engine.h"
 #include "yolo_detect_model.h"
 
@@ -15,6 +16,7 @@ class Pipeline {
              bool        use_gpu          = false,
              float       yolo_nms_thresh  = 0.4f,
              float       yolo_conf_thresh = 0.25f);
+    ~Pipeline();
     void init();
 
     // 核心推理接口，供正常业务和 Benchmark 调用
@@ -56,11 +58,15 @@ class Pipeline {
     MotionStateEngine motion_state_engine_;
 
     // 跨帧缓存状态
-    bool             has_cached_depth_ = false;
-    cv::Mat          cached_depth_;
-    cv::Mat          cached_depth_vis_;
+    bool                                              has_cached_depth_ = false;
+    cv::Mat                                           cached_depth_;
+    cv::Mat                                           cached_depth_vis_;
+    // 累积每个 track 的逐帧记录，运行结束时由 LoggerManager 统一写入 CSV
+    bool                                              track_log_enabled_ = false;
+    std::string                                       track_log_path_;
+    std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
     // 需要跟踪的类别，可以根据自己需求调整，筛选自己想要跟踪的对象的种类（以下对应COCO数据集类别索引）
-    std::vector<int> track_classes_{ 1, 2, 3, 5,
+    std::vector<int>                                  track_classes_{ 1, 2, 3, 5,
                                      7 };  // person, bicycle, car, motorcycle, bus, truck
 
     bool is_normalize_ = false;

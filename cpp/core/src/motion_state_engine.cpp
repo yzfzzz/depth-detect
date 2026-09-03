@@ -34,48 +34,18 @@ MotionStateEngine::MotionStateEngine(float velocity_threshold,
     ttc_enter_frames_(std::max(1, ttc_enter_frames)),
     ttc_exit_frames_(std::max(1, ttc_exit_frames)) {}
 
-MotionStateInfoRecord MotionStateEngine::computeMotionStateFromDepth(int    track_id,
-                                                                     float  raw_depth,
-                                                                     double timestamp) {
-    const auto filtered = computeStateImpl(track_id, raw_depth, timestamp);
-    if (!filtered.valid) {
-        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f);
-    }
-
-    MotionState direction   = MotionState::STABLE;
-    MotionState accel_state = MotionState::CONSTANT;
-    float       ttc         = -1.0f;
-    bool        ttc_danger  = false;
-
-    if (!filtered.first_frame) {
-        // 深度模型输出可能是视差（近大远小）或深度（近小远大），符号约定不定，
-        // 状态判定与 TTC 均按 |速度| 处理，与符号无关
-        determineMotionStates(track_id, filtered.velocity, filtered.acceleration, direction,
-                              accel_state);
-
-        // TTC = 深度值 / |速度|；跳变帧拒绝，相对变化率过小（TTC 巨大）或值近 0 视为无效
-        const float speed = std::abs(filtered.velocity);
-        if (!filtered.is_large_jump && speed > 1e-4f && raw_depth > 0.0f) {
-            ttc = raw_depth / speed;
-            if (ttc > 50.0f) {
-                ttc = -1.0f;  // 相对变化率 < 2%/s，无实际碰撞风险
-            }
-        }
-        ttc_danger = updateTtcDanger(track_id, ttc, filtered.is_large_jump);
-    }
-    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
-}
-
-MotionStateEngine::FilteredState MotionStateEngine::computeStateImpl(int    track_id,
-                                                                     float  raw_value,
-                                                                     double timestamp) {
+MotionStateEngine::FilteredState MotionStateEngine::computeMotionMetricImpl(
+    int                                    track_id,
+    float                                  raw_value,
+    double                                 timestamp,
+    std::unordered_map<int, KalmanState> & kf_states) {
     if (raw_value <= 0.0f) {
         FilteredState fs;
         fs.valid = false;
         return fs;
     }
 
-    auto & state = kf_states_[track_id];
+    auto & state = kf_states[track_id];
 
     // 卡尔曼滤波初始化：状态维度=3 [位置,速度,加速度]，测量维度=1（仅观测位置）
     if (!state.is_initialized) {
@@ -147,12 +117,85 @@ MotionStateEngine::FilteredState MotionStateEngine::computeStateImpl(int    trac
     return fs;
 }
 
-void MotionStateEngine::determineMotionStates(int           track_id,
-                                              float         velocity,
-                                              float         accel,
-                                              MotionState & direction,
-                                              MotionState & accel_state) {
-    auto & state = kf_states_[track_id];
+MotionStateInfoRecord MotionStateEngine::computeMotionStateFromBBox(const STrack & track,
+                                                                    double         timestamp,
+                                                                    bool           use_muti_gated,
+                                                                    float          raw_depth) {
+    const auto & tlwh = track.tlwh_;
+    if (tlwh.size() < 4 || tlwh[2] <= 0.0f || tlwh[3] <= 0.0f) {
+        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f, -1.0f);
+    }
+
+    // 用 bbox 线性尺度代替深度：sqrt(area)
+    const float scale = std::sqrt(tlwh[2] * tlwh[3]);
+    const auto  filtered =
+        computeMotionMetricImpl(track.track_id_, scale, timestamp, bbox_kf_states_);
+
+    MotionState direction   = MotionState::STABLE;
+    MotionState accel_state = MotionState::CONSTANT;
+    float       ttc         = -1.0f;
+    bool        ttc_danger  = false;
+
+    if (use_muti_gated && raw_depth > 0.0f) {
+        // 多门控：深度与 bbox 两路独立滤波，互不污染
+    }
+
+    if (filtered.valid && !filtered.first_frame) {
+        determineMotionStates(track.track_id_, filtered.velocity, filtered.acceleration, direction,
+                              accel_state, bbox_kf_states_);
+
+        // 跳变帧（is_large_jump）尺度突变，速度/尺度不可信，拒绝 TTC；
+        // 速度过小（分母小 -> TTC 巨大）或非正、目标尺度低于下限同样视为无有效 TTC
+        if (!filtered.is_large_jump && filtered.velocity > min_velocity_for_ttc_ &&
+            scale > min_scale_for_ttc_) {
+            ttc = scale / filtered.velocity;
+        }
+
+        ttc_danger = updateTtcDanger(track.track_id_, ttc, filtered.is_large_jump, bbox_kf_states_);
+    }
+
+    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
+}
+
+MotionStateInfoRecord MotionStateEngine::computeMotionStateFromDepth(int    track_id,
+                                                                     float  raw_depth,
+                                                                     double timestamp) {
+    const auto filtered = computeMotionMetricImpl(track_id, raw_depth, timestamp, depth_kf_states_);
+    if (!filtered.valid) {
+        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f);
+    }
+
+    MotionState direction   = MotionState::STABLE;
+    MotionState accel_state = MotionState::CONSTANT;
+    float       ttc         = -1.0f;
+    bool        ttc_danger  = false;
+
+    if (!filtered.first_frame) {
+        // 深度模型输出可能是视差（近大远小）或深度（近小远大），符号约定不定，
+        // 状态判定与 TTC 均按 |速度| 处理，与符号无关
+        determineMotionStates(track_id, filtered.velocity, filtered.acceleration, direction,
+                              accel_state, depth_kf_states_);
+
+        // TTC = 深度值 / |速度|；跳变帧拒绝，相对变化率过小（TTC 巨大）或值近 0 视为无效
+        const float speed = std::abs(filtered.velocity);
+        if (!filtered.is_large_jump && speed > 1e-4f && raw_depth > 0.0f) {
+            ttc = raw_depth / speed;
+            if (ttc > 50.0f) {
+                ttc = -1.0f;  // 相对变化率 < 2%/s，无实际碰撞风险
+            }
+        }
+        ttc_danger = updateTtcDanger(track_id, ttc, filtered.is_large_jump, depth_kf_states_);
+    }
+    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
+}
+
+void MotionStateEngine::determineMotionStates(int                                    track_id,
+                                              float                                  velocity,
+                                              float                                  accel,
+                                              MotionState &                          direction,
+                                              MotionState &                          accel_state,
+                                              std::unordered_map<int, KalmanState> & kf_states) {
+    auto & state = kf_states[track_id];
 
     // 迟滞规则：进入状态用高阈值（触发线），解除状态用低阈值（触发线 - 迟滞区间）。
     // 例如 velocity_threshold=20、velocity_hysteresis=5 时：速度 > 20 进入 APPROACH，
@@ -203,8 +246,11 @@ void MotionStateEngine::determineMotionStates(int           track_id,
     state.prev_accel_state     = accel_state;
 }
 
-bool MotionStateEngine::updateTtcDanger(int track_id, float ttc, bool is_jump) {
-    auto & state = kf_states_[track_id];
+bool MotionStateEngine::updateTtcDanger(int                                    track_id,
+                                        float                                  ttc,
+                                        bool                                   is_jump,
+                                        std::unordered_map<int, KalmanState> & kf_states) {
+    auto & state = kf_states[track_id];
 
     // 跳变帧：尺度/速度不可信，ttc 无效。保持当前报警状态与计数不动，
     // 不当作"安全"帧去清零进入计数——否则抖动会让报警永远攒不满连续低帧
@@ -241,39 +287,6 @@ bool MotionStateEngine::updateTtcDanger(int track_id, float ttc, bool is_jump) {
                  track_id, ttc, ttc_warn_threshold_);
     }
     return state.ttc_danger;
-}
-
-MotionStateInfoRecord MotionStateEngine::computeMotionStateFromBBox(const STrack & track,
-                                                                    double         timestamp) {
-    const auto & tlwh = track.tlwh_;
-    if (tlwh.size() < 4 || tlwh[2] <= 0.0f || tlwh[3] <= 0.0f) {
-        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f, -1.0f);
-    }
-
-    // 用 bbox 线性尺度代替深度：sqrt(area)
-    const float scale    = std::sqrt(tlwh[2] * tlwh[3]);
-    const auto  filtered = computeStateImpl(track.track_id_, scale, timestamp);
-
-    MotionState direction   = MotionState::STABLE;
-    MotionState accel_state = MotionState::CONSTANT;
-    float       ttc         = -1.0f;
-    bool        ttc_danger  = false;
-
-    if (filtered.valid && !filtered.first_frame) {
-        determineMotionStates(track.track_id_, filtered.velocity, filtered.acceleration, direction,
-                              accel_state);
-
-        // 跳变帧（is_large_jump）尺度突变，速度/尺度不可信，拒绝 TTC；
-        // 速度过小（分母小 -> TTC 巨大）或非正、目标尺度低于下限同样视为无有效 TTC
-        if (!filtered.is_large_jump && filtered.velocity > min_velocity_for_ttc_ &&
-            scale > min_scale_for_ttc_) {
-            ttc = scale / filtered.velocity;
-        }
-
-        ttc_danger = updateTtcDanger(track.track_id_, ttc, filtered.is_large_jump);
-    }
-
-    return MotionStateInfoRecord(direction, accel_state, filtered.velocity, ttc, ttc_danger);
 }
 
 float MotionStateEngine::getObjectDepth(cv::Mat depth, const STrack & track, cv::Size image_size) {

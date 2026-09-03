@@ -4,6 +4,7 @@
 #include "config_manager.h"
 #include "depth_model.h"
 #include "frame.h"
+#include "logger_manager.h"
 #include "motion_state_engine.h"
 #include "public.h"
 #include "STrack.h"
@@ -37,6 +38,13 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     detector_.init(config_manager.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
                    config_manager.isUseGPU());
+
+    // 是否记录每个 track 的类别/原始深度/面积/帧数等到 CSV
+    if (config_manager.isTrackLogEnabled()) {
+        track_log_enabled_ = true;
+        track_log_path_    = config_manager.getOutDir() + "/track_log.csv";
+        APP_INFO("Track log enabled: {}", track_log_path_);
+    }
 }
 
 Pipeline::Pipeline(std::string depth_model_path,
@@ -58,6 +66,12 @@ Pipeline::Pipeline(std::string depth_model_path,
             { backend_type, yolo_model_path }
     },
         frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu);
+}
+
+Pipeline::~Pipeline() {
+    if (track_log_enabled_ && !track_log_data_.empty()) {
+        LoggerManager::saveTrackCsv(track_log_path_, track_log_data_);
+    }
 }
 
 void Pipeline::init() {}
@@ -106,21 +120,27 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
             continue;
         }
-        // 深度路径用均值视差（视差 ∝ 1/深度，TTC 即真实碰撞时间）；
-        // 深度值无效（≤0）或深度不可用时，该目标退回 bbox 尺度
-        const MotionStateInfoRecord motion = [&]() -> MotionStateInfoRecord {
-            if (!depth_metric.empty()) {
-                const float raw_depth =
-                    motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
-                if (raw_depth > 0.0f) {
-                    return motion_state_engine_.computeMotionStateFromDepth(
-                        track.track_id_, raw_depth, frame_input_context.timestamp);
-                }
-            }
-            return motion_state_engine_.computeMotionStateFromBBox(track,
-                                                                   frame_input_context.timestamp);
-        }();
+        float raw_depth = 0.0f;
+        if (!depth_metric.empty()) {
+            raw_depth = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+        }
+        // 深度与 bbox 两路都执行，各自独立滤波状态（depth_kf_states_ / bbox_kf_states_），互不污染
+        const MotionStateInfoRecord depth_motion = motion_state_engine_.computeMotionStateFromDepth(
+            track.track_id_, raw_depth, frame_input_context.timestamp);
+        const MotionStateInfoRecord bbox_motion =
+            motion_state_engine_.computeMotionStateFromBBox(track, frame_input_context.timestamp);
+
+        // 下游使用：深度有效用深度，否则退回 bbox
+        const MotionStateInfoRecord & motion = bbox_motion;
+        // const MotionStateInfoRecord & motion = raw_depth > 0.0f ? depth_motion : bbox_motion;
         infer_output_context.motion_records.insert({ track.track_id_, motion });
+
+        if (track_log_enabled_) {
+            track_log_data_[track.track_id_].push_back(
+                { frame_input_context.frame_id, track.class_id_, track.tlwh_[2] * track.tlwh_[3],
+                  raw_depth, depth_motion.velocity, bbox_motion.velocity, depth_motion.ttc,
+                  depth_motion.ttc_danger, bbox_motion.ttc, bbox_motion.ttc_danger });
+        }
     }
 }
 

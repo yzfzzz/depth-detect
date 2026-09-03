@@ -9,6 +9,23 @@
 #include <spdlog/spdlog.h>
 
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+// 单个 track 单帧的记录（运行结束时统一写入 CSV）
+struct TrackRecord {
+    int   frame_id;
+    int   class_id;
+    float area;
+    float raw_depth;
+    float depth_velocity;
+    float bbox_velocity;
+    float depth_ttc;
+    bool  depth_ttc_danger;
+    float bbox_ttc;
+    bool  bbox_ttc_danger;
+};
 
 // TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog
 class Logger : public nvinfer1::ILogger {
@@ -77,6 +94,10 @@ class LoggerManager {
 
     // 打印 ConfigManager 中的所有配置项
     static void logConfig(const ConfigManager & config);
+
+    // 把累积的 track 记录统一写入 CSV（运行结束时调用；失败时回退到当前目录）
+    static void saveTrackCsv(const std::string &                                       path,
+                             const std::unordered_map<int, std::vector<TrackRecord>> & track_log);
 
   private:
     explicit LoggerManager(bool save_file, bool console_output, const std::string & log_level_str);

@@ -43,8 +43,12 @@ class ConfigManager {
     std::string                        getSendTcpIp() const;
     int                                getSendTcpPort() const;
     bool                               isSendTcpEnabled() const;
+    bool                               isTrackLogEnabled() const;
     bool                               isFilterSmallObjectsEnabled() const;
     float                              getMinObjectArea() const;
+    int                                getCameraWidth() const;
+    int                                getCameraHeight() const;
+    int                                getCameraFps() const;
 
   private:
     YAML::Node config_;
@@ -205,10 +209,26 @@ inline bool ConfigManager::isSendTcpEnabled() const {
     return config_["io_manager"]["send_tcp"].as<bool>(false);
 }
 
+inline bool ConfigManager::isTrackLogEnabled() const {
+    return config_["io_manager"]["save_track_log"].as<bool>(false);
+}
+
 inline bool ConfigManager::isFilterSmallObjectsEnabled() const {
     return config_["danger_alert"]["is_filter_small_objects"].as<bool>(true);
 }
 
 inline float ConfigManager::getMinObjectArea() const {
     return config_["danger_alert"]["min_object_area"].as<float>(20.0f);
+}
+
+inline int ConfigManager::getCameraWidth() const {
+    return config_["camera"]["width"].as<int>(1280);
+}
+
+inline int ConfigManager::getCameraHeight() const {
+    return config_["camera"]["height"].as<int>(720);
+}
+
+inline int ConfigManager::getCameraFps() const {
+    return config_["camera"]["fps"].as<int>(30);
 }
