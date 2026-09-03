@@ -20,7 +20,10 @@ class IOManager {
               std::string out_dir          = "out_dir",
               std::string send_tcp_ip      = "127.0.0.1",
               int         send_tcp_port    = 12345,
-              bool        send_tcp_enabled = false);
+              bool        send_tcp_enabled = false,
+              int         camera_width     = 1280,
+              int         camera_height    = 720,
+              int         camera_fps       = 30);
 
     FrameMeta Init(const std::string & video_path);
 
@@ -65,7 +68,11 @@ class IOManager {
     std::string                 send_tcp_ip_;                  // 发送 JSON 数据的 TCP 地址
     int                         send_tcp_port_;                // 发送 JSON 数据的 TCP 端口
     bool                        send_tcp_enabled_;             // 是否启用 TCP 发送
-    bool is_json_sender_ok_ = false;  // 标记 JsonSender 是否初始化成功
+    // 仅在外接 usb相机时生效
+    int                         camera_width_  = 1280;   // 相机采集宽度
+    int                         camera_height_ = 720;    // 相机采集高度
+    int                         camera_fps_    = 30;     // 相机采集帧率
+    bool is_json_sender_ok_                    = false;  // 标记 JsonSender 是否初始化成功
 };
 
 struct SendObjectData {

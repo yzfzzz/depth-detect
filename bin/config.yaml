@@ -17,6 +17,7 @@ yolo:
   yolo_conf_thresh: 0.25
 
 depth:
+  enabled : false
   depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
   depth_model_path:
     - type: engine
@@ -43,6 +44,13 @@ danger_alert:
   ttc_clear_threshold: 15.0         # TTC 报警解除阈值（秒）：须 >= warn，连续 ttc_exit_frames 帧 ttc > 该值才解除
   ttc_enter_frames: 3              # 报警进入防抖：连续几帧 ttc < warn 才触发
   ttc_exit_frames: 3              # 报警退出阻塞：连续几帧 ttc > clear 或无效才解除
+
+
+camera:
+  width: 1280    # 相机采集宽度（USB 相机索引模式时生效）
+  height: 720    # 相机采集高度
+  fps: 30        # 相机采集帧率
+  stabilize: true # 是否启用视频稳定（抑制骑行/车载上下抖动）
 
 
 io_manager:

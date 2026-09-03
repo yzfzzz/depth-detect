@@ -4,25 +4,36 @@
 #include "logger_manager.h"
 #include "public.h"
 
-#include <cstdlib>  // For system()
+#include <algorithm>  // std::all_of
+#include <cctype>     // std::isdigit
+#include <cstdlib>    // For system()
 
 IOManager::IOManager(const ConfigManager & config_manager) :
     IOManager(config_manager.getSaveMode(),
               config_manager.getOutDir(),
               config_manager.getSendTcpIp(),
               config_manager.getSendTcpPort(),
-              config_manager.isSendTcpEnabled()) {}
+              config_manager.isSendTcpEnabled(),
+              config_manager.getCameraWidth(),
+              config_manager.getCameraHeight(),
+              config_manager.getCameraFps()) {}
 
 IOManager::IOManager(std::string save_mode,
                      std::string out_dir,
                      std::string send_tcp_ip,
                      int         send_tcp_port,
-                     bool        send_tcp_enabled) :
+                     bool        send_tcp_enabled,
+                     int         camera_width,
+                     int         camera_height,
+                     int         camera_fps) :
     save_mode_(std::move(save_mode)),
     out_dir_(std::move(out_dir)),
     send_tcp_ip_(std::move(send_tcp_ip)),
     send_tcp_port_(send_tcp_port),
-    send_tcp_enabled_(send_tcp_enabled) {}
+    send_tcp_enabled_(send_tcp_enabled),
+    camera_width_(camera_width),
+    camera_height_(camera_height),
+    camera_fps_(camera_fps) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
@@ -37,7 +48,13 @@ FrameMeta IOManager::Init(const std::string & video_path) {
 
     // 如果需要保存视频，初始化 VideoWriter
     if (save_mode_ == "video" || save_mode_ == "both") {
-        std::string video_save_path = out_dir_ + "/result.mp4";  // 最好也放进输出目录
+        auto now  = std::chrono::system_clock::now();
+        auto time = std::chrono::system_clock::to_time_t(now);
+        auto tm   = std::localtime(&time);
+
+        std::ostringstream oss;
+        oss << "result_" << std::put_time(tm, "%Y%m%d_%H%M%S") << ".mp4";
+        std::string video_save_path = out_dir_ + "/" + oss.str();
         video_writer_.open(video_save_path, cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
                            frame_meta.fps, cv::Size(frame_meta.img_w, frame_meta.img_h));
 
@@ -100,7 +117,32 @@ void IOManager::makeDir(const std::string & path) {
 }
 
 bool IOManager::openVideoSource(const std::string & video_path) {
-    video_capture_.open(video_path);
+    // 纯数字字符串视为相机索引（USB 相机）
+    const bool is_camera_index =
+        !video_path.empty() && std::all_of(video_path.begin(), video_path.end(),
+                                           [](unsigned char c) { return std::isdigit(c) != 0; });
+    if (is_camera_index) {
+        int  camera_index = std::stoi(video_path);
+        // 按 config 的 camera 段配置打开相机并设置宽高/帧率
+        auto open_camera  = [&]() {
+            video_capture_.open(camera_index, cv::CAP_V4L2);
+            video_capture_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+            video_capture_.set(cv::CAP_PROP_FRAME_WIDTH, camera_width_);
+            video_capture_.set(cv::CAP_PROP_FRAME_HEIGHT, camera_height_);
+            if (camera_fps_ > 0) {
+                video_capture_.set(cv::CAP_PROP_FPS, camera_fps_);
+            }
+        };
+        open_camera();
+        // 部分相机需要先设置 FOURCC/分辨率后再打开才能生效
+        if (!video_capture_.isOpened() || video_capture_.get(cv::CAP_PROP_FOURCC) !=
+                                              cv::VideoWriter::fourcc('M', 'J', 'P', 'G')) {
+            video_capture_.release();
+            open_camera();
+        }
+    } else {
+        video_capture_.open(video_path);
+    }
     if (!video_capture_.isOpened()) {
         APP_ERROR("Failed to open video: {}", video_path);
         return false;
@@ -162,7 +204,8 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
         }
     }
     // 读取当前帧并同步拷贝到 GPU，供 CUDA 预处理使用
-    bool        result       = video_capture_.read(frame_input_context.raw_img);
+    bool result = video_capture_.read(frame_input_context.raw_img);
+
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);
     if (result && error == cudaSuccess && device_count > 0) {
