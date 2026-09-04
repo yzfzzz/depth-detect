@@ -49,6 +49,7 @@ class ConfigManager {
     int                                getCameraWidth() const;
     int                                getCameraHeight() const;
     int                                getCameraFps() const;
+    std::string                        getDepthModelType() const;
 
   private:
     YAML::Node config_;
@@ -231,4 +232,8 @@ inline int ConfigManager::getCameraHeight() const {
 
 inline int ConfigManager::getCameraFps() const {
     return config_["camera"]["fps"].as<int>(30);
+}
+
+inline std::string ConfigManager::getDepthModelType() const {
+    return config_["depth"]["model_type"].as<std::string>("lite_mono");
 }

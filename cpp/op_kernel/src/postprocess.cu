@@ -379,3 +379,324 @@ void initColorMapTable() {
     }
     cudaMemcpyToSymbol(C_DEVICE_COLOR_MAP, host_color_table, sizeof(uchar3) * 256);
 }
+
+// ============================================================================
+// TURBO 伪彩色 + P1/P99 分位数归一化（YoloDepthModel 的 CUDA 可视化，全异步、无主机同步）
+// 语义对齐 Python depth_to_colormap：
+//   去 letterbox(内容区 ROI) → 双线性 resize 回原始分辨率 → 有限值 P1/P99 分位数
+//   → clip 归一化 → 灰度 + 查 TURBO 表（表由 cv::applyColorMap 生成，与 Python 调色一致）
+// ============================================================================
+
+#define DSTAT_THREADS 256
+
+// BGR 内存布局（与 OpenCV CV_8UC3 一致，wrap 成 cv::Mat 即正确颜色）
+__constant__ uchar3 C_DEVICE_TURBO_MAP[256];
+
+void initTurboColorTable() {
+    // 用 OpenCV 现成的 applyColorMap 生成 256 色 TURBO 表，保证与 Python cv2 输出一致
+    cv::Mat ramp(1, 256, CV_8UC1);
+    for (int i = 0; i < 256; ++i) {
+        ramp.at<uchar>(0, i) = static_cast<uchar>(i);
+    }
+    cv::Mat colored;
+#if CV_VERSION_MAJOR > 4 || (CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR >= 2)
+    cv::applyColorMap(ramp, colored, cv::COLORMAP_TURBO);
+#else
+    cv::applyColorMap(ramp, colored, cv::COLORMAP_JET);  // 旧版 OpenCV 没有 TURBO
+#endif
+    uchar3 host_table[256];
+    for (int i = 0; i < 256; ++i) {
+        const cv::Vec3b & c = colored.at<cv::Vec3b>(0, i);
+        host_table[i].x     = c[0];  // B
+        host_table[i].y     = c[1];  // G
+        host_table[i].z     = c[2];  // R
+    }
+    cudaMemcpyToSymbol(C_DEVICE_TURBO_MAP, host_table, sizeof(uchar3) * 256);
+}
+
+// 在 letterbox 内容区 ROI 内做双线性采样（坐标已转 ROI 局部坐标系）
+__device__ __forceinline__ float dSampleRoiBilinear(const float * __restrict__ src,
+                                                    int   in_w,
+                                                    int   roi_x,
+                                                    int   roi_y,
+                                                    int   roi_w,
+                                                    int   roi_h,
+                                                    float sx,
+                                                    float sy) {
+    int         x0 = static_cast<int>(floorf(sx));
+    int         y0 = static_cast<int>(floorf(sy));
+    const float fx = sx - floorf(sx);
+    const float fy = sy - floorf(sy);
+
+    x0           = min(max(x0, 0), roi_w - 1);
+    y0           = min(max(y0, 0), roi_h - 1);
+    const int x1 = min(x0 + 1, roi_w - 1);
+    const int y1 = min(y0 + 1, roi_h - 1);
+
+    const float * row0 = src + static_cast<size_t>(y0 + roi_y) * in_w + roi_x;
+    const float * row1 = src + static_cast<size_t>(y1 + roi_y) * in_w + roi_x;
+    const float   p00  = row0[x0];
+    const float   p10  = row0[x1];
+    const float   p01  = row1[x0];
+    const float   p11  = row1[x1];
+    return p00 * (1.0f - fx) * (1.0f - fy) + p10 * fx * (1.0f - fy) + p01 * (1.0f - fx) * fy +
+           p11 * fx * fy;
+}
+
+// (1) 内容区 float 深度 → 原始分辨率 float 缓冲（等价 Python remove_letterbox + cv2.resize INTER_LINEAR）
+__global__ void depth_resize_float_kernel(const float * __restrict__ src,
+                                          int in_w,
+                                          int roi_x,
+                                          int roi_y,
+                                          int roi_w,
+                                          int roi_h,
+                                          float * __restrict__ dst,
+                                          int out_w,
+                                          int out_h) {
+    const int ox = blockIdx.x * blockDim.x + threadIdx.x;
+    const int oy = blockIdx.y * blockDim.y + threadIdx.y;
+    if (ox >= out_w || oy >= out_h) {
+        return;
+    }
+    const float sx = (ox + 0.5f) * (static_cast<float>(roi_w) / out_w) - 0.5f;
+    const float sy = (oy + 0.5f) * (static_cast<float>(roi_h) / out_h) - 0.5f;
+    dst[static_cast<size_t>(oy) * out_w + ox] =
+        dSampleRoiBilinear(src, in_w, roi_x, roi_y, roi_w, roi_h, sx, sy);
+}
+
+// (2) 逐 block 统计有限值 min/max/count（grid = stat_blocks 个 block）
+__global__ void depth_stats_kernel(const float * __restrict__ buf,
+                                   int n,
+                                   float * __restrict__ partial_min,
+                                   float * __restrict__ partial_max,
+                                   int * __restrict__ partial_count) {
+    float local_min = __int_as_float(0x7f800000);  // +inf
+    float local_max = __int_as_float(0xff800000);  // -inf
+    int   local_cnt = 0;
+
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
+        const float v = buf[i];
+        if (isfinite(v)) {
+            ++local_cnt;
+            local_min = fminf(local_min, v);
+            local_max = fmaxf(local_max, v);
+        }
+    }
+
+    __shared__ float s_min[DSTAT_THREADS];
+    __shared__ float s_max[DSTAT_THREADS];
+    __shared__ int   s_cnt[DSTAT_THREADS];
+    const int        t = threadIdx.x;
+    s_min[t]           = local_min;
+    s_max[t]           = local_max;
+    s_cnt[t]           = local_cnt;
+    __syncthreads();
+
+    for (int stride = DSTAT_THREADS / 2; stride > 0; stride >>= 1) {
+        if (t < stride) {
+            s_min[t] = fminf(s_min[t], s_min[t + stride]);
+            s_max[t] = fmaxf(s_max[t], s_max[t + stride]);
+            s_cnt[t] += s_cnt[t + stride];
+        }
+        __syncthreads();
+    }
+
+    if (t == 0) {
+        partial_min[blockIdx.x]   = s_min[0];
+        partial_max[blockIdx.x]   = s_max[0];
+        partial_count[blockIdx.x] = s_cnt[0];
+    }
+}
+
+// (3) 汇总各 block 统计 → 全局 min/max（无有限值时为 {0,0}）
+__global__ void depth_stats_reduce_kernel(const float * __restrict__ partial_min,
+                                          const float * __restrict__ partial_max,
+                                          const int * __restrict__ partial_count,
+                                          int nblocks,
+                                          float * __restrict__ range_2f) {
+    float local_min = __int_as_float(0x7f800000);
+    float local_max = __int_as_float(0xff800000);
+    int   local_cnt = 0;
+
+    for (int b = threadIdx.x; b < nblocks; b += blockDim.x) {
+        if (partial_count[b] > 0) {
+            local_cnt += partial_count[b];
+            local_min = fminf(local_min, partial_min[b]);
+            local_max = fmaxf(local_max, partial_max[b]);
+        }
+    }
+
+    __shared__ float s_min[DSTAT_THREADS];
+    __shared__ float s_max[DSTAT_THREADS];
+    __shared__ int   s_cnt[DSTAT_THREADS];
+    const int        t = threadIdx.x;
+    s_min[t]           = local_min;
+    s_max[t]           = local_max;
+    s_cnt[t]           = local_cnt;
+    __syncthreads();
+
+    for (int stride = DSTAT_THREADS / 2; stride > 0; stride >>= 1) {
+        if (t < stride) {
+            s_min[t] = fminf(s_min[t], s_min[t + stride]);
+            s_max[t] = fmaxf(s_max[t], s_max[t + stride]);
+            s_cnt[t] += s_cnt[t + stride];
+        }
+        __syncthreads();
+    }
+
+    if (t == 0) {
+        if (s_cnt[0] > 0) {
+            range_2f[0] = s_min[0];
+            range_2f[1] = s_max[0];
+        } else {
+            range_2f[0] = 0.0f;
+            range_2f[1] = 0.0f;
+        }
+    }
+}
+
+// (4) 256-bin 直方图（bin 分辨率 ~ (max-min)/256，与 8bit 灰度同精度）
+__global__ void depth_hist_kernel(const float * __restrict__ buf,
+                                  int n,
+                                  const float * __restrict__ range_2f,
+                                  int * __restrict__ hist) {
+    const float mn  = range_2f[0];
+    const float mx  = range_2f[1];
+    const float inv = (mx > mn) ? (256.0f / (mx - mn)) : 0.0f;  // 等值场景直接落 bin 0
+
+    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x) {
+        const float v = buf[i];
+        if (!isfinite(v)) {
+            continue;
+        }
+        int bin = 0;
+        if (inv > 0.0f) {
+            bin = static_cast<int>((v - mn) * inv);
+            bin = min(max(bin, 0), 255);
+        }
+        atomicAdd(&hist[bin], 1);
+    }
+}
+
+// 从直方图求第 target 个有序样本的值（线性插值到 bin 内）
+__device__ float dHistRankValue(const int * hist,
+                                int         total,
+                                float       mn,
+                                float       bin_width,
+                                int         target) {
+    if (target <= 0) {
+        return mn;
+    }
+    if (target >= total) {
+        return mn + 256.0f * bin_width;
+    }
+    int cum = 0;
+    for (int b = 0; b < 256; ++b) {
+        const int c = hist[b];
+        if (c == 0) {
+            continue;
+        }
+        if (cum + c >= target) {
+            float frac = (target - cum) / static_cast<float>(c);
+            frac       = min(max(frac, 0.0f), 1.0f);
+            return mn + (static_cast<float>(b) + frac) * bin_width;
+        }
+        cum += c;
+    }
+    return mn + 256.0f * bin_width;
+}
+
+// (5) 直方图 → P1/P99
+__global__ void depth_percentile_kernel(const int * __restrict__ hist,
+                                        const float * __restrict__ range_2f,
+                                        float * __restrict__ percentiles_2f) {
+    if (blockIdx.x != 0 || threadIdx.x != 0) {
+        return;
+    }
+    int total = 0;
+    for (int b = 0; b < 256; ++b) {
+        total += hist[b];
+    }
+    const float mn    = range_2f[0];
+    const float bin_w = (range_2f[1] - mn) / 256.0f;
+    if (total == 0) {
+        percentiles_2f[0] = 0.0f;
+        percentiles_2f[1] = 0.0f;
+        return;
+    }
+    const int t1      = static_cast<int>(total * 0.01f + 0.5f);
+    const int t99     = static_cast<int>(total * 0.99f + 0.5f);
+    percentiles_2f[0] = dHistRankValue(hist, total, mn, bin_w, t1);
+    percentiles_2f[1] = dHistRankValue(hist, total, mn, bin_w, t99);
+}
+
+// (6) 归一化 + clip → 灰度 + TURBO 伪彩（直接写原始分辨率输出）
+__global__ void depth_colorize_kernel(const float * __restrict__ buf,
+                                      int n,
+                                      const float * __restrict__ percentiles_2f,
+                                      uchar * __restrict__ dst_gray,
+                                      uchar3 * __restrict__ dst_color) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) {
+        return;
+    }
+    const float lo  = percentiles_2f[0];
+    const float hi  = percentiles_2f[1];
+    float       rng = hi - lo;
+    if (!(rng > 0.0f)) {
+        rng = 1e-6f;  // 与 Python vmax = vmin + 1e-6 兜底一致
+    }
+    float g          = (buf[i] - lo) / rng;
+    g                = fminf(fmaxf(g, 0.0f), 1.0f);
+    const uchar gray = static_cast<uchar>(g * 255.0f + 0.5f);  // Python: round(clip)*255
+
+    dst_gray[i]  = gray;
+    dst_color[i] = C_DEVICE_TURBO_MAP[gray];
+}
+
+void floatDepthColormapResize(const float * src,
+                              int           in_w,
+                              int           roi_x,
+                              int           roi_y,
+                              int           roi_w,
+                              int           roi_h,
+                              float *       stage_float,
+                              int           out_w,
+                              int           out_h,
+                              uchar *       dst_gray,
+                              uchar3 *      dst_color,
+                              float *       stat_min,
+                              float *       stat_max,
+                              int *         stat_count,
+                              float *       range_2f,
+                              int *         hist,
+                              float *       percentiles_2f,
+                              int           stat_blocks,
+                              cudaStream_t  stream) {
+    if (roi_w <= 0 || roi_h <= 0 || out_w <= 0 || out_h <= 0 || stat_blocks <= 0) {
+        if (dst_gray && out_w > 0 && out_h > 0) {
+            cudaMemsetAsync(dst_gray, 0, static_cast<size_t>(out_w) * out_h, stream);
+        }
+        return;
+    }
+    const int total        = out_w * out_h;
+    const int stat_threads = DSTAT_THREADS;
+
+    // (1) resize
+    dim3 blk(32, 8);
+    dim3 grid((out_w + 31) >> 5, (out_h + 7) >> 3);
+    depth_resize_float_kernel<<<grid, blk, 0, stream>>>(src, in_w, roi_x, roi_y, roi_w, roi_h,
+                                                        stage_float, out_w, out_h);
+    // (2)(3) min/max/count
+    depth_stats_kernel<<<stat_blocks, stat_threads, 0, stream>>>(stage_float, total, stat_min,
+                                                                 stat_max, stat_count);
+    depth_stats_reduce_kernel<<<1, stat_threads, 0, stream>>>(stat_min, stat_max, stat_count,
+                                                              stat_blocks, range_2f);
+    // (4)(5) P1/P99
+    cudaMemsetAsync(hist, 0, 256 * sizeof(int), stream);
+    depth_hist_kernel<<<stat_blocks, stat_threads, 0, stream>>>(stage_float, total, range_2f, hist);
+    depth_percentile_kernel<<<1, 1, 0, stream>>>(hist, range_2f, percentiles_2f);
+    // (6) 灰度 + TURBO
+    depth_colorize_kernel<<<(total + stat_threads - 1) / stat_threads, stat_threads, 0, stream>>>(
+        stage_float, total, percentiles_2f, dst_gray, dst_color);
+}

@@ -109,6 +109,10 @@ class BaseModel {
         return backend_->getOutputIndexFromName(name);
     }
 
+    virtual size_t getRawImgHxW() const { return raw_img_h_ * raw_img_w_; }
+
+    virtual size_t getInputHxW() const { return input_h_ * input_w_; }
+
 
   protected:
     // 原始图像分辨率

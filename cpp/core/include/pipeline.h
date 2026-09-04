@@ -5,6 +5,7 @@
 #include "frame.h"
 #include "logger_manager.h"
 #include "motion_state_engine.h"
+#include "yolo_depth_model.h"
 #include "yolo_detect_model.h"
 
 class Pipeline {
@@ -32,7 +33,7 @@ class Pipeline {
 
     YoloDetectModel & getDetector() { return detector_; }
 
-    DepthModel & getDepthModel() { return depth_model_; }
+    LiteMonoDepthModel & getDepthModel() { return depth_model_; }
 
     BYTETracker & getTracker() { return tracker_; }
 
@@ -41,9 +42,10 @@ class Pipeline {
   private:
     void updateTracker(InferOutputContext & infer_output_context);
 
-    YoloDetectModel detector_;
-    DepthModel      depth_model_;
-    bool            depth_enabled_ = false;  // 由 config 的 depth.enabled 控制
+    YoloDetectModel    detector_;
+    LiteMonoDepthModel depth_model_;
+    YoloDepthModel     yolo_depth_model_;
+    bool               depth_enabled_ = false;  // 由 config 的 depth.enabled 控制
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {

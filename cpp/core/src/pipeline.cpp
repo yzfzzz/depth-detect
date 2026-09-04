@@ -10,6 +10,14 @@
 #include "STrack.h"
 
 #include <array>
+#include <chrono>
+
+namespace {
+double durationMs(const std::chrono::steady_clock::time_point & begin,
+                  const std::chrono::steady_clock::time_point & end) {
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
+}  // namespace
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
@@ -32,8 +40,15 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
 
     // 是否加载深度模型由 config 的 depth.enabled 控制
     if (config_manager.isDepthEnabled()) {
-        depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w, frame_meta.img_h,
-                          is_normalize, config_manager.isUseGPU());
+        if(config_manager.getDepthModelType() == "lite_mono") {
+            depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
+                              frame_meta.img_h, is_normalize, config_manager.isUseGPU());
+        } else if (config_manager.getDepthModelType() == "yolo_depth") {
+            yolo_depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
+                                   frame_meta.img_h, config_manager.isUseGPU());
+        } else {
+            APP_ERROR("Unsupported depth model type: {}", config_manager.getDepthModelType());
+        }
     }
     detector_.init(config_manager.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
@@ -78,26 +93,69 @@ void Pipeline::init() {}
 
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
+    // 检测模型（YoloDetectModel detector_）同步推理耗时
+    const auto t_detect_begin = std::chrono::steady_clock::now();
     detector_.runInference(frame_input_context, infer_output_context);
+    const auto t_detect_end = std::chrono::steady_clock::now();
+
+    // 深度模型推理耗时（注意：同步路径用的是 depth_model_，重叠路径才用 yolo_depth_model_）
+    double depth_ms = 0.0;
     if (depth_enabled_) {
+        const auto t_depth_begin = std::chrono::steady_clock::now();
         depth_model_.runInference(frame_input_context, infer_output_context);
+        const auto t_depth_end = std::chrono::steady_clock::now();
+        depth_ms               = durationMs(t_depth_begin, t_depth_end);
     }
+
     updateTracker(infer_output_context);
     updateMotionStates(frame_input_context, infer_output_context);
+
+    if (depth_enabled_) {
+        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms, depth_model_ = {:.2f} ms",
+                 frame_input_context.frame_id, durationMs(t_detect_begin, t_detect_end), depth_ms);
+    } else {
+        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms", frame_input_context.frame_id,
+                 durationMs(t_detect_begin, t_detect_end));
+    }
 }
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
+    APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}", frame_input_context.frame_id,
+             frame_input_context.timestamp);
+    // yolo_detect_model_ (detector_)：从发起异步推理到结果可取
+    const auto t_detect_begin = std::chrono::steady_clock::now();
     detector_.runInferenceAsync(frame_input_context);
+
+    // yolo_depth_model_：从发起异步推理到结果可取（与检测在不同 stream 上可重叠执行）
+    const auto t_depth_begin = std::chrono::steady_clock::now();
     if (depth_enabled_) {
-        depth_model_.runInferenceAsync(frame_input_context);
+        // depth_model_.runInferenceAsync(frame_input_context);
+        APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}",
+                 frame_input_context.frame_id, frame_input_context.timestamp);
+        yolo_depth_model_.runInferenceAsync(frame_input_context);
     }
     detector_.getInferOutputResult(infer_output_context);
+    const auto t_detect_end = std::chrono::steady_clock::now();
     updateTracker(infer_output_context);
     if (depth_enabled_) {
-        depth_model_.getInferOutputResult(infer_output_context);
+        // depth_model_.getInferOutputResult(infer_output_context);
+        APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}",
+                 frame_input_context.frame_id, frame_input_context.timestamp);
+        yolo_depth_model_.getInferOutputResult(infer_output_context);
     }
+    const auto t_depth_end = std::chrono::steady_clock::now();
     updateMotionStates(frame_input_context, infer_output_context);
+
+    // 单条汇总：两个模型的推理耗时（含各自的 D2H 取结果与 stream 同步）
+    if (depth_enabled_) {
+        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms, yolo_depth = {:.2f} ms",
+                 frame_input_context.frame_id, durationMs(t_detect_begin, t_detect_end),
+                 durationMs(t_depth_begin, t_depth_end));
+    } else {
+        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms", frame_input_context.frame_id,
+                 durationMs(t_detect_begin, t_detect_end));
+    }
 }
 
 void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
@@ -107,7 +165,7 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
     // 深度推理开启且本帧有原始视差输出时，用深度做运动状态/TTC 估计，否则退回 bbox 尺度
     cv::Mat depth_metric;
     if (depth_enabled_ && !infer_output_context.depth_raw_infer_out.empty()) {
-        const auto dims = depth_model_.getInputDims();
+        const auto dims = yolo_depth_model_.getInputDims();
         if (dims.size() >= 4 && dims[2] > 0 && dims[3] > 0) {
             cv::Mat raw_depth_map(dims[2], dims[3], CV_32FC1,
                                   infer_output_context.depth_raw_infer_out.data());
