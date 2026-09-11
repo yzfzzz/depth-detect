@@ -2,13 +2,18 @@
 
 #include "STrack.h"
 
+#include <cmath>
+
+ // namespace
+
 DangerAlertHandler::DangerAlertHandler(const ConfigManager & config) {
     filter_small_objects_ = config.isFilterSmallObjectsEnabled();
     min_object_area_      = config.getMinObjectArea();
 }
 
 bool DangerAlertHandler::isDangerous(const MotionStateInfoRecord & motion) const {
-    return motion.ttc_danger;
+    // 危险与否只看“快速靠近”判定（approach 关闭时该字段恒为 false）
+    return motion.approach_alarm;
 }
 
 AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_input,
@@ -17,25 +22,33 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
 
     for (const auto & track : infer_output.tracked_objects) {
         // 过滤小目标
-        if (filter_small_objects_ && track.tlwh_[2] * track.tlwh_[3] <= min_object_area_) {
-            continue;
+        if (filter_small_objects_) {
+            float s = track.tlwh_[2] * track.tlwh_[3];
+            if(track.class_id_ == 2 && s <= min_object_area_ * 4){
+                continue;
+            }
+            else if(s <= min_object_area_){
+                continue;
+            }
         }
 
-        // 查找运动状态
+        // 查找本帧的判定结果（不在接近单元内的目标没有记录）
         auto it = infer_output.motion_records.find(track.track_id_);
         if (it == infer_output.motion_records.end()) {
             continue;
         }
 
-        MotionStateInfoRecord motion = it->second;
-        if (!isDangerous(motion)) {
-            continue;
-        }
+        const MotionStateInfoRecord & motion = it->second;
+        int class_id = track.class_id_;
+        int d = track.distance_;
 
+
+        // 全部发送（depth 截到小数点后 2 位）
         dangerous_objects.push_back(
             { static_cast<int>(track.tlwh_[0]), static_cast<int>(track.tlwh_[1]),
-              static_cast<int>(track.tlwh_[2]), static_cast<int>(track.tlwh_[3]), track.class_id_,
-              track.track_id_, static_cast<int>(motion.velocity), motion.ttc, true });
+              static_cast<int>(track.tlwh_[2]), static_cast<int>(track.tlwh_[3]),
+              d, class_id, track.track_id_, 0, -1.0f,
+              isDangerous(motion) });
     }
 
     if (dangerous_objects.empty()) {

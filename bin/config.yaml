@@ -9,7 +9,7 @@ prefer:
 yolo:
   yolo_model_path:
     - type: engine
-      path: "../model/engine/yolo26n/yolo26n_640_op11_fp16_trt10.9.engine"
+      path: "../model/engine/yolo26s/yolo26s_640_op11_fp16_trt10.9.engine"
     - type: onnx
       path: "../model/onnx/yolo26n/yolo26n_640_op11.onnx"
 
@@ -17,33 +17,49 @@ yolo:
   yolo_conf_thresh: 0.25
 
 depth:
-  enabled : false
+  enabled : true
   depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
+  model_type: "yolo_depth"   # 选项：lite_mono 或 yolo_depth
   depth_model_path:
     - type: engine
-      path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
+      path: "../model/engine/yolo26n-depth/yolo26n-depth_640_op11_fp16_trt10.9.engine"
     - type: onnx
       path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
 
-motion_state_engine:      # 目标追踪与状态转换引擎（bbox 尺度驱动：滤波 + 运动状态 + TTC）
-  velocity_threshold: 20      # 判断趋近/远离的速度触发线
-  acceleration_threshold: 10   # 加减速缓冲界限
-  velocity_hysteresis: 5.0     # 速度迟滞区间：进入用触发线，解除用(触发线-迟滞)，防阈值边界抖动
-  acceleration_hysteresis: 3.0 # 加速度迟滞区间
-  kf_process_noise_cov: 0.2   # 卡尔曼过程噪声（0.02→0.2：更信观测，速度跟踪跟手，避免 TTC 高估）
-  kf_measurement_noise_cov: 0.05  # 卡尔曼测量噪声
-  ema_alpha: 0.7              # EMA平滑系数：0~1，越大越跟手、越小越平滑（0.5→0.7）
-  bbox_jump_ratio_threshold: 0.5  # 目标跳动比例阈值：|观测-预测|/预测 超过该值则改用KF预测值（TTC 跳变保护）
-  min_scale_for_ttc: 20       # 计算TTC的最小目标尺度（sqrt(w*h)）
-  min_velocity_for_ttc: 1.0   # 计算TTC的最小目标尺度变化速度：分母过小则 TTC 巨大，视为无效（勿设过小）
+motion_state_engine:      # 运动/危险判定引擎：只保留 approach（快速靠近）一路，见 cpp/core/include/motion_state_engine.h
+  # ---- 快速靠近检测（approach）：mini_python/pipeline.py 运动估计部分（方案 d）的 C++ 移植 ----
+  # 默认值 = 已在 906-2-1.mp4 上调好的最优参数，对应 Python 命令行：
+  #   python pipeline.py --approach d --filter one_euro \
+  #     --approach-score-thr 0.45 --approach-confirm 3 \
+  #     --approach-thr-depth 0.15 --approach-thr-area 0.35 \
+  #     --approach-exit-confirm 3 --approach-exit-score-thr 0.2
+  # 原理：先用每条轨迹前 warmup 帧攒基线（深度/面积中位数，抗噪），之后每帧算
+  #       “相对基线的累计变化率”，并要求最近 recent_w 帧内仍在靠近（深度降+面积涨）；
+  #       进入报警需连续 confirm 帧达标，解除需连续 exit_confirm 帧出现退出证据（双边去抖）。
+  # 注意：前 warmup 帧必然无输出；判定只依赖历史，可逐帧实时触发。
+  approach:
+    enabled: true          # 是否启用快速靠近检测（关闭后不动任何既有行为）
+    filter: "kalman"     # area/raw_depth 因果滤波: none / one_euro(1€) / kalman(一维匀速)
+    warmup: 15             # 基线攒帧数（对应 --approach-warmup）
+    recent_w: 10           # 近期趋势窗口长度（前后半窗各 recent_w/2）
+    thr_depth: 0.15        # 相对基线的深度降幅阈值（对应 --approach-thr-depth）
+    thr_height: 0.15         # 相对基线的高度增幅阈值（对应 --approach-thr-area）
+    score_thr: 0.45        # 进入分数线（对应 --approach-score-thr）
+    confirm: 3             # 进入需连续达标帧数（对应 --approach-confirm）
+    exit_score_thr: 0.2    # 退出分数线（对应 --approach-exit-score-thr）
+    exit_confirm: 3        # 退出需连续证据帧数（对应 --approach-exit-confirm）
+    # ---- 接近单元装配（对应 pipeline.py 的报警白名单与“两轮车需载人”规则）----
+    use_units: true        # false: 每个目标各自判定（不做白名单与载人合并）
+    alarm_class_ids: [0, 1, 2, 3, 5, 7]        # 报警白名单: person/bicycle/car/motorcycle/bus/truck
+    two_wheeler_class_ids: [1, 3]              # 两轮车: bicycle / motorcycle
+    person_class_ids: [0]                      # 人: person（用于“载人”判定）
+    require_rider: true    # 两轮车必须检测到骑车人才参与判定（停放/推行的两轮车不报警）
+    rider_iou: 0.05        # 人/车重合判定的 IoU 阈值
+    merge_person: true     # 载人时把“人 + 两轮车”合并成外接大框作为一个单元
 
 danger_alert:
-  is_filter_small_objects: true   # 是否过滤小目标
-  min_object_area: 20              # 小目标过滤阈值
-  ttc_warn_threshold: 8.0          # TTC 报警触发阈值（秒）：连续 ttc_enter_frames 帧 ttc < 该值则报警（0.5→3.0）
-  ttc_clear_threshold: 15.0         # TTC 报警解除阈值（秒）：须 >= warn，连续 ttc_exit_frames 帧 ttc > 该值才解除
-  ttc_enter_frames: 3              # 报警进入防抖：连续几帧 ttc < warn 才触发
-  ttc_exit_frames: 3              # 报警退出阻塞：连续几帧 ttc > clear 或无效才解除
+  is_filter_small_objects: true   # 是否过滤小目标（快速靠近的目标若面积过小则不上报）
+  min_object_area: 100              # 小目标过滤阈值 
 
 
 camera:
@@ -55,12 +71,20 @@ camera:
 
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
+  save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
   save_mode: images        # 保存输出: video / images / both / none
   send_tcp: true          # 是否发送TCP数据包
-  send_tcp_ip: "192.168.137.225"  # 发送TCP数据包的IP地址
-  send_tcp_port: 3333     # 发送TCP数据包的端口号
+  send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址
+  send_tcp_port: 5005     # 发送TCP数据包的端口号
   
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
   console_output: true    # 是否在终端显示日志
   log_level: debug         # 日志级别: trace / debug / info / warn / err / critical
+
+bytetrack:
+  track_high_thresh: 0.50
+  track_low_thresh: 0.1
+  new_track_thresh: 0.60
+  track_buffer: 30
+  match_thresh: 0.80

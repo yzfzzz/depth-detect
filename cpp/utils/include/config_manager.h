@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 // 框架读取配置文件类 - 单例模式
 class ConfigManager {
@@ -17,22 +18,26 @@ class ConfigManager {
     bool                               isDisplayEnabled() const;
     bool                               isControlPanelEnabled() const;
     bool                               isSaveEnabled() const;
-    float                              getMotionVelocityThreshold() const;
-    float                              getMotionAccelerationThreshold() const;
-    float                              getMotionVelocityHysteresis() const;
-    float                              getMotionAccelerationHysteresis() const;
     float                              getYoloNmsThresh() const;
     float                              getYoloConfThresh() const;
-    float                              getKfProcessNoiseCov() const;
-    float                              getKfMeasurementNoiseCov() const;
-    float                              getTtcWarnThreshold() const;
-    float                              getTtcClearThreshold() const;
-    int                                getTtcEnterFrames() const;
-    int                                getTtcExitFrames() const;
-    float                              getMinScaleForTtc() const;
-    float                              getMinVelocityForTtc() const;
-    float                              getEmaAlpha() const;
-    float                              getBboxJumpRatioThreshold() const;
+    // ---- 快速靠近（approach）检测参数：方案 d 的 C++ 移植，见 approach_detector.h ----
+    bool                               isApproachEnabled() const;
+    std::string                        getApproachFilterMode() const;
+    int                                getApproachWarmup() const;
+    float                              getApproachThrDepth() const;
+    float                              getApproachThrHeight() const;
+    int                                getApproachRecentW() const;
+    float                              getApproachScoreThr() const;
+    int                                getApproachConfirm() const;
+    float                              getApproachExitScoreThr() const;
+    int                                getApproachExitConfirm() const;
+    bool                               isApproachUseUnits() const;
+    std::vector<int>                   getApproachAlarmClassIds() const;
+    std::vector<int>                   getApproachTwoWheelerClassIds() const;
+    std::vector<int>                   getApproachPersonClassIds() const;
+    bool                               isApproachRequireRider() const;
+    float                              getApproachRiderIou() const;
+    bool                               isApproachMergePerson() const;
     bool                               isUseGPU() const;
     bool                               isOverlapEnabled() const;
     bool                               isLogFileSaveEnabled() const;
@@ -50,6 +55,12 @@ class ConfigManager {
     int                                getCameraHeight() const;
     int                                getCameraFps() const;
     std::string                        getDepthModelType() const;
+    // ---- ByteTrack 跟踪器参数：对应 bytetrack_shaky.yaml，见 bytetrack/BYTETracker.h ----
+    int                                getTrackerTrackBuffer() const;
+    float                              getTrackHighThresh() const;
+    float                              getTrackLowThresh() const;
+    float                              getNewTrackThresh() const;
+    float                              getMatchThresh() const;
 
   private:
     YAML::Node config_;
@@ -106,22 +117,6 @@ inline bool ConfigManager::isSaveEnabled() const {
     return config_["io_manager"]["is_save"].as<bool>(false);
 }
 
-inline float ConfigManager::getMotionVelocityThreshold() const {
-    return config_["motion_state_engine"]["velocity_threshold"].as<float>(5.0f);
-}
-
-inline float ConfigManager::getMotionAccelerationThreshold() const {
-    return config_["motion_state_engine"]["acceleration_threshold"].as<float>(1.5f);
-}
-
-inline float ConfigManager::getMotionVelocityHysteresis() const {
-    return config_["motion_state_engine"]["velocity_hysteresis"].as<float>(2.0f);
-}
-
-inline float ConfigManager::getMotionAccelerationHysteresis() const {
-    return config_["motion_state_engine"]["acceleration_hysteresis"].as<float>(1.0f);
-}
-
 inline float ConfigManager::getYoloNmsThresh() const {
     return config_["yolo"]["yolo_nms_thresh"].as<float>(0.4f);
 }
@@ -130,44 +125,85 @@ inline float ConfigManager::getYoloConfThresh() const {
     return config_["yolo"]["yolo_conf_thresh"].as<float>(0.25f);
 }
 
-inline float ConfigManager::getKfProcessNoiseCov() const {
-    return config_["motion_state_engine"]["kf_process_noise_cov"].as<float>(2e-2f);
+// --------------------------------------------------------------------------- //
+// 快速靠近（approach）检测参数
+// 默认值 = mini_python/pipeline.py 调好的最优参数：
+//   --approach d --filter one_euro --approach-score-thr 0.45 --approach-confirm 3
+//   --approach-thr-depth 0.15 --approach-thr-height 0.20
+//   --approach-exit-confirm 3 --approach-exit-score-thr 0.2
+// 注：尺度判据已由“框面积变化”改为“框高变化”（thr_height）
+// --------------------------------------------------------------------------- //
+
+inline bool ConfigManager::isApproachEnabled() const {
+    return config_["motion_state_engine"]["approach"]["enabled"].as<bool>(true);
 }
 
-inline float ConfigManager::getKfMeasurementNoiseCov() const {
-    return config_["motion_state_engine"]["kf_measurement_noise_cov"].as<float>(5e-2f);
+inline std::string ConfigManager::getApproachFilterMode() const {
+    return config_["motion_state_engine"]["approach"]["filter"].as<std::string>("one_euro");
 }
 
-inline float ConfigManager::getTtcWarnThreshold() const {
-    return config_["danger_alert"]["ttc_warn_threshold"].as<float>(3.0f);
+inline int ConfigManager::getApproachWarmup() const {
+    return config_["motion_state_engine"]["approach"]["warmup"].as<int>(30);
 }
 
-inline float ConfigManager::getTtcClearThreshold() const {
-    return config_["danger_alert"]["ttc_clear_threshold"].as<float>(4.0f);
+inline float ConfigManager::getApproachThrDepth() const {
+    return config_["motion_state_engine"]["approach"]["thr_depth"].as<float>(0.15f);
 }
 
-inline int ConfigManager::getTtcEnterFrames() const {
-    return config_["danger_alert"]["ttc_enter_frames"].as<int>(3);
+inline float ConfigManager::getApproachThrHeight() const {
+    return config_["motion_state_engine"]["approach"]["thr_height"].as<float>(0.30f);
 }
 
-inline int ConfigManager::getTtcExitFrames() const {
-    return config_["danger_alert"]["ttc_exit_frames"].as<int>(10);
+inline int ConfigManager::getApproachRecentW() const {
+    return config_["motion_state_engine"]["approach"]["recent_w"].as<int>(10);
 }
 
-inline float ConfigManager::getMinScaleForTtc() const {
-    return config_["motion_state_engine"]["min_scale_for_ttc"].as<float>(20.0f);
+inline float ConfigManager::getApproachScoreThr() const {
+    return config_["motion_state_engine"]["approach"]["score_thr"].as<float>(0.45f);
 }
 
-inline float ConfigManager::getMinVelocityForTtc() const {
-    return config_["motion_state_engine"]["min_velocity_for_ttc"].as<float>(1.0f);
+inline int ConfigManager::getApproachConfirm() const {
+    return config_["motion_state_engine"]["approach"]["confirm"].as<int>(3);
 }
 
-inline float ConfigManager::getEmaAlpha() const {
-    return config_["motion_state_engine"]["ema_alpha"].as<float>(0.3f);
+inline float ConfigManager::getApproachExitScoreThr() const {
+    return config_["motion_state_engine"]["approach"]["exit_score_thr"].as<float>(0.2f);
 }
 
-inline float ConfigManager::getBboxJumpRatioThreshold() const {
-    return config_["motion_state_engine"]["bbox_jump_ratio_threshold"].as<float>(0.35f);
+inline int ConfigManager::getApproachExitConfirm() const {
+    return config_["motion_state_engine"]["approach"]["exit_confirm"].as<int>(3);
+}
+
+inline bool ConfigManager::isApproachUseUnits() const {
+    return config_["motion_state_engine"]["approach"]["use_units"].as<bool>(true);
+}
+
+// 报警白名单：COCO 类别索引（0 person / 1 bicycle / 2 car / 3 motorcycle / 5 bus / 7 truck）
+inline std::vector<int> ConfigManager::getApproachAlarmClassIds() const {
+    return config_["motion_state_engine"]["approach"]["alarm_class_ids"].as<std::vector<int>>(
+        std::vector<int>{ 0, 1, 2, 3, 5, 7 });
+}
+
+inline std::vector<int> ConfigManager::getApproachTwoWheelerClassIds() const {
+    return config_["motion_state_engine"]["approach"]["two_wheeler_class_ids"].as<std::vector<int>>(
+        std::vector<int>{ 1, 3 });
+}
+
+inline std::vector<int> ConfigManager::getApproachPersonClassIds() const {
+    return config_["motion_state_engine"]["approach"]["person_class_ids"].as<std::vector<int>>(
+        std::vector<int>{ 0 });
+}
+
+inline bool ConfigManager::isApproachRequireRider() const {
+    return config_["motion_state_engine"]["approach"]["require_rider"].as<bool>(true);
+}
+
+inline float ConfigManager::getApproachRiderIou() const {
+    return config_["motion_state_engine"]["approach"]["rider_iou"].as<float>(0.05f);
+}
+
+inline bool ConfigManager::isApproachMergePerson() const {
+    return config_["motion_state_engine"]["approach"]["merge_person"].as<bool>(true);
 }
 
 inline bool ConfigManager::isLogFileSaveEnabled() const {
@@ -236,4 +272,31 @@ inline int ConfigManager::getCameraFps() const {
 
 inline std::string ConfigManager::getDepthModelType() const {
     return config_["depth"]["model_type"].as<std::string>("lite_mono");
+}
+
+// --------------------------------------------------------------------------- //
+// ByteTrack 跟踪器参数（yaml 根节点 "bytetrack"，缺省时用 ByteTrack 官方默认值）
+// 抖动场景参考调参（bytetrack_shaky.yaml）：
+//   track_high_thresh: 0.30  track_low_thresh: 0.05  new_track_thresh: 0.60
+//   track_buffer: 120  match_thresh: 0.90
+// --------------------------------------------------------------------------- //
+
+inline int ConfigManager::getTrackerTrackBuffer() const {
+    return config_["bytetrack"]["track_buffer"].as<int>(90);
+}
+
+inline float ConfigManager::getTrackHighThresh() const {
+    return config_["bytetrack"]["track_high_thresh"].as<float>(0.5f);
+}
+
+inline float ConfigManager::getTrackLowThresh() const {
+    return config_["bytetrack"]["track_low_thresh"].as<float>(0.1f);
+}
+
+inline float ConfigManager::getNewTrackThresh() const {
+    return config_["bytetrack"]["new_track_thresh"].as<float>(0.6f);
+}
+
+inline float ConfigManager::getMatchThresh() const {
+    return config_["bytetrack"]["match_thresh"].as<float>(0.8f);
 }

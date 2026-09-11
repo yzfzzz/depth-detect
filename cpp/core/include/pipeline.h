@@ -68,8 +68,11 @@ class Pipeline {
     std::string                                       track_log_path_;
     std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
     // 需要跟踪的类别，可以根据自己需求调整，筛选自己想要跟踪的对象的种类（以下对应COCO数据集类别索引）
-    std::vector<int>                                  track_classes_{ 1, 2, 3, 5,
-                                     7 };  // person, bicycle, car, motorcycle, bus, truck
+    // 注意 person=0 必须在列表里：两轮车（含摩托车）的“载人”判定要靠 person 框与车框重合，
+    // 漏掉 0 会导致 tracker 不输出任何行人，require_rider 永远不成立 -> 两轮车/行人全部不参与报警
+    std::vector<int>                                  track_classes_{
+        0, 1, 2, 3, 5, 7
+    };  // person, bicycle, car, motorcycle, bus, truck
 
     bool is_normalize_ = false;
 };

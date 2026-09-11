@@ -17,30 +17,54 @@ double durationMs(const std::chrono::steady_clock::time_point & begin,
                   const std::chrono::steady_clock::time_point & end) {
     return std::chrono::duration<double, std::milli>(end - begin).count();
 }
+
+// 接近单元框是否就是该目标自身的框：未做“人 + 两轮车”合并时，单元框是 track.tlwh_ 的原样拷贝，
+// 此时两处深度采样可以共用一次（框不同则必须各采各的）
+bool isSameBox(const approach::ApproachUnit & unit, const std::vector<float> & tlwh) {
+    return unit.x == tlwh[0] && unit.y == tlwh[1] && unit.w == tlwh[2] && unit.h == tlwh[3];
+}
+
+
 }  // namespace
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
-    tracker_(30, 30),  // 假设fps=30，或从config读取
-    motion_state_engine_(config_manager.getMotionVelocityThreshold(),
-                         config_manager.getMotionAccelerationThreshold(),
-                         config_manager.getMotionVelocityHysteresis(),
-                         config_manager.getMotionAccelerationHysteresis(),
-                         config_manager.getKfProcessNoiseCov(),
-                         config_manager.getKfMeasurementNoiseCov(),
-                         config_manager.getMinScaleForTtc(),
-                         config_manager.getMinVelocityForTtc(),
-                         config_manager.getEmaAlpha(),
-                         config_manager.getBboxJumpRatioThreshold(),
-                         config_manager.getTtcWarnThreshold(),
-                         config_manager.getTtcClearThreshold(),
-                         config_manager.getTtcEnterFrames(),
-                         config_manager.getTtcExitFrames()) {
+    tracker_(30, 30) {
     bool is_normalize = false;
+
+    // 快速靠近（approach）检测：参数取自 config.motion_state_engine.approach，
+    // 默认值即 mini_python/pipeline.py 调好的最优参数（方案 d + 1€ 滤波）
+    approach::ApproachParams approach_params;
+    approach_params.warmup         = config_manager.getApproachWarmup();
+    approach_params.thr_depth      = config_manager.getApproachThrDepth();
+    approach_params.thr_height     = config_manager.getApproachThrHeight();
+    approach_params.recent_w       = config_manager.getApproachRecentW();
+    approach_params.score_thr      = config_manager.getApproachScoreThr();
+    approach_params.confirm        = config_manager.getApproachConfirm();
+    approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
+    approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
+
+    approach::ApproachUnitConfig approach_units;
+    approach_units.use_units             = config_manager.isApproachUseUnits();
+    approach_units.alarm_class_ids       = config_manager.getApproachAlarmClassIds();
+    approach_units.two_wheeler_class_ids = config_manager.getApproachTwoWheelerClassIds();
+    approach_units.person_class_ids      = config_manager.getApproachPersonClassIds();
+    approach_units.require_rider         = config_manager.isApproachRequireRider();
+    approach_units.rider_iou             = config_manager.getApproachRiderIou();
+    approach_units.merge_person          = config_manager.isApproachMergePerson();
+
+    // filter 字符串 -> 枚举；未识别的取值回落到 none 并告警（避免静默改变行为）
+    const std::string    filter_name = config_manager.getApproachFilterMode();
+    approach::FilterMode filter_mode = approach::parseFilterMode(filter_name);
+    if (filter_mode == approach::FilterMode::NONE && filter_name != "none") {
+        APP_WARN("Unknown approach filter '{}', fallback to none", filter_name);
+    }
+    motion_state_engine_.configureApproach(approach_params, filter_mode,
+                                           config_manager.isApproachEnabled(), approach_units);
 
     // 是否加载深度模型由 config 的 depth.enabled 控制
     if (config_manager.isDepthEnabled()) {
-        if(config_manager.getDepthModelType() == "lite_mono") {
+        if (config_manager.getDepthModelType() == "lite_mono") {
             depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
                               frame_meta.img_h, is_normalize, config_manager.isUseGPU());
         } else if (config_manager.getDepthModelType() == "yolo_depth") {
@@ -57,7 +81,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     // 是否记录每个 track 的类别/原始深度/面积/帧数等到 CSV
     if (config_manager.isTrackLogEnabled()) {
         track_log_enabled_ = true;
-        track_log_path_    = config_manager.getOutDir() + "/track_log.csv";
+        track_log_path_    = "track_log.csv";
         APP_INFO("Track log enabled: {}", track_log_path_);
     }
 }
@@ -121,48 +145,29 @@ void Pipeline::process(FrameInputContext &  frame_input_context,
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
-    APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}", frame_input_context.frame_id,
-             frame_input_context.timestamp);
     // yolo_detect_model_ (detector_)：从发起异步推理到结果可取
-    const auto t_detect_begin = std::chrono::steady_clock::now();
     detector_.runInferenceAsync(frame_input_context);
 
     // yolo_depth_model_：从发起异步推理到结果可取（与检测在不同 stream 上可重叠执行）
-    const auto t_depth_begin = std::chrono::steady_clock::now();
     if (depth_enabled_) {
         // depth_model_.runInferenceAsync(frame_input_context);
-        APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}",
-                 frame_input_context.frame_id, frame_input_context.timestamp);
         yolo_depth_model_.runInferenceAsync(frame_input_context);
     }
     detector_.getInferOutputResult(infer_output_context);
-    const auto t_detect_end = std::chrono::steady_clock::now();
     updateTracker(infer_output_context);
     if (depth_enabled_) {
         // depth_model_.getInferOutputResult(infer_output_context);
-        APP_INFO("Pipeline::processOverlap: frame_id: {}, timestamp: {}",
-                 frame_input_context.frame_id, frame_input_context.timestamp);
         yolo_depth_model_.getInferOutputResult(infer_output_context);
     }
-    const auto t_depth_end = std::chrono::steady_clock::now();
     updateMotionStates(frame_input_context, infer_output_context);
-
-    // 单条汇总：两个模型的推理耗时（含各自的 D2H 取结果与 stream 同步）
-    if (depth_enabled_) {
-        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms, yolo_depth = {:.2f} ms",
-                 frame_input_context.frame_id, durationMs(t_detect_begin, t_detect_end),
-                 durationMs(t_depth_begin, t_depth_end));
-    } else {
-        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms", frame_input_context.frame_id,
-                 durationMs(t_detect_begin, t_detect_end));
-    }
 }
 
 void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
                                   InferOutputContext & infer_output_context) {
     infer_output_context.motion_records.clear();
 
-    // 深度推理开启且本帧有原始视差输出时，用深度做运动状态/TTC 估计，否则退回 bbox 尺度
+    // 深度推理开启且本帧有原始视差输出时，构造与图像同分辨率的深度图（供“框内取深度”用）；
+    // 深度不可用时接近判定拿到 0 深度（视为无效，检测器不产生虚假变化）
     cv::Mat depth_metric;
     if (depth_enabled_ && !infer_output_context.depth_raw_infer_out.empty()) {
         const auto dims = yolo_depth_model_.getInputDims();
@@ -174,30 +179,64 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         }
     }
 
-    for (const auto & track : infer_output_context.tracked_objects) {
-        if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
-            continue;
-        }
-        float raw_depth = 0.0f;
-        if (!depth_metric.empty()) {
-            raw_depth = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
-        }
-        // 深度与 bbox 两路都执行，各自独立滤波状态（depth_kf_states_ / bbox_kf_states_），互不污染
-        const MotionStateInfoRecord depth_motion = motion_state_engine_.computeMotionStateFromDepth(
-            track.track_id_, raw_depth, frame_input_context.timestamp);
-        const MotionStateInfoRecord bbox_motion =
-            motion_state_engine_.computeMotionStateFromBBox(track, frame_input_context.timestamp);
+    // ---- 快速靠近（approach）检测：先装配“接近单元”，判定并入下面的逐目标循环 ----
+    // 接近单元 = 报警白名单内的目标；两轮车检测到骑车人时用“人 + 车外接大框”作为一个单元，
+    // 未被认领的行人单独成单元（与 pipeline.py log_track 的装配规则一致）。
+    // 判定只用单元框面积 + 框内深度，逐帧因果、可实时触发；该判定即危险依据（不再有 TTC）。
+    // 单元 id 一定是某个目标的 track id，因此按 unit_id -> 单元 建表后可在同一个循环里判定：
+    // 每个 unit_id 每帧仍恰好更新一次（检测器状态按 id 独立，与循环顺序无关）。
+    const std::vector<approach::ApproachUnit> approach_units =
+        motion_state_engine_.assembleApproachUnits(infer_output_context.tracked_objects);
+    std::unordered_map<int, const approach::ApproachUnit *> unit_by_id;
+    unit_by_id.reserve(approach_units.size());
+    for (const approach::ApproachUnit & unit : approach_units) {
+        unit_by_id[unit.unit_id] = &unit;  // 指向本帧的 approach_units，循环内始终有效
+    }
 
-        // 下游使用：深度有效用深度，否则退回 bbox
-        const MotionStateInfoRecord & motion = bbox_motion;
-        // const MotionStateInfoRecord & motion = raw_depth > 0.0f ? depth_motion : bbox_motion;
-        infer_output_context.motion_records.insert({ track.track_id_, motion });
+    for (auto & track : infer_output_context.tracked_objects) {
+        const auto                     unit_it = unit_by_id.find(track.track_id_);
+        const approach::ApproachUnit * unit =
+            (unit_it == unit_by_id.end()) ? nullptr : unit_it->second;
 
+        // 1) 快速靠近判定：用“单元框”算框高与深度（载人两轮车 = 人车外接大框）。
+        //    该判定不受下面的小目标过滤影响（与 pipeline.py 一致：白名单内的目标照样判接近）。
+        approach::ApproachState approach_state;
+        bool                    has_approach = false;
+        float                   unit_depth   = 0.0f;
+        if (unit != nullptr) {
+            if (!depth_metric.empty()) {
+                // 两者都是框内鲁棒深度估计
+                unit_depth = motion_state_engine_.computeMeanDepth(depth_metric, unit->tlwh());
+                track.distance_ = unit_depth;
+            }
+            approach_state = motion_state_engine_.updateApproachState(
+                unit->unit_id, unit->h, unit_depth, frame_input_context.timestamp);
+            has_approach = true;
+        }
+
+        // 2) 记录本帧判定结果：只有“快速靠近”一路（是否危险即看 approach_alarm）。
+        //    该 track 不在接近单元内（白名单外类别 / 无骑手的两轮车 / 已被认领的行人）时全为 false/0
+        MotionStateInfoRecord motion;
+        if (has_approach) {
+            motion.approach_alarm       = approach_state.alarm;
+            motion.approach_score       = approach_state.score;
+            motion.approach_depth_score = approach_state.depth_score;
+            motion.approach_scale_score = approach_state.scale_score;
+        }
+        infer_output_context.motion_records.emplace(track.track_id_, motion);
+
+        // 3) track_log：原始每个目标框一行（与 Python 侧 CSV 口径一致）；深度用目标自身框采样，
+        //    与单元框重合时复用第 1) 步那次采样
         if (track_log_enabled_) {
+            float raw_depth = 0.0f;
+            if (!depth_metric.empty()) {
+                raw_depth = (has_approach && isSameBox(*unit, track.tlwh_)) ?
+                                unit_depth :
+                                motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+            }
             track_log_data_[track.track_id_].push_back(
-                { frame_input_context.frame_id, track.class_id_, track.tlwh_[2] * track.tlwh_[3],
-                  raw_depth, depth_motion.velocity, bbox_motion.velocity, depth_motion.ttc,
-                  depth_motion.ttc_danger, bbox_motion.ttc, bbox_motion.ttc_danger });
+                { frame_input_context.frame_id, track.class_id_, track.tlwh_[0], track.tlwh_[2],
+                  track.tlwh_[1], track.tlwh_[3], track.tlwh_[2] * track.tlwh_[3], raw_depth });
         }
     }
 }

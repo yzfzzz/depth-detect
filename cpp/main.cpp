@@ -22,9 +22,7 @@
 
 cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      InferOutputContext &           infer_output_context,
-                     const ConfigManager &          config_manager,
                      DrawingManager &               drawing_manager,
-                     AlertMessage &                 alert_msg,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us) {
     if (infer_output_context.tracked_objects.size() <= 0) {
@@ -36,18 +34,19 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
             continue;
         }
 
+        // 每个目标都画框+分数；不在接近单元内的目标用默认记录（分数为 0.00）
+        static const MotionStateInfoRecord kDefaultMotion;
         auto it = infer_output_context.motion_records.find(track.track_id_);
-        if (it != infer_output_context.motion_records.end()) {
+        const MotionStateInfoRecord & motion =
+            (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
-            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("6.Drawing Manager", drawing_manager,
-                                                   drawTrackedObject, frame_input_context.raw_img,
-                                                   track, alert_msg, it->second,
-                                                   get_color_func(track.track_id_));
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
+            "6.Drawing Manager", drawing_manager, drawTrackedObject,
+            frame_input_context.raw_img, track, motion, get_color_func(track.track_id_));
 #else
-            drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, alert_msg,
-                                              it->second, get_color_func(track.track_id_));
+        drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, motion,
+                                          get_color_func(track.track_id_));
 #endif
-        }
     }
     // FPS
     int show_fps = (total_us > 0) ? (frame_input_context.frame_id * 1000000LL / total_us) : 0;
@@ -131,7 +130,7 @@ int run(char * video_path, char * config_path) {
         }
         // 画图
         cv::Mat out_frame = drawOneFrame(
-            frame_input_context, infer_output_context, config_manager, drawing_manager, alert,
+            frame_input_context, infer_output_context, drawing_manager,
             [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us);
         // 保存结果
         io_manager.saveFrame(out_frame, num_frames);

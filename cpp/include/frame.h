@@ -28,35 +28,14 @@ struct FrameMeta {
 class STrack;
 class Detection;
 
-enum MotionState {
-    INVAILD   = 0,
-    UNKNOWN   = 1,
-    STABLE    = 2,
-    APPROACH  = 3,
-    MOVE_AWAY = 4,
-    ACCELE    = 5,
-    DECELE    = 6,
-    CONSTANT  = 7
-};
-
+// 目标的运动/危险判定结果：当前只保留“快速靠近”（approach）一路，判定逻辑见 motion_state_engine.h
+// （基线 + 累计变化率 + 近期趋势 + 进出双边去抖）。原来的 TTC/运动状态一路已移除：
+// 危险与否只看 approach_alarm，快速靠近就上报危险（见 DangerAlertHandler）并画红框。
 struct MotionStateInfoRecord {
-    // ttc / ttc_danger 带默认值：现有 3 参构造调用点无需改动（增量兼容）
-    MotionStateInfoRecord(MotionState state_vec,
-                          MotionState state_acc,
-                          float       velocity,
-                          float       ttc        = -1.0f,
-                          bool        ttc_danger = false) :
-        state_vec(state_vec),
-        state_acc(state_acc),
-        velocity(velocity),
-        ttc(ttc),
-        ttc_danger(ttc_danger) {}
-
-    MotionState state_vec;
-    MotionState state_acc;
-    float       velocity;
-    float       ttc;  // 碰撞时间（秒）；-1 表示无效/静止/远离
-    bool ttc_danger;  // TTC 危险报警（引擎内延迟阻塞判定）；false 表示无报警
+    bool  approach_alarm       = false;  // 接近报警（已通过进入/退出双边去抖）
+    float approach_score       = 0.0f;   // 融合分数 = 0.4 * 深度分 + 0.6 * 尺度分
+    float approach_depth_score = 0.0f;   // 深度分（相对基线的累计降幅 / thr_depth）
+    float approach_scale_score = 0.0f;   // 尺度分（相对基线的框高累计增幅 / thr_height）
 };
 
 struct InferOutputContext {

@@ -56,35 +56,29 @@ ControlPanel::ControlPanel(MotionStateEngine &   motion_engine,
     };
 
     const std::vector<Param> params = {
-        { "ema_alpha",                 100, 0.0f, 0.01f, [this]() { return motion_engine_.getEmaAlpha(); },
+        // ---- 快速靠近检测（方案 d）关键阈值：与 pipeline.py 的 --approach-* 命令行一一对应 ----
+        { "approach_score_thr",      100, 0.0f, 0.01f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachScoreThr()); },
+         [this](float v) { motion_engine_.setApproachScoreThr(v); }     },
+        { "approach_confirm",        10,  1.0f, 1.0f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachConfirm()); },
          [this](float v) {
-              motion_engine_.setEmaAlpha(v);
-          } },
-        { "bbox_jump_ratio_threshold", 100, 0.0f, 0.01f,
-         [this]() { return motion_engine_.getBboxJumpRatioThreshold(); },
+              motion_engine_.setApproachConfirm(static_cast<int>(std::lround(v)));
+          }                                                             },
+        { "approach_thr_depth",      100, 0.0f, 0.01f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachThrDepth()); },
+         [this](float v) { motion_engine_.setApproachThrDepth(v); }     },
+        { "approach_thr_height",     100, 0.0f, 0.01f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachThrHeight()); },
+         [this](float v) { motion_engine_.setApproachThrHeight(v); }   },
+        { "approach_exit_score_thr", 100, 0.0f, 0.01f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachExitScoreThr()); },
+         [this](float v) { motion_engine_.setApproachExitScoreThr(v); } },
+        { "approach_exit_confirm",   10,  1.0f, 1.0f,
+         [this]() { return static_cast<float>(motion_engine_.getApproachExitConfirm()); },
          [this](float v) {
-              motion_engine_.setBboxJumpRatioThreshold(v);
-          } },
-        { "ttc_warn_threshold",        50,  0.0f, 1.0f,
-         [this]() { return motion_engine_.getTtcWarnThreshold(); },
-         [this](float v) {
-              motion_engine_.setTtcWarnThreshold(v);
-          } },
-        { "ttc_clear_threshold",       50,  0.0f, 1.0f,
-         [this]() { return motion_engine_.getTtcClearThreshold(); },
-         [this](float v) {
-              motion_engine_.setTtcClearThreshold(v);
-          } },
-        { "ttc_enter_frames",          10,  1.0f, 1.0f,
-         [this]() { return static_cast<float>(motion_engine_.getTtcEnterFrames()); },
-         [this](float v) {
-              motion_engine_.setTtcEnterFrames(static_cast<int>(std::lround(v)));
-          } },
-        { "ttc_exit_frames",           10,  1.0f, 1.0f,
-         [this]() { return static_cast<float>(motion_engine_.getTtcExitFrames()); },
-         [this](float v) {
-              motion_engine_.setTtcExitFrames(static_cast<int>(std::lround(v)));
-          } },
+              motion_engine_.setApproachExitConfirm(static_cast<int>(std::lround(v)));
+          }                                                             },
     };
 
     for (const auto & p : params) {

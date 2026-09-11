@@ -1,7 +1,6 @@
 #pragma once
 
 #include "config_manager.h"
-#include "danger_alert_handler.h"
 #include "motion_state_engine.h"
 #include "public.h"
 #include "STrack.h"
@@ -81,10 +80,9 @@ class DrawingManager {
     // 传入追踪器引用（或者颜色列表）以及类别名称列表，以便画图时获取颜色和名字
     DrawingManager(const std::vector<std::string> & class_names);
 
-    // 核心绘制函数，画框、文字、以及特殊状态的红叉
+    // 核心绘制函数：画框、文字，以及“快速靠近”危险目标的红色半透明高亮
     void drawTrackedObject(cv::Mat &                     img,
                            const STrack &                track,
-                           const AlertMessage &          alert_msg,
                            const MotionStateInfoRecord & motion,
                            cv::Scalar                    color_to_use);
 

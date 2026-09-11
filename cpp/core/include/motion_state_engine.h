@@ -1,181 +1,334 @@
 #pragma once
+// 运动/危险判定引擎 + 快速靠近（approach）检测
+//
+// 本文件分两部分：
+//   1) namespace approach：算法本体
+//        * SignalFilterBank            框高/深度的因果前置滤波（1€ / 卡尔曼 / 不过滤）
+//        * ApproachDetectorCumulative  方案 d 快速靠近判定（基线 + 累计变化 + 双边去抖）
+//        * assembleApproachUnits       接近单元装配（白名单 + 两轮车需载人的人车合并）
+//   2) MotionStateEngine：对外接口（配置 / 装配 / 逐帧判定 / 框内深度采样）
+//
+// 滤波器不自己实现，直接用现成的库：
+//   * 1€/one_euro -> 第三方库 casiez/OneEuroFilter（BSD-3-Clause），git submodule 于
+//                    third_party/OneEuroFilter，见 CMake 目标 one_euro_filter；
+//   * kalman      -> OpenCV cv::KalmanFilter（预测/更新/增益由 OpenCV 负责，这里只装配
+//                    状态模型 [值, 速度] 与 F/H/Q/R）；
+//   * none        -> 原值透传。
+//
+// 约定：
+//   * 逐帧在线计算，只依赖历史（因果），不做整段轨迹的回看或平滑；
+//   * 中位数取“上中位”、只统计 > 0 的样本、score 分母加 1e-3 下限，内部计算用 double；
+//   * 时间戳统一为秒（视频 = frame_id / fps；相机 = 系统时钟）；
+//   * 阈值默认值与 bin/config.yaml 的 motion_state_engine.approach 段一致（见 ConfigManager）：
+//       filter=one_euro, score_thr=0.45, confirm=3, thr_depth=0.15, thr_height=0.20,
+//       exit_score_thr=0.2, exit_confirm=3
+
 #include "frame.h"
+#include "OneEuroFilter.h"  // third_party/OneEuroFilter/cpp（CMake 目标 one_euro_filter 提供）
 #include "STrack.h"
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <map>
-#include <opencv2/core/mat.hpp>
-#include <opencv2/core/operations.hpp>
-#include <opencv2/core/types.hpp>
-#include <opencv2/opencv.hpp>
+#include <deque>
+#include <memory>
+#include <opencv2/core/mat.hpp>        // cv::Mat
+#include <opencv2/video/tracking.hpp>  // cv::KalmanFilter
+#include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
-const std::map<std::pair<MotionState, MotionState>, std::string> MOTION_STR_MAP = {
-    { { MotionState::STABLE, MotionState::CONSTANT },    "Stable"               },
-    { { MotionState::APPROACH, MotionState::ACCELE },    "Approach (Accele)"    },
-    { { MotionState::APPROACH, MotionState::DECELE },    "Approach (Decele)"    },
-    { { MotionState::APPROACH, MotionState::CONSTANT },  "Approach (Constant)"  },
-    { { MotionState::MOVE_AWAY, MotionState::ACCELE },   "Move Away (Accele)"   },
-    { { MotionState::MOVE_AWAY, MotionState::DECELE },   "Move Away (Decele)"   },
-    { { MotionState::MOVE_AWAY, MotionState::CONSTANT }, "Move Away (Constant)" },
+namespace approach {
+
+// [因果滤波] 1€ / 一维匀速卡尔曼：均为库实现，只依赖历史，供接近检测前置去噪
+
+// 1€ 滤波参数（当前采用的一组：低频截止 1Hz、beta 0.01、微分截止 1Hz）
+const double kOneEuroMinCutoff   = 1.0;
+const double kOneEuroBeta        = 0.01;
+const double kOneEuroDerivCutoff = 1.0;
+
+enum class FilterMode { NONE, ONE_EURO, KALMAN };
+
+// 解析配置字符串："none" / "one_euro" / "kalman"（大小写不敏感）
+FilterMode parseFilterMode(const std::string & name);
+
+const char * filterModeName(FilterMode mode);
+
+// 对每条 track 的框高 / 深度各自做因果滤波，供接近检测器前置使用。
+//   * one_euro 模式：casiez/OneEuroFilter 库对象，每条 track 的 height/depth 各一个；
+//   * kalman 模式：cv::KalmanFilter，2 状态 [值, 速度]，height 在 log 域滤波（更贴合指数增长）；
+//   * depth <= 0（无效）时不过滤，原值透传；
+//   * mode == NONE 时原值透传，不做任何平滑。
+// freq 仅作为“没有时间戳时”的采样频率估计；一旦调用方传入递增时间戳，
+// 库会按时间戳自行更新频率，因此默认 30Hz 只影响前两帧。
+class SignalFilterBank {
+  public:
+    explicit SignalFilterBank(FilterMode mode, double freq = 30.0);
+
+    void update(int      track_id,
+                double   height,
+                double   depth,
+                double   ts,
+                double & height_filtered,
+                double & depth_filtered);
+
+  private:
+    // 每条 track 的滤波状态：1€ 用库对象（unique_ptr：库对象持有内部指针、不可拷贝），
+    // kalman 用 cv::KalmanFilter + 首帧自动噪声估计所需的状态
+    struct TrackFilters {
+        explicit TrackFilters(double freq);
+
+        std::unique_ptr<OneEuroFilter> height_one_euro;
+        std::unique_ptr<OneEuroFilter> depth_one_euro;
+
+        cv::KalmanFilter height_kalman;  // 2 状态 [log(height), d log(height)/dt]
+        cv::KalmanFilter depth_kalman;   // 2 状态 [depth, d depth/dt]
+        bool             height_ready  = false;
+        bool             depth_ready = false;
+        double           height_q      = 0.0;  // 首帧按幅值估计的过程噪声（速度方差）
+        double           depth_q     = 0.0;
+        double           height_t      = 0.0;  // 上一次时间戳
+        double           depth_t     = 0.0;
+    };
+
+    // 一维匀速卡尔曼单步（cv::KalmanFilter 负责预测/更新/增益，这里只装配模型与 dt）
+    static double kalmanStep(cv::KalmanFilter & kf,
+                             bool &             ready,
+                             double &           q,
+                             double &           t_prev,
+                             double             z,
+                             double             t,
+                             bool               log_domain);
+
+    FilterMode                                             mode_;
+    double                                                 freq_;
+    std::unordered_map<int, std::unique_ptr<TrackFilters>> tracks_;
 };
 
-// 运动状态估计引擎：滤波与运动状态/TTC/报警判定分层。
-// 滤波层（computeStateImpl）只输出位置/速度/加速度与跳变标志，不做状态判定；
-// computeMotionStateFromBBox 依据 bbox 尺度做状态判定并计算 TTC——跳变帧与过小的
-// 尺度变化速度不产生有效 TTC（避免尺度突变污染、分母过小得到巨大假值），
-// TTC 危险报警按连续低/高帧数判定（延迟阻塞），防止阈值边界抖动。
+// [快速靠近检测] 方案 d：基线 + 累计变化率 + 近期趋势（持续判断，进出双边去抖）
+
+struct ApproachParams {
+    int    warmup         = 30;    // 基线攒帧数（前 warmup 帧必然无输出）
+    double thr_depth      = 0.20;  // 相对基线的深度降幅阈值（0.15 = 15%）
+    double thr_height     = 0.30;  // 相对基线的框高增幅阈值（0.20 = 20%）
+    int    recent_w       = 10;    // 近期趋势窗口长度（前后半窗各 recent_w/2）
+    double score_thr      = 0.60;  // 进入分数线
+    int    confirm        = 2;     // 进入需连续达标帧数
+    double exit_score_thr = 0.30;  // 退出分数线（<= 它或趋势消失计为退出证据）
+    int    exit_confirm   = 3;     // 退出需连续证据帧数
+};
+
+struct ApproachState {
+    bool  alarm         = false;  // 本帧接近报警（已通过双边迟滞去抖）
+    bool  alarm_started = false;  // 本帧为报警上升沿（未报警 -> 报警）
+    bool  alarm_cleared = false;  // 本帧为报警下降沿（报警 -> 解除）
+    float score         = 0.0f;   // 融合分数 = 0.4 * 深度分 + 0.6 * 尺度分
+    float depth_score   = 0.0f;   // 深度分（累计降幅 / thr_depth，截断 0~1）
+    float scale_score   = 0.0f;   // 尺度分（框高累计增幅 / thr_height，截断 0~1）
+    // 注：三项分数为“最近一次有效计算值”：
+    //     本帧窗口内无有效样本（如深度被滤波过冲到 <= 0）时保持上一帧分数，不归零。
+};
+
+// 逐帧在线判定“目标是否正在快速靠近”。
+//
+// 原理：先用轨迹前 warmup 帧攒基线（深度/框高的中位数，抗噪），之后每帧基于基线算累计变化：
+//         depth_drop  = (基线深度 - 当前深度) / 基线深度
+//         height_gain = 当前框高 / 基线框高 - 1
+//       并加“近期仍在靠近”的门控（最近 recent_w 帧内：深度后半窗 < 前半窗 且框高后半窗 >
+//       前半窗），保证只报“当前正在靠近”，而不是“曾经靠近过”。
+//
+// 进出判定（双边迟滞 + 去抖）：
+//       进入证据：趋势在靠近 且 score >= score_thr，连续 confirm 帧 -> 报警
+//       退出证据：趋势不再靠近 或 score <= exit_score_thr，连续 exit_confirm 帧 -> 解除
+//       中间态（分数介于两线之间且趋势未消失）：既不进也不退，保持当前状态，抗闪烁。
+//
+// 优点：中位数基线抗噪；后期才开始的靠近也能报；退出也要连续帧确认，单帧抖动不会让报警闪烁。
+// 缺点：前 warmup 帧必然无输出；基线质量依赖前 warmup 帧的稳定程度。
+class ApproachDetectorCumulative {
+  public:
+    explicit ApproachDetectorCumulative(const ApproachParams & params = ApproachParams());
+
+    // 逐帧更新。height = 目标框高（像素），depth = 框内有效深度（> 0 才有效），ts 单位秒
+    ApproachState update(int track_id, double height, double depth, double ts);
+
+    const ApproachParams & params() const { return params_; }
+
+    // 热更新（控制面板滑动条）：只改阈值/去抖帧数/窗口长度，不清空已累积的轨迹状态。
+    // 注意 warmup 改动只对之后新建立的轨迹（新 track id）生效。
+    void setWarmup(int value);
+    void setThrDepth(double value);
+    void setThrHeight(double value);
+    void setRecentW(int value);
+    void setScoreThr(double value);
+    void setConfirm(int value);
+    void setExitScoreThr(double value);
+    void setExitConfirm(int value);
+
+  private:
+    struct Sample {
+        double height = 0.0;
+        double depth  = 0.0;
+    };
+
+    struct TrackState {
+        std::vector<Sample> hist;  // 攒基线阶段的样本缓存
+        bool                has_baseline = false;
+        double              baseline_d   = 0.0;
+        double              baseline_h   = 0.0;
+        std::deque<Sample>  recent;           // 最近 recent_w 帧（height, depth）
+        int                 streak      = 0;  // 连续进入证据帧数
+        int                 exit_streak = 0;  // 连续退出证据帧数
+        bool                alarm       = false;
+        double              score       = 0.0;
+        double              depth_score = 0.0;
+        double              scale_score = 0.0;
+    };
+
+    // 中位数：先剔除 <= 0 / 非有限样本，排序后取上中位（len/2）；样本全无效返回 false
+    static bool medianPositive(const std::vector<double> & values, double & out);
+
+    static double clip01(double value);
+
+    // 把“最近一次有效计算”的三项分数写入输出（无有效窗口时保持上一帧值）
+    static void applyScores(const TrackState & state, ApproachState & out);
+
+    ApproachParams                      params_;
+    std::unordered_map<int, TrackState> tracks_;
+};
+
+// [接近单元装配] 报警白名单 + 两轮车需载人（人 + 车合并为外接大框）
+
+struct ApproachUnitConfig {
+    bool             use_units = true;       // false：每个 track 各自成单元（不做白名单/载人合并）
+    std::vector<int> alarm_class_ids;        // 报警白名单（不在内的类别不参与接近判定）
+    std::vector<int> two_wheeler_class_ids;  // 两轮车类别（自行车/摩托车）
+    std::vector<int> person_class_ids;       // 人类别（用于“载人”判定与合并，也可单独报警）
+    bool             require_rider = false;  // 【已停用】两轮车无论有无骑手都进接近单元
+    double           rider_iou     = 0.05;   // 人/车重合判定的 IoU 阈值
+    bool             merge_person  = true;   // 骑车人存在时把“人 + 两轮车”合并成外接大框
+};
+
+// 与类别无关的轻量输入（便于单测，不依赖 STrack）
+struct ApproachBoxInput {
+    int   track_id = -1;
+    int   class_id = -1;
+    float x        = 0.0f;
+    float y        = 0.0f;
+    float w        = 0.0f;
+    float h        = 0.0f;
+};
+
+struct ApproachUnit {
+    int   unit_id      = -1;     // 单元的 track id（载人两轮车取“两轮车”的 id）
+    int   class_id     = -1;
+    bool  merged_rider = false;  // 是否由“人 + 两轮车”外接大框合并而来
+    float x            = 0.0f;
+    float y            = 0.0f;
+    float w            = 0.0f;
+    float h            = 0.0f;
+
+    double area() const { return static_cast<double>(w) * static_cast<double>(h); }
+
+    std::vector<float> tlwh() const { return { x, y, w, h }; }
+};
+
+// 两 tlwh 框的 IoU
+double iouTlwh(const float a[4], const float b[4]);
+
+// inner 中心点是否落在（外扩 margin 的）outer 框内
+bool boxCenterIn(const float inner[4], const float outer[4], double margin = 0.15);
+
+// person 是否“在骑”两轮车 two_wheeler：
+// 人框竖长、车框横矮，IoU 通常很小，因此用多判据（满足其一即可）：
+// IoU / 人中心在车内 / 覆盖率（交叠 / 较小框）足够大。
+bool personRides(const float person[4], const float two_wheeler[4], double iou_thr = 0.05);
+
+// 按白名单与载人规则装配接近单元。
+// 单元规则：
+//   * 两轮车无论有无骑手都成单元；有骑手且允许合并时，人 + 车合并为外接大框，
+//     单元 id 取两轮车的 track id；
+//   * 行人始终单独成单元（即使已被两轮车认领合并，也保留自己的判定单元）。
+// 输出顺序：单目标（car/bus/truck）-> 两轮车 -> 行人。
+std::vector<ApproachUnit> assembleApproachUnits(const std::vector<ApproachBoxInput> & tracks,
+                                                const ApproachUnitConfig &            config);
+
+}  // namespace approach
+
+// [MotionStateEngine] 对外接口
+
+// 运动/危险判定引擎：只保留“快速靠近”（approach）一路（算法本体见上面的 namespace approach）：
+//   先用每条轨迹前 warmup 帧攒基线（深度/框高中位数），之后每帧算相对基线的累计变化率，
+//   并要求最近 recent_w 帧“仍在靠近”（深度降 + 框高涨）；进入报警需连续 confirm 帧达标，
+//   解除需连续 exit_confirm 帧出现退出证据（双边迟滞去抖）。
+// 判定只用“接近单元”的框高 + 框内深度，逐帧因果、可实时触发；结果写入
+// MotionStateInfoRecord::approach_*，快速靠近即视为危险目标（报警 + 画红框）。
+//
+// 说明：原先基于尺度/深度卡尔曼速度的“运动状态 + TTC”一路（含其配置项与控制面板滑动条）
+// 已按需求整体移除，危险判定不再使用 TTC。
 class MotionStateEngine {
   public:
-    MotionStateEngine(float velocity_threshold     = 5.0f,
-                      float acceleration_threshold = 1.5f,
-                      float velocity_hysteresis = 2.0f,  // 速度迟滞区间（解除线 = 触发线 - 迟滞）
-                      float acceleration_hysteresis  = 1.0f,  // 加速度迟滞区间
-                      float kf_process_noise_cov     = 2e-2f,
-                      float kf_measurement_noise_cov = 5e-2f,
-                      float min_scale_for_ttc = 20.0f,  // bbox 线性尺度下限（sqrt(w*h)）
-                      float min_velocity_for_ttc = 1.0f,  // 尺度变化速度下限：分母过小则 TTC 无意义
-                      float ema_alpha                 = 0.3f,
-                      float bbox_jump_ratio_threshold = 0.35f,  // 尺度变化异常阈值
-                      float ttc_warn_threshold        = 3.0f,   // TTC 报警触发阈值（秒）
-                      float ttc_clear_threshold = 4.0f,  // TTC 报警解除阈值（秒，须 >= warn）
-                      int ttc_enter_frames = 3,  // 连续低于 warn 帧数后触发报警（防抖）
-                      int ttc_exit_frames = 10);  // 连续高于 clear/无效帧数后才解除（阻塞）
+    MotionStateEngine() = default;
 
-    float getObjectDepth(cv::Mat depth, const STrack & track, cv::Size image_size);
-
+    // 框内鲁棒深度：缩进 20% 边界后网格采样，剔除两端 25% 后取中间 50% 的均值（截断均值）
     float computeMeanDepth(cv::Mat                    depth,
                            const std::vector<float> & tlwh,
                            int                        num_samples = 64) const;
 
   private:
-    // 纯滤波输出：只含滤波状态，不含运动状态判定
-    struct FilteredState {
-        float position     = 0.0f;  // 滤波后的位置（尺度/深度）
-        float velocity     = 0.0f;  // 卡尔曼估计速度
-        float acceleration = 0.0f;  // 卡尔曼估计加速度
-        bool is_large_jump = false;  // 本帧判为大跳变（速度/尺度不可信，TTC 应拒绝）
-        bool first_frame = false;  // 滤波器初始化帧（无历史，不做状态/TTC 判定）
-        bool valid       = true;   // 输入非法（<=0）时为 false
-    };
-
-    struct KalmanState {
-        cv::KalmanFilter kf;
-        double           last_timestamp;
-        bool             is_initialized;
-        float            ema_value            = 0.0f;
-        // 迟滞状态机需要记住上一帧的方向/加速度状态，才能实现"进入用触发线、解除用触发线-迟滞"
-        MotionState      prev_direction_state = MotionState::STABLE;
-        MotionState      prev_accel_state     = MotionState::CONSTANT;
-        // TTC 危险报警的延迟阻塞状态
-        int              ttc_low_frames       = 0;  // 连续 ttc < warn 的帧数（进入防抖）
-        int  ttc_high_frames = 0;  // 连续 ttc > clear 或无效的帧数（退出保持）
-        bool ttc_danger      = false;
-    };
-
-    // 公共卡尔曼滤波逻辑：位置/速度/加速度（纯滤波，不判定运动状态）
-    FilteredState computeMotionMetricImpl(int                                    track_id,
-                                          float                                  raw_value,
-                                          double                                 timestamp,
-                                          std::unordered_map<int, KalmanState> & kf_states);
-
-    // 运动状态判定（迟滞防抖）：读写 kf_states_ 内持久化的上一帧状态
-    void determineMotionStates(int                                    track_id,
-                               float                                  velocity,
-                               float                                  accel,
-                               MotionState &                          direction,
-                               MotionState &                          accel_state,
-                               std::unordered_map<int, KalmanState> & kf_states);
-
-    // TTC 危险报警（延迟阻塞）：连续低于 warn 帧数后触发，
-    // 连续高于 clear 或无效帧数后才解除；跳变帧（is_jump）中性处理，不参与计数
-    bool updateTtcDanger(int                                    track_id,
-                         float                                  ttc,
-                         bool                                   is_jump,
-                         std::unordered_map<int, KalmanState> & kf_states);
-
-    std::unordered_map<int, KalmanState> depth_kf_states_;
-    std::unordered_map<int, KalmanState> bbox_kf_states_;
-
-    float velocity_threshold_;
-    float acceleration_threshold_;
-    float velocity_hysteresis_;
-    float acceleration_hysteresis_;
-    float kf_process_noise_cov_;
-    float kf_measurement_noise_cov_;
-    float min_scale_for_ttc_;
-    float min_velocity_for_ttc_;
-    float ema_alpha_;
-    float bbox_jump_ratio_threshold_;
-    float ttc_warn_threshold_;
-    float ttc_clear_threshold_;
-    int   ttc_enter_frames_;
-    int   ttc_exit_frames_;
+    // 快速靠近检测（方案 d 检测器 + 可选因果滤波 + 接近单元装配配置）
+    // 默认关闭：只有 Pipeline 按 config 调用 configureApproach() 后才生效，
+    // 保证 benchmark 等未配置的调用点行为不变
+    bool                                        approach_enabled_ = false;
+    approach::ApproachDetectorCumulative        approach_detector_;
+    approach::ApproachUnitConfig                approach_unit_config_;
+    std::unique_ptr<approach::SignalFilterBank> approach_filter_bank_;
 
   public:
-    // 基于深度/视差计算运动状态、TTC 与 TTC 危险报警（TTC = 深度值/趋近速度）
-    MotionStateInfoRecord computeMotionStateFromDepth(int    track_id,
-                                                      float  raw_depth,
-                                                      double timestamp);
-    // 基于目标框尺度变化计算运动状态、TTC 与 TTC 危险报警
-    MotionStateInfoRecord computeMotionStateFromBBox(const STrack & track,
-                                                     double         timestamp,
-                                                     bool           use_muti_gated = false,
-                                                     float          raw_depth      = -1.0f);
+    // 快速靠近检测（方案 d）
+    // 配置一次即可（Pipeline 构造后按 config 调用）。filter_mode 为 none/one_euro/kalman，
+    // enabled=false 时整条路关闭（updateApproachState 直接返回未报警）。
+    void configureApproach(const approach::ApproachParams &     params,
+                           approach::FilterMode                 filter_mode,
+                           bool                                 enabled,
+                           const approach::ApproachUnitConfig & unit_config);
 
-    void setVelocityThreshold(float value) { velocity_threshold_ = std::max(0.0f, value); }
+    // 按“报警白名单 + 两轮车/行人装配规则”装配本帧的接近单元；
+    // 载人两轮车单元的 unit_id 取两轮车的 track id，行人各自单独成单元。
+    // 说明：单元装配与判定都只做几何/时序运算，不做任何整段轨迹回看（因果）。
+    std::vector<approach::ApproachUnit> assembleApproachUnits(
+        const std::vector<STrack> & tracks) const;
 
-    void setAccelerationThreshold(float value) { acceleration_threshold_ = std::max(0.0f, value); }
+    // 逐帧更新某个接近单元的判定。内部先按配置做 height/depth 因果滤波（若启用），
+    // 再跑方案 d 检测器；返回本帧的报警/分数（分数为最近一次有效计算值）。
+    //   height    : 单元框高（像素），来自 tlwh
+    //   raw_depth : 单元框内深度（computeMeanDepth；<= 0 表示无效，会原值透传不滤波）
+    //   timestamp : 秒（视频 = frame_id / fps；相机 = 系统时钟）
+    approach::ApproachState updateApproachState(int    unit_id,
+                                                float  height,
+                                                float  raw_depth,
+                                                double timestamp);
 
-    void setVelocityHysteresis(float value) { velocity_hysteresis_ = std::max(0.0f, value); }
+    // 参数读写（阈值可运行时热更新，供控制面板滑动条使用；warmup 只影响之后新建的轨迹）
+    double getApproachThrDepth() const { return approach_detector_.params().thr_depth; }
 
-    void setAccelerationHysteresis(float value) {
-        acceleration_hysteresis_ = std::max(0.0f, value);
-    }
+    void setApproachThrDepth(double value) { approach_detector_.setThrDepth(value); }
 
-    float getVelocityThreshold() const { return velocity_threshold_; }
+    double getApproachThrHeight() const { return approach_detector_.params().thr_height; }
 
-    float getAccelerationThreshold() const { return acceleration_threshold_; }
+    void setApproachThrHeight(double value) { approach_detector_.setThrHeight(value); }
 
-    float getVelocityHysteresis() const { return velocity_hysteresis_; }
+    double getApproachScoreThr() const { return approach_detector_.params().score_thr; }
 
-    float getAccelerationHysteresis() const { return acceleration_hysteresis_; }
+    void setApproachScoreThr(double value) { approach_detector_.setScoreThr(value); }
 
-    float getEmaAlpha() const { return ema_alpha_; }
+    int getApproachConfirm() const { return approach_detector_.params().confirm; }
 
-    float getBboxJumpRatioThreshold() const { return bbox_jump_ratio_threshold_; }
+    void setApproachConfirm(int value) { approach_detector_.setConfirm(value); }
 
-    void setEmaAlpha(float value) { ema_alpha_ = std::min(1.0f, std::max(0.0f, value)); }
+    double getApproachExitScoreThr() const { return approach_detector_.params().exit_score_thr; }
 
-    void setBboxJumpRatioThreshold(float value) {
-        bbox_jump_ratio_threshold_ = std::max(0.0f, value);
-    }
+    void setApproachExitScoreThr(double value) { approach_detector_.setExitScoreThr(value); }
 
-    void setTtcWarnThreshold(float value) {
-        ttc_warn_threshold_ = std::max(0.0f, value);
-        // warn 上调时联动抬高 clear，避免 warn > clear 导致报警永不解除
-        if (ttc_clear_threshold_ < ttc_warn_threshold_) {
-            ttc_clear_threshold_ = ttc_warn_threshold_;
-        }
-    }
+    int getApproachExitConfirm() const { return approach_detector_.params().exit_confirm; }
 
-    void setTtcClearThreshold(float value) {
-        ttc_clear_threshold_ = std::max(ttc_warn_threshold_, value);
-    }
-
-    float getTtcWarnThreshold() const { return ttc_warn_threshold_; }
-
-    float getTtcClearThreshold() const { return ttc_clear_threshold_; }
-
-    void setTtcEnterFrames(int value) { ttc_enter_frames_ = std::max(1, value); }
-
-    void setTtcExitFrames(int value) { ttc_exit_frames_ = std::max(1, value); }
-
-    int getTtcEnterFrames() const { return ttc_enter_frames_; }
-
-    int getTtcExitFrames() const { return ttc_exit_frames_; }
+    void setApproachExitConfirm(int value) { approach_detector_.setExitConfirm(value); }
 };

@@ -6,14 +6,15 @@
 #include <vector>
 
 struct AlertObjectData {
-    int   x;
-    int   y;
-    int   w;
-    int   h;
-    int   class_id;
-    int   track_id;
-    int   velocity;
-    float ttc;
+    int x;
+    int y;
+    int w;
+    int h;
+    int depth;
+    int class_id;
+    int track_id;
+    int velocity;  // 旧 TTC 路遗留字段：现已不做 TTC 估计，固定为 0（保持 JSON 兼容）
+    float ttc;  // 同上：固定为 -1（无效）
     bool  is_danger;
 };
 
@@ -32,6 +33,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlertObjectData,
                                    y,
                                    w,
                                    h,
+                                   depth,
                                    class_id,
                                    track_id,
                                    velocity,
@@ -39,8 +41,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlertObjectData,
                                    is_danger)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlertMessage, timestamp, frame_id, img_w, img_h, objects)
 
-// 危险报警处理器：危险判定（TTC 阈值 + 延迟阻塞）已由 MotionStateEngine 在计算 TTC 时
-// 完成（见 MotionStateInfoRecord::ttc_danger），本类只负责小目标过滤与报警消息组装。
+// 危险报警处理器：危险判定（“快速靠近”approach）已由 MotionStateEngine 完成
+// （见 MotionStateInfoRecord::approach_alarm 与 approach_detector.h），本类只负责
+// 小目标过滤与报警消息组装：快速靠近的目标即 is_danger=true 上报。
 class DangerAlertHandler {
   public:
     explicit DangerAlertHandler(const ConfigManager & config);

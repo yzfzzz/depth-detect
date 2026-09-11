@@ -17,14 +17,12 @@
 struct TrackRecord {
     int   frame_id;
     int   class_id;
+    float x;  // bbox 左上角 x
+    float w;  // bbox 宽
+    float y;  // bbox 左上角 y
+    float h;  // bbox 高
     float area;
     float raw_depth;
-    float depth_velocity;
-    float bbox_velocity;
-    float depth_ttc;
-    bool  depth_ttc_danger;
-    float bbox_ttc;
-    bool  bbox_ttc_danger;
 };
 
 // TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog

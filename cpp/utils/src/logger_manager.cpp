@@ -126,8 +126,7 @@ void LoggerManager::saveTrackCsv(
         return;
     }
 
-    out << "track_id,frame_id,class_id,area,raw_depth,"
-           "depth_velocity,bbox_velocity,depth_ttc,depth_ttc_danger,bbox_ttc,bbox_ttc_danger\n";
+    out << "track_id,frame_id,class_id,x,w,y,h,area,raw_depth\n";
 
     // unordered_map 无序，按 track_id 排序后输出，保证结果可复现、便于阅读
     std::vector<int> ids;
@@ -138,10 +137,8 @@ void LoggerManager::saveTrackCsv(
     std::sort(ids.begin(), ids.end());
     for (const int id : ids) {
         for (const auto & r : track_log.at(id)) {
-            out << id << ',' << r.frame_id << ',' << r.class_id << ',' << r.area << ','
-                << r.raw_depth << ',' << r.depth_velocity << ',' << r.bbox_velocity << ','
-                << r.depth_ttc << ',' << (r.depth_ttc_danger ? 1 : 0) << ',' << r.bbox_ttc << ','
-                << (r.bbox_ttc_danger ? 1 : 0) << '\n';
+            out << id << ',' << r.frame_id << ',' << r.class_id << ',' << r.x << ',' << r.w << ','
+                << r.y << ',' << r.h << ',' << r.area << ',' << r.raw_depth << '\n';
         }
     }
     out.close();
@@ -173,13 +170,17 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     }
     APP_INFO("  [depth] depth_interval: {}", config.getDepthInterval());
 
-    // motion_state_engine
-    APP_INFO("  [motion_state_engine] velocity_threshold: {}", config.getMotionVelocityThreshold());
-    APP_INFO("  [motion_state_engine] acceleration_threshold: {}",
-             config.getMotionAccelerationThreshold());
-    APP_INFO("  [motion_state_engine] kf_process_noise_cov: {}", config.getKfProcessNoiseCov());
-    APP_INFO("  [motion_state_engine] kf_measurement_noise_cov: {}",
-             config.getKfMeasurementNoiseCov());
+    // motion_state_engine：快速靠近（approach）检测参数（原 TTC/运动状态一路已移除）
+    APP_INFO("  [motion_state_engine.approach] enabled: {}", config.isApproachEnabled());
+    APP_INFO("  [motion_state_engine.approach] filter: {}", config.getApproachFilterMode());
+    APP_INFO("  [motion_state_engine.approach] warmup/recent_w: {}/{}", config.getApproachWarmup(),
+             config.getApproachRecentW());
+    APP_INFO("  [motion_state_engine.approach] thr_depth/thr_height: {}/{}",
+             config.getApproachThrDepth(), config.getApproachThrHeight());
+    APP_INFO("  [motion_state_engine.approach] score_thr/confirm: {}/{}",
+             config.getApproachScoreThr(), config.getApproachConfirm());
+    APP_INFO("  [motion_state_engine.approach] exit_score_thr/exit_confirm: {}/{}",
+             config.getApproachExitScoreThr(), config.getApproachExitConfirm());
 
     // danger_alert
     APP_INFO("  [danger_alert] is_filter_small_objects: {}", config.isFilterSmallObjectsEnabled());
