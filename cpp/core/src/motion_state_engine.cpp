@@ -20,10 +20,6 @@ const double kMinLogValue = 1e-6;
 // 保证 thr_depth / thr_height 配 0 时 score 只会在 0/1 之间跳变，不会产生 inf/NaN
 const double kMinThreshold = 1e-3;
 
-bool containsId(const std::vector<int> & ids, int class_id) {
-    return std::find(ids.begin(), ids.end(), class_id) != ids.end();
-}
-
 // 二维小矩阵装配工具（cv::KalmanFilter 负责预测/更新/增益，这里只填 F/H/Q/R 等矩阵）
 cv::Mat mat2x2(double a00, double a01, double a10, double a11) {
     cv::Mat m          = cv::Mat::zeros(2, 2, CV_64F);
@@ -374,205 +370,15 @@ void ApproachDetectorCumulative::applyScores(const TrackState & state, ApproachS
     out.scale_score = static_cast<float>(state.scale_score);
 }
 
-// [接近单元装配] 报警白名单 + 两轮车需载人（人 + 车合并为外接大框）
-
-double iouTlwh(const float a[4], const float b[4]) {
-    const double ax1 = a[0];
-    const double ay1 = a[1];
-    const double ax2 = a[0] + a[2];
-    const double ay2 = a[1] + a[3];
-    const double bx1 = b[0];
-    const double by1 = b[1];
-    const double bx2 = b[0] + b[2];
-    const double by2 = b[1] + b[3];
-
-    const double x1    = std::max(ax1, bx1);
-    const double y1    = std::max(ay1, by1);
-    const double x2    = std::min(ax2, bx2);
-    const double y2    = std::min(ay2, by2);
-    const double inter = std::max(0.0, x2 - x1) * std::max(0.0, y2 - y1);
-    if (inter <= 0.0) {
-        return 0.0;
-    }
-    const double uni = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter;
-    return uni > 0.0 ? inter / uni : 0.0;
-}
-
-bool boxCenterIn(const float inner[4], const float outer[4], double margin) {
-    const double cx = inner[0] + 0.5 * inner[2];
-    const double cy = inner[1] + 0.5 * inner[3];
-    const double dx = margin * outer[2];
-    const double dy = margin * outer[3];
-
-    const double ox1 = outer[0];
-    const double oy1 = outer[1];
-    const double ox2 = outer[0] + outer[2];
-    const double oy2 = outer[1] + outer[3];
-    return ox1 - dx <= cx && cx <= ox2 + dx && oy1 - dy <= cy && cy <= oy2 + dy;
-}
-
-bool personRides(const float person[4], const float two_wheeler[4], double iou_thr) {
-    const double px1 = person[0];
-    const double py1 = person[1];
-    const double px2 = person[0] + person[2];
-    const double py2 = person[1] + person[3];
-    const double tx1 = two_wheeler[0];
-    const double ty1 = two_wheeler[1];
-    const double tx2 = two_wheeler[0] + two_wheeler[2];
-    const double ty2 = two_wheeler[1] + two_wheeler[3];
-
-    const double ix1   = std::max(px1, tx1);
-    const double iy1   = std::max(py1, ty1);
-    const double ix2   = std::min(px2, tx2);
-    const double iy2   = std::min(py2, ty2);
-    const double inter = std::max(0.0, ix2 - ix1) * std::max(0.0, iy2 - iy1);
-    if (inter <= 0.0) {
-        return false;
-    }
-    if (iouTlwh(person, two_wheeler) >= iou_thr) {
-        return true;
-    }
-    if (boxCenterIn(person, two_wheeler)) {
-        return true;
-    }
-    // 人框竖长、车框横矮，IoU 很小：用“覆盖率（交叠 / 较小框）”兜底
-    const double person_area = std::max((px2 - px1) * (py2 - py1), 1e-6);
-    const double bike_area   = std::max((tx2 - tx1) * (ty2 - ty1), 1e-6);
-    return inter / std::min(person_area, bike_area) >= 0.25;
-}
-
-std::vector<ApproachUnit> assembleApproachUnits(const std::vector<ApproachBoxInput> & tracks,
-                                                const ApproachUnitConfig &            config) {
-    struct Entry {
-        Entry(int id, int cls, const float box_in[4]) : track_id(id), class_id(cls) {
-            for (int i = 0; i < 4; ++i) {
-                box[i] = box_in[i];
-            }
-        }
-
-        int   track_id;
-        int   class_id;
-        float box[4];
-    };
-
-    auto makeUnit = [](const Entry & entry, bool merged_rider) {
-        ApproachUnit unit;
-        unit.unit_id      = entry.track_id;
-        unit.class_id     = entry.class_id;
-        unit.merged_rider = merged_rider;
-        unit.x            = entry.box[0];
-        unit.y            = entry.box[1];
-        unit.w            = entry.box[2];
-        unit.h            = entry.box[3];
-        return unit;
-    };
-
-    std::vector<ApproachUnit> units;
-    units.reserve(tracks.size());
-
-    // use_units == false：不做白名单与载人合并，每个有效目标各自成单元（调试/对比用）
-    if (!config.use_units) {
-        for (const ApproachBoxInput & track : tracks) {
-            if (track.w <= 0.0f || track.h <= 0.0f) {
-                continue;
-            }
-            ApproachUnit unit;
-            unit.unit_id  = track.track_id;
-            unit.class_id = track.class_id;
-            unit.x        = track.x;
-            unit.y        = track.y;
-            unit.w        = track.w;
-            unit.h        = track.h;
-            units.push_back(unit);
-        }
-        return units;
-    }
-
-    // 报警白名单为空 => 不限制类别（便于未配置类别映射时仍能工作）
-    const bool check_whitelist = !config.alarm_class_ids.empty();
-
-    std::vector<Entry> persons;       // 人（用于载人判定，未认领时也可单独报警）
-    std::vector<Entry> two_wheelers;  // 两轮车（自行车/摩托车）
-    std::vector<Entry> singles;       // 其它白名单类别（轿车/公交/卡车等）
-
-    for (const ApproachBoxInput & track : tracks) {
-        if (track.w <= 0.0f || track.h <= 0.0f) {
-            continue;
-        }
-        if (check_whitelist && !containsId(config.alarm_class_ids, track.class_id)) {
-            continue;  // 不在白名单的类别不参与报警
-        }
-        const float box[4] = { track.x, track.y, track.w, track.h };
-        if (containsId(config.person_class_ids, track.class_id)) {
-            persons.push_back(Entry(track.track_id, track.class_id, box));
-        } else if (containsId(config.two_wheeler_class_ids, track.class_id)) {
-            two_wheelers.push_back(Entry(track.track_id, track.class_id, box));
-        } else {
-            singles.push_back(Entry(track.track_id, track.class_id, box));
-        }
-    }
-
-    // 第一遍：单目标直接成单元
-    for (const Entry & entry : singles) {
-        units.push_back(makeUnit(entry, false));
-    }
-
-    // 第二遍：两轮车找骑车人（取 IoU 最大且未被认领的），载人则合并为外接大框
-    std::vector<bool> person_claimed(persons.size(), false);
-    for (const Entry & bike : two_wheelers) {
-        int    rider_index = -1;
-        double rider_iou   = -1.0;
-        for (size_t i = 0; i < persons.size(); ++i) {
-            if (person_claimed[i] || !personRides(persons[i].box, bike.box, config.rider_iou)) {
-                continue;
-            }
-            const double iou = iouTlwh(bike.box, persons[i].box);
-            if (rider_index < 0 || iou > rider_iou) {
-                rider_index = static_cast<int>(i);
-                rider_iou   = iou;
-            }
-        }
-
-        // 有人骑且允许合并：人 + 车合并为外接大框，单元 id 取两轮车的 track id
-        // （人框随后仍会单独成单元，见下方第三遍）
-        if (rider_index >= 0 && config.merge_person) {
-            person_claimed[static_cast<size_t>(rider_index)] = true;
-            const Entry & rider = persons[static_cast<size_t>(rider_index)];
-
-            Entry merged  = bike;
-            merged.box[0] = std::min(bike.box[0], rider.box[0]);
-            merged.box[1] = std::min(bike.box[1], rider.box[1]);
-            merged.box[2] =
-                std::max(bike.box[0] + bike.box[2], rider.box[0] + rider.box[2]) - merged.box[0];
-            merged.box[3] =
-                std::max(bike.box[1] + bike.box[3], rider.box[1] + rider.box[3]) - merged.box[1];
-            units.push_back(makeUnit(merged, true));
-            continue;
-        }
-
-        // 两轮车无论有没有骑手都进接近单元（require_rider 规则已停用）
-        units.push_back(makeUnit(bike, false));
-    }
-
-    // 第三遍：行人各自单独成单元（即使已被两轮车认领合并，也保留自己的判定）
-    for (size_t i = 0; i < persons.size(); ++i) {
-        units.push_back(makeUnit(persons[i], false));
-    }
-
-    return units;
-}
-
 }  // namespace approach
 
 // [MotionStateEngine] 对外接口
 
-void MotionStateEngine::configureApproach(const approach::ApproachParams &     params,
-                                          approach::FilterMode                 filter_mode,
-                                          bool                                 enabled,
-                                          const approach::ApproachUnitConfig & unit_config) {
-    approach_enabled_     = enabled;
-    approach_unit_config_ = unit_config;
-    approach_detector_    = approach::ApproachDetectorCumulative(params);
+void MotionStateEngine::configureApproach(const approach::ApproachParams & params,
+                                          approach::FilterMode            filter_mode,
+                                          bool                            enabled) {
+    approach_enabled_  = enabled;
+    approach_detector_ = approach::ApproachDetectorCumulative(params);
     approach_filter_bank_.reset();
 
     if (!approach_enabled_) {
@@ -584,39 +390,13 @@ void MotionStateEngine::configureApproach(const approach::ApproachParams &     p
     }
     APP_INFO(
         "[Approach] enabled: filter={}, warmup={}, thr_depth={:.3f}, thr_height={:.3f}, "
-        "recent_w={}, score_thr={:.3f}, confirm={}, exit_score_thr={:.3f}, exit_confirm={}, "
-        "use_units={}, require_rider={}, rider_iou={:.3f}, merge_person={}",
+        "recent_w={}, score_thr={:.3f}, confirm={}, exit_score_thr={:.3f}, exit_confirm={}",
         approach::filterModeName(filter_mode), params.warmup, params.thr_depth, params.thr_height,
         params.recent_w, params.score_thr, params.confirm, params.exit_score_thr,
-        params.exit_confirm, unit_config.use_units, unit_config.require_rider,
-        unit_config.rider_iou, unit_config.merge_person);
+        params.exit_confirm);
 }
 
-std::vector<approach::ApproachUnit> MotionStateEngine::assembleApproachUnits(
-    const std::vector<STrack> & tracks) const {
-    if (!approach_enabled_) {
-        return std::vector<approach::ApproachUnit>();
-    }
-
-    std::vector<approach::ApproachBoxInput> boxes;
-    boxes.reserve(tracks.size());
-    for (const STrack & track : tracks) {
-        if (track.tlwh_.size() < 4) {
-            continue;
-        }
-        approach::ApproachBoxInput box;
-        box.track_id = track.track_id_;
-        box.class_id = track.class_id_;
-        box.x        = track.tlwh_[0];
-        box.y        = track.tlwh_[1];
-        box.w        = track.tlwh_[2];
-        box.h        = track.tlwh_[3];
-        boxes.push_back(box);
-    }
-    return approach::assembleApproachUnits(boxes, approach_unit_config_);
-}
-
-approach::ApproachState MotionStateEngine::updateApproachState(int    unit_id,
+approach::ApproachState MotionStateEngine::updateApproachState(int    track_id,
                                                                float  height,
                                                                float  raw_depth,
                                                                double timestamp) {
@@ -629,20 +409,20 @@ approach::ApproachState MotionStateEngine::updateApproachState(int    unit_id,
     double height_filtered = height;
     double depth_filtered  = raw_depth;
     if (approach_filter_bank_) {
-        approach_filter_bank_->update(unit_id, height, raw_depth, timestamp, height_filtered,
+        approach_filter_bank_->update(track_id, height, raw_depth, timestamp, height_filtered,
                                       depth_filtered);
     }
 
-    state = approach_detector_.update(unit_id, height_filtered, depth_filtered, timestamp);
+    state = approach_detector_.update(track_id, height_filtered, depth_filtered, timestamp);
 
     // 报警边沿打日志（上升沿 / 下降沿各一条）
     if (state.alarm_started) {
         APP_INFO(
             "[Approach] track {} alarm triggered: score={:.3f} depth_score={:.3f} "
             "scale_score={:.3f}",
-            unit_id, state.score, state.depth_score, state.scale_score);
+            track_id, state.score, state.depth_score, state.scale_score);
     } else if (state.alarm_cleared) {
-        APP_INFO("[Approach] track {} alarm cleared: score={:.3f}", unit_id, state.score);
+        APP_INFO("[Approach] track {} alarm cleared: score={:.3f}", track_id, state.score);
     }
     return state;
 }

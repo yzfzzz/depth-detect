@@ -56,6 +56,17 @@ class Pipeline {
         return false;
     }
 
+    // 参与快速靠近（approach）判定的类别：bicycle/car/motorcycle/bus/truck
+    // person 只跟踪、不参与接近判定（人车各自独立，不合并）
+    bool isApproachClass(int class_id) {
+        for (auto & c : approach_classes_) {
+            if (class_id == c) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     BYTETracker       tracker_;
     MotionStateEngine motion_state_engine_;
 
@@ -67,12 +78,12 @@ class Pipeline {
     bool                                              track_log_enabled_ = false;
     std::string                                       track_log_path_;
     std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
-    // 需要跟踪的类别，可以根据自己需求调整，筛选自己想要跟踪的对象的种类（以下对应COCO数据集类别索引）
-    // 注意 person=0 必须在列表里：两轮车（含摩托车）的“载人”判定要靠 person 框与车框重合，
-    // 漏掉 0 会导致 tracker 不输出任何行人，require_rider 永远不成立 -> 两轮车/行人全部不参与报警
+    // 需要跟踪的类别（对应 COCO 数据集类别索引）：person 也跟踪，但不做接近判定
     std::vector<int>                                  track_classes_{
         0, 1, 2, 3, 5, 7
     };  // person, bicycle, car, motorcycle, bus, truck
+    // 参与接近判定的类别：bicycle, car, motorcycle, bus, truck
+    std::vector<int> approach_classes_{ 1, 2, 3, 5, 7 };
 
     bool is_normalize_ = false;
 };

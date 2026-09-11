@@ -5,8 +5,9 @@
 //   1) namespace approach：算法本体
 //        * SignalFilterBank            框高/深度的因果前置滤波（1€ / 卡尔曼 / 不过滤）
 //        * ApproachDetectorCumulative  方案 d 快速靠近判定（基线 + 累计变化 + 双边去抖）
-//        * assembleApproachUnits       接近单元装配（白名单 + 两轮车需载人的人车合并）
-//   2) MotionStateEngine：对外接口（配置 / 装配 / 逐帧判定 / 框内深度采样）
+//   2) MotionStateEngine：对外接口（配置 / 逐帧判定 / 框内深度采样）
+//
+// 接近判定按 track 逐个进行（人/车各自独立，不做任何合并），由调用方负责类别筛选。
 //
 // 滤波器不自己实现，直接用现成的库：
 //   * 1€/one_euro -> 第三方库 casiez/OneEuroFilter（BSD-3-Clause），git submodule 于
@@ -195,62 +196,6 @@ class ApproachDetectorCumulative {
     std::unordered_map<int, TrackState> tracks_;
 };
 
-// [接近单元装配] 报警白名单 + 两轮车需载人（人 + 车合并为外接大框）
-
-struct ApproachUnitConfig {
-    bool             use_units = true;       // false：每个 track 各自成单元（不做白名单/载人合并）
-    std::vector<int> alarm_class_ids;        // 报警白名单（不在内的类别不参与接近判定）
-    std::vector<int> two_wheeler_class_ids;  // 两轮车类别（自行车/摩托车）
-    std::vector<int> person_class_ids;       // 人类别（用于“载人”判定与合并，也可单独报警）
-    bool             require_rider = false;  // 【已停用】两轮车无论有无骑手都进接近单元
-    double           rider_iou     = 0.05;   // 人/车重合判定的 IoU 阈值
-    bool             merge_person  = true;   // 骑车人存在时把“人 + 两轮车”合并成外接大框
-};
-
-// 与类别无关的轻量输入（便于单测，不依赖 STrack）
-struct ApproachBoxInput {
-    int   track_id = -1;
-    int   class_id = -1;
-    float x        = 0.0f;
-    float y        = 0.0f;
-    float w        = 0.0f;
-    float h        = 0.0f;
-};
-
-struct ApproachUnit {
-    int   unit_id      = -1;     // 单元的 track id（载人两轮车取“两轮车”的 id）
-    int   class_id     = -1;
-    bool  merged_rider = false;  // 是否由“人 + 两轮车”外接大框合并而来
-    float x            = 0.0f;
-    float y            = 0.0f;
-    float w            = 0.0f;
-    float h            = 0.0f;
-
-    double area() const { return static_cast<double>(w) * static_cast<double>(h); }
-
-    std::vector<float> tlwh() const { return { x, y, w, h }; }
-};
-
-// 两 tlwh 框的 IoU
-double iouTlwh(const float a[4], const float b[4]);
-
-// inner 中心点是否落在（外扩 margin 的）outer 框内
-bool boxCenterIn(const float inner[4], const float outer[4], double margin = 0.15);
-
-// person 是否“在骑”两轮车 two_wheeler：
-// 人框竖长、车框横矮，IoU 通常很小，因此用多判据（满足其一即可）：
-// IoU / 人中心在车内 / 覆盖率（交叠 / 较小框）足够大。
-bool personRides(const float person[4], const float two_wheeler[4], double iou_thr = 0.05);
-
-// 按白名单与载人规则装配接近单元。
-// 单元规则：
-//   * 两轮车无论有无骑手都成单元；有骑手且允许合并时，人 + 车合并为外接大框，
-//     单元 id 取两轮车的 track id；
-//   * 行人始终单独成单元（即使已被两轮车认领合并，也保留自己的判定单元）。
-// 输出顺序：单目标（car/bus/truck）-> 两轮车 -> 行人。
-std::vector<ApproachUnit> assembleApproachUnits(const std::vector<ApproachBoxInput> & tracks,
-                                                const ApproachUnitConfig &            config);
-
 }  // namespace approach
 
 // [MotionStateEngine] 对外接口
@@ -259,8 +204,9 @@ std::vector<ApproachUnit> assembleApproachUnits(const std::vector<ApproachBoxInp
 //   先用每条轨迹前 warmup 帧攒基线（深度/框高中位数），之后每帧算相对基线的累计变化率，
 //   并要求最近 recent_w 帧“仍在靠近”（深度降 + 框高涨）；进入报警需连续 confirm 帧达标，
 //   解除需连续 exit_confirm 帧出现退出证据（双边迟滞去抖）。
-// 判定只用“接近单元”的框高 + 框内深度，逐帧因果、可实时触发；结果写入
-// MotionStateInfoRecord::approach_*，快速靠近即视为危险目标（报警 + 画红框）。
+// 判定逐 track 独立进行：人/车各自用自己的框高 + 框内深度，不做任何合并；
+// 哪些类别参与判定由调用方筛选（pipeline 只送 bicycle/car/motorcycle/bus/truck）。
+// 结果写入 MotionStateInfoRecord::approach_*，快速靠近即视为危险目标（报警 + 画红框）。
 //
 // 说明：原先基于尺度/深度卡尔曼速度的“运动状态 + TTC”一路（含其配置项与控制面板滑动条）
 // 已按需求整体移除，危险判定不再使用 TTC。
@@ -274,35 +220,27 @@ class MotionStateEngine {
                            int                        num_samples = 64) const;
 
   private:
-    // 快速靠近检测（方案 d 检测器 + 可选因果滤波 + 接近单元装配配置）
+    // 快速靠近检测（方案 d 检测器 + 可选因果滤波）
     // 默认关闭：只有 Pipeline 按 config 调用 configureApproach() 后才生效，
     // 保证 benchmark 等未配置的调用点行为不变
     bool                                        approach_enabled_ = false;
     approach::ApproachDetectorCumulative        approach_detector_;
-    approach::ApproachUnitConfig                approach_unit_config_;
     std::unique_ptr<approach::SignalFilterBank> approach_filter_bank_;
 
   public:
     // 快速靠近检测（方案 d）
     // 配置一次即可（Pipeline 构造后按 config 调用）。filter_mode 为 none/one_euro/kalman，
     // enabled=false 时整条路关闭（updateApproachState 直接返回未报警）。
-    void configureApproach(const approach::ApproachParams &     params,
-                           approach::FilterMode                 filter_mode,
-                           bool                                 enabled,
-                           const approach::ApproachUnitConfig & unit_config);
+    void configureApproach(const approach::ApproachParams & params,
+                           approach::FilterMode            filter_mode,
+                           bool                            enabled);
 
-    // 按“报警白名单 + 两轮车/行人装配规则”装配本帧的接近单元；
-    // 载人两轮车单元的 unit_id 取两轮车的 track id，行人各自单独成单元。
-    // 说明：单元装配与判定都只做几何/时序运算，不做任何整段轨迹回看（因果）。
-    std::vector<approach::ApproachUnit> assembleApproachUnits(
-        const std::vector<STrack> & tracks) const;
-
-    // 逐帧更新某个接近单元的判定。内部先按配置做 height/depth 因果滤波（若启用），
+    // 逐帧更新某个 track 的判定。内部先按配置做 height/depth 因果滤波（若启用），
     // 再跑方案 d 检测器；返回本帧的报警/分数（分数为最近一次有效计算值）。
-    //   height    : 单元框高（像素），来自 tlwh
-    //   raw_depth : 单元框内深度（computeMeanDepth；<= 0 表示无效，会原值透传不滤波）
+    //   height    : 该 track 的框高（像素），来自 tlwh
+    //   raw_depth : 该 track 框内深度（computeMeanDepth；<= 0 表示无效，会原值透传不滤波）
     //   timestamp : 秒（视频 = frame_id / fps；相机 = 系统时钟）
-    approach::ApproachState updateApproachState(int    unit_id,
+    approach::ApproachState updateApproachState(int    track_id,
                                                 float  height,
                                                 float  raw_depth,
                                                 double timestamp);

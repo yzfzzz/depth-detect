@@ -17,14 +17,6 @@ double durationMs(const std::chrono::steady_clock::time_point & begin,
                   const std::chrono::steady_clock::time_point & end) {
     return std::chrono::duration<double, std::milli>(end - begin).count();
 }
-
-// 接近单元框是否就是该目标自身的框：未做“人 + 两轮车”合并时，单元框是 track.tlwh_ 的原样拷贝，
-// 此时两处深度采样可以共用一次（框不同则必须各采各的）
-bool isSameBox(const approach::ApproachUnit & unit, const std::vector<float> & tlwh) {
-    return unit.x == tlwh[0] && unit.y == tlwh[1] && unit.w == tlwh[2] && unit.h == tlwh[3];
-}
-
-
 }  // namespace
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
@@ -44,15 +36,6 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
     approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
 
-    approach::ApproachUnitConfig approach_units;
-    approach_units.use_units             = config_manager.isApproachUseUnits();
-    approach_units.alarm_class_ids       = config_manager.getApproachAlarmClassIds();
-    approach_units.two_wheeler_class_ids = config_manager.getApproachTwoWheelerClassIds();
-    approach_units.person_class_ids      = config_manager.getApproachPersonClassIds();
-    approach_units.require_rider         = config_manager.isApproachRequireRider();
-    approach_units.rider_iou             = config_manager.getApproachRiderIou();
-    approach_units.merge_person          = config_manager.isApproachMergePerson();
-
     // filter 字符串 -> 枚举；未识别的取值回落到 none 并告警（避免静默改变行为）
     const std::string    filter_name = config_manager.getApproachFilterMode();
     approach::FilterMode filter_mode = approach::parseFilterMode(filter_name);
@@ -60,7 +43,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
         APP_WARN("Unknown approach filter '{}', fallback to none", filter_name);
     }
     motion_state_engine_.configureApproach(approach_params, filter_mode,
-                                           config_manager.isApproachEnabled(), approach_units);
+                                           config_manager.isApproachEnabled());
 
     // 是否加载深度模型由 config 的 depth.enabled 控制
     if (config_manager.isDepthEnabled()) {
@@ -179,43 +162,29 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         }
     }
 
-    // ---- 快速靠近（approach）检测：先装配“接近单元”，判定并入下面的逐目标循环 ----
-    // 接近单元 = 报警白名单内的目标；两轮车检测到骑车人时用“人 + 车外接大框”作为一个单元，
-    // 未被认领的行人单独成单元（与 pipeline.py log_track 的装配规则一致）。
-    // 判定只用单元框面积 + 框内深度，逐帧因果、可实时触发；该判定即危险依据（不再有 TTC）。
-    // 单元 id 一定是某个目标的 track id，因此按 unit_id -> 单元 建表后可在同一个循环里判定：
-    // 每个 unit_id 每帧仍恰好更新一次（检测器状态按 id 独立，与循环顺序无关）。
-    const std::vector<approach::ApproachUnit> approach_units =
-        motion_state_engine_.assembleApproachUnits(infer_output_context.tracked_objects);
-    std::unordered_map<int, const approach::ApproachUnit *> unit_by_id;
-    unit_by_id.reserve(approach_units.size());
-    for (const approach::ApproachUnit & unit : approach_units) {
-        unit_by_id[unit.unit_id] = &unit;  // 指向本帧的 approach_units，循环内始终有效
-    }
-
+    // ---- 快速靠近（approach）检测：逐 track 独立判定，人/车不合并 ----
+    // 参与判定的类别只有 bicycle/car/motorcycle/bus/truck（person 只跟踪不判定）。
+    // 每个 track 用自己的框高 + 框内深度送进 updateApproachState，
+    // 逐帧因果、可实时触发；该判定即危险依据（不再有 TTC）。
     for (auto & track : infer_output_context.tracked_objects) {
-        const auto                     unit_it = unit_by_id.find(track.track_id_);
-        const approach::ApproachUnit * unit =
-            (unit_it == unit_by_id.end()) ? nullptr : unit_it->second;
-
-        // 1) 快速靠近判定：用“单元框”算框高与深度（载人两轮车 = 人车外接大框）。
-        //    该判定不受下面的小目标过滤影响（与 pipeline.py 一致：白名单内的目标照样判接近）。
         approach::ApproachState approach_state;
         bool                    has_approach = false;
-        float                   unit_depth   = 0.0f;
-        if (unit != nullptr) {
+        float                   depth        = 0.0f;
+
+        if (isApproachClass(track.class_id_)) {
+            // 框内鲁棒深度估计（深度不可用时为 0，检测器视为无效值）
             if (!depth_metric.empty()) {
-                // 两者都是框内鲁棒深度估计
-                unit_depth = motion_state_engine_.computeMeanDepth(depth_metric, unit->tlwh());
-                track.distance_ = unit_depth;
+                depth           = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+                track.distance_ = depth;
             }
+            // 目标框高度 + 框内深度 -> 逐帧接近判定（track_id 即判定状态索引）
             approach_state = motion_state_engine_.updateApproachState(
-                unit->unit_id, unit->h, unit_depth, frame_input_context.timestamp);
+                track.track_id_, track.tlwh_[3], depth, frame_input_context.timestamp);
             has_approach = true;
         }
 
-        // 2) 记录本帧判定结果：只有“快速靠近”一路（是否危险即看 approach_alarm）。
-        //    该 track 不在接近单元内（白名单外类别 / 无骑手的两轮车 / 已被认领的行人）时全为 false/0
+        // 记录本帧判定结果：只有“快速靠近”一路（是否危险即看 approach_alarm）。
+        // person 等不参与判定的类别全为 false/0
         MotionStateInfoRecord motion;
         if (has_approach) {
             motion.approach_alarm       = approach_state.alarm;
@@ -225,14 +194,12 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         }
         infer_output_context.motion_records.emplace(track.track_id_, motion);
 
-        // 3) track_log：原始每个目标框一行（与 Python 侧 CSV 口径一致）；深度用目标自身框采样，
-        //    与单元框重合时复用第 1) 步那次采样
+        // track_log：每个目标框一行（与 Python 侧 CSV 口径一致）；
+        // 参与判定的类别复用上面那次深度采样，其它类别单独采样
         if (track_log_enabled_) {
-            float raw_depth = 0.0f;
-            if (!depth_metric.empty()) {
-                raw_depth = (has_approach && isSameBox(*unit, track.tlwh_)) ?
-                                unit_depth :
-                                motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+            float raw_depth = depth;
+            if (!has_approach && !depth_metric.empty()) {
+                raw_depth = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
             }
             track_log_data_[track.track_id_].push_back(
                 { frame_input_context.frame_id, track.class_id_, track.tlwh_[0], track.tlwh_[2],
