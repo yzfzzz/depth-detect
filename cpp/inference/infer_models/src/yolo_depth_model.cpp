@@ -133,11 +133,9 @@ void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
     // 异步 D2H 拷贝（与上面 kernel 同 stream，getInferOutputResult 同步后即可读）
 
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_output_data_.get(), d_buffer_dst_depth_.get(),
-                               getRawImgHxW() * sizeof(uchar), cudaMemcpyDeviceToHost,
-                               stream_));
+                               getRawImgHxW() * sizeof(uchar), cudaMemcpyDeviceToHost, stream_));
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
-                               getRawImgHxW() * sizeof(uchar3), cudaMemcpyDeviceToHost,
-                               stream_));
+                               getRawImgHxW() * sizeof(uchar3), cudaMemcpyDeviceToHost, stream_));
 }
 
 void YoloDepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
@@ -146,8 +144,8 @@ void YoloDepthModel::getInferOutputResult(InferOutputContext & infer_output_cont
 
     infer_output_context.depth_raw_infer_out.resize(getInputHxW());
     cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
-               d_infer_io_[getOutputIndexFromName("output0")].get(),
-               getInputHxW() * sizeof(float), cudaMemcpyDeviceToHost);
+               d_infer_io_[getOutputIndexFromName("output0")].get(), getInputHxW() * sizeof(float),
+               cudaMemcpyDeviceToHost);
 
     // cudaPostProcess 已把归一化灰度 / TURBO 伪彩异步拷到 pinned 内存，
     infer_output_context.result_depth =

@@ -4,7 +4,7 @@
 
 #include <cmath>
 
- // namespace
+// namespace
 
 DangerAlertHandler::DangerAlertHandler(const ConfigManager & config) {
     filter_small_objects_ = config.isFilterSmallObjectsEnabled();
@@ -24,10 +24,9 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
         // 过滤小目标
         if (filter_small_objects_) {
             float s = track.tlwh[2] * track.tlwh[3];
-            if(track.class_id == 2 && s <= min_object_area_ * 4){
+            if (track.class_id == 2 && s <= min_object_area_ * 4) {
                 continue;
-            }
-            else if(s <= min_object_area_){
+            } else if (s <= min_object_area_) {
                 continue;
             }
         }
@@ -38,17 +37,15 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
             continue;
         }
 
-        const MotionStateInfoRecord & motion = it->second;
-        int class_id = track.class_id;
-        int d = static_cast<int>(std::lround(track.distance_));
-
+        const MotionStateInfoRecord & motion   = it->second;
+        int                           class_id = track.class_id;
+        int                           d        = static_cast<int>(std::lround(track.distance_));
 
         // 全部发送（depth 四舍五入到整数米）
         dangerous_objects.push_back(
             { static_cast<int>(track.tlwh[0]), static_cast<int>(track.tlwh[1]),
-              static_cast<int>(track.tlwh[2]), static_cast<int>(track.tlwh[3]),
-              d, class_id, track.track_id, 0, -1.0f,
-              isDangerous(motion) });
+              static_cast<int>(track.tlwh[2]), static_cast<int>(track.tlwh[3]), d, class_id,
+              track.track_id, 0, -1.0f, isDangerous(motion) });
     }
 
     if (dangerous_objects.empty()) {

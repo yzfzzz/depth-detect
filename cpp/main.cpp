@@ -36,13 +36,13 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 
         // 每个目标都画框+分数；不在接近单元内的目标用默认记录（分数为 0.00）
         static const MotionStateInfoRecord kDefaultMotion;
-        auto it = infer_output_context.motion_records.find(track.track_id);
+        auto                          it = infer_output_context.motion_records.find(track.track_id);
         const MotionStateInfoRecord & motion =
             (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
-        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
-            "6.Drawing Manager", drawing_manager, drawTrackedObject,
-            frame_input_context.raw_img, track, motion, get_color_func(track.track_id));
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("6.Drawing Manager", drawing_manager,
+                                               drawTrackedObject, frame_input_context.raw_img,
+                                               track, motion, get_color_func(track.track_id));
 #else
         drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, motion,
                                           get_color_func(track.track_id));

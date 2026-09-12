@@ -59,4 +59,14 @@ const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "
                                               "vase",          "scissors",     "teddy bear",
                                               "hair drier",    "toothbrush" };
 
+enum COCO80_CLASS {
+    PERSON     = 0,
+    BICYCLE    = 1,
+    CAR        = 2,
+    MOTORCYCLE = 3,
+    AIRPLANE   = 4,
+    BUS        = 5,
+    TRAIN      = 6,
+    TRUCK      = 7
+};
 #endif  // PUBLIC_H

@@ -28,14 +28,12 @@ struct FrameMeta {
 class STrack;
 class Detection;
 
-// 目标的运动/危险判定结果：当前只保留“快速靠近”（approach）一路，判定逻辑见 motion_state_engine.h
-// （基线 + 累计变化率 + 近期趋势 + 进出双边去抖）。原来的 TTC/运动状态一路已移除：
-// 危险与否只看 approach_alarm，快速靠近就上报危险（见 DangerAlertHandler）并画红框。
+// 目标的运动/危险判定结果
 struct MotionStateInfoRecord {
     bool  approach_alarm       = false;  // 接近报警（已通过进入/退出双边去抖）
     float approach_score       = 0.0f;   // 融合分数 = 0.4 * 深度分 + 0.6 * 尺度分
     float approach_depth_score = 0.0f;   // 深度分（相对基线的累计降幅 / thr_depth）
-    float approach_scale_score = 0.0f;   // 尺度分（相对基线的框高累计增幅 / thr_height）
+    float approach_scale_score = 0.0f;  // 尺度分（相对基线的框高累计增幅 / thr_height）
 };
 
 struct InferOutputContext {

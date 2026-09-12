@@ -59,26 +59,34 @@ ControlPanel::ControlPanel(MotionStateEngine &   motion_engine,
         // ---- 快速靠近检测（方案 d）关键阈值：与 pipeline.py 的 --approach-* 命令行一一对应 ----
         { "approach_score_thr",      100, 0.0f, 0.01f,
          [this]() { return static_cast<float>(motion_engine_.getApproachScoreThr()); },
-         [this](float v) { motion_engine_.setApproachScoreThr(v); }     },
+         [this](float v) {
+              motion_engine_.setApproachScoreThr(v);
+          } },
         { "approach_confirm",        10,  1.0f, 1.0f,
          [this]() { return static_cast<float>(motion_engine_.getApproachConfirm()); },
          [this](float v) {
               motion_engine_.setApproachConfirm(static_cast<int>(std::lround(v)));
-          }                                                             },
+          } },
         { "approach_thr_depth",      100, 0.0f, 0.01f,
          [this]() { return static_cast<float>(motion_engine_.getApproachThrDepth()); },
-         [this](float v) { motion_engine_.setApproachThrDepth(v); }     },
+         [this](float v) {
+              motion_engine_.setApproachThrDepth(v);
+          } },
         { "approach_thr_height",     100, 0.0f, 0.01f,
          [this]() { return static_cast<float>(motion_engine_.getApproachThrHeight()); },
-         [this](float v) { motion_engine_.setApproachThrHeight(v); }   },
+         [this](float v) {
+              motion_engine_.setApproachThrHeight(v);
+          } },
         { "approach_exit_score_thr", 100, 0.0f, 0.01f,
          [this]() { return static_cast<float>(motion_engine_.getApproachExitScoreThr()); },
-         [this](float v) { motion_engine_.setApproachExitScoreThr(v); } },
+         [this](float v) {
+              motion_engine_.setApproachExitScoreThr(v);
+          } },
         { "approach_exit_confirm",   10,  1.0f, 1.0f,
          [this]() { return static_cast<float>(motion_engine_.getApproachExitConfirm()); },
          [this](float v) {
               motion_engine_.setApproachExitConfirm(static_cast<int>(std::lround(v)));
-          }                                                             },
+          } },
     };
 
     for (const auto & p : params) {

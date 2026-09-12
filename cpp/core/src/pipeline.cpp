@@ -21,21 +21,18 @@ double durationMs(const std::chrono::steady_clock::time_point & begin,
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
-    // 新版 BYTETracker 构造参数：(max_time_lost, track_high_thresh, track_low_thresh,
-    //                            new_track_thresh, match_thresh)
-    // max_time_lost 沿用旧语义：frame_rate / 30 * track_buffer（30fps 下即丢 track_buffer 帧删轨迹）
     tracker_(static_cast<int>(60, 0.3, 0.1, 0.5, 0.8)) {
     bool is_normalize = false;
 
-    APP_INFO("ByteTracker params: max_time_lost={}, track_high_thresh={}, track_low_thresh={}, "
-             "new_track_thresh={}, match_thresh={}",
-             static_cast<int>(config_manager.getCameraFps() / 30.0 *
-                              config_manager.getTrackerTrackBuffer()),
-             config_manager.getTrackHighThresh(), config_manager.getTrackLowThresh(),
-             config_manager.getNewTrackThresh(), config_manager.getMatchThresh());
+    APP_INFO(
+        "ByteTracker params: max_time_lost={}, track_high_thresh={}, track_low_thresh={}, "
+        "new_track_thresh={}, match_thresh={}",
+        static_cast<int>(config_manager.getCameraFps() / 30.0 *
+                         config_manager.getTrackerTrackBuffer()),
+        config_manager.getTrackHighThresh(), config_manager.getTrackLowThresh(),
+        config_manager.getNewTrackThresh(), config_manager.getMatchThresh());
 
-    // 快速靠近（approach）检测：参数取自 config.motion_state_engine.approach，
-    // 默认值即 mini_python/pipeline.py 调好的最优参数（方案 d + 1€ 滤波）
+    // 快速靠近检测参数
     approach::ApproachParams approach_params;
     approach_params.warmup         = config_manager.getApproachWarmup();
     approach_params.thr_depth      = config_manager.getApproachThrDepth();
@@ -46,7 +43,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
     approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
 
-    // filter 字符串 -> 枚举；未识别的取值回落到 none 并告警（避免静默改变行为）
+    // 未识别的取值回落到 none 并告警
     const std::string    filter_name = config_manager.getApproachFilterMode();
     approach::FilterMode filter_mode = approach::parseFilterMode(filter_name);
     if (filter_mode == approach::FilterMode::NONE && filter_name != "none") {
@@ -143,13 +140,11 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
 
     // yolo_depth_model_：从发起异步推理到结果可取（与检测在不同 stream 上可重叠执行）
     if (depth_enabled_) {
-        // depth_model_.runInferenceAsync(frame_input_context);
         yolo_depth_model_.runInferenceAsync(frame_input_context);
     }
     detector_.getInferOutputResult(infer_output_context);
     updateTracker(infer_output_context);
     if (depth_enabled_) {
-        // depth_model_.getInferOutputResult(infer_output_context);
         yolo_depth_model_.getInferOutputResult(infer_output_context);
     }
     updateMotionStates(frame_input_context, infer_output_context);
@@ -172,15 +167,14 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         }
     }
 
-    // ---- 快速靠近（approach）检测：逐 track 独立判定，人/车不合并 ----
-    // 参与判定的类别只有 bicycle/car/motorcycle/bus/truck（person 只跟踪不判定）。
+    // 快速靠近检测：逐 track 独立判定
+    // 参与判定的类别只有 bicycle/car/motorcycle/bus/truck
     // 每个 track 用自己的框高 + 框内深度送进 updateApproachState，
-    // 逐帧因果、可实时触发；该判定即危险依据（不再有 TTC）。
     for (auto & track : infer_output_context.tracked_objects) {
         approach::ApproachState approach_state;
         bool                    has_approach = false;
         float                   depth        = 0.0f;
-        if(track.tlwh[3] * track.tlwh[2] < 400){
+        if (track.tlwh[3] * track.tlwh[2] < 400) {
             continue;
         }
 
@@ -196,8 +190,7 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
             has_approach = true;
         }
 
-        // 记录本帧判定结果：只有“快速靠近”一路（是否危险即看 approach_alarm）。
-        // person 等不参与判定的类别全为 false/0
+        // 记录本帧判定结果
         MotionStateInfoRecord motion;
         if (has_approach) {
             motion.approach_alarm       = approach_state.alarm;
@@ -207,8 +200,7 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         }
         infer_output_context.motion_records.emplace(track.track_id, motion);
 
-        // track_log：每个目标框一行（与 Python 侧 CSV 口径一致）；
-        // 参与判定的类别复用上面那次深度采样，其它类别单独采样
+        // track_log：每个目标框一行
         if (track_log_enabled_) {
             float raw_depth = depth;
             if (!has_approach && !depth_metric.empty()) {
@@ -229,13 +221,10 @@ void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
         if (isTrackingClass(res[j].classId)) {
             cv::Rect_<float> rect(res[j].bbox[0], res[j].bbox[1], (res[j].bbox[2] - res[j].bbox[0]),
                                   (res[j].bbox[3] - res[j].bbox[1]));
-            // Object: { rect, label, prob, distance }，检测阶段无深度，先填 0
             objects.push_back({ rect, res[j].classId, res[j].conf, 0.0f });
         }
     }
-    // 新版 BYTETracker::update 为输出参数式接口：
-    //   update(objects, lost_stracks 输出, output_stracks 输出)，只做 push_back，需先清空
     infer_output_context.tracked_objects.clear();
-    std::vector<STrack> lost_stracks;  // 本帧丢失轨迹（输出参数，当前业务不使用）
+    std::vector<STrack> lost_stracks;  // 本帧丢失轨迹，暂时不使用，兼容接口
     tracker_.update(objects, lost_stracks, infer_output_context.tracked_objects);
 }

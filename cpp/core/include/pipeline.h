@@ -56,7 +56,6 @@ class Pipeline {
         return false;
     }
 
-
     BYTETracker       tracker_;
     MotionStateEngine motion_state_engine_;
 
@@ -68,9 +67,9 @@ class Pipeline {
     bool                                              track_log_enabled_ = false;
     std::string                                       track_log_path_;
     std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
-    // 需要跟踪的类别（对应 COCO 数据集类别索引）：person 也跟踪，但不做接近判定
     std::vector<int>                                  track_classes_{
-        1, 2, 3, 5, 7
-    };  // bicycle, car, motorcycle, bus, truck
+        COCO80_CLASS::BICYCLE, COCO80_CLASS::CAR, COCO80_CLASS::MOTORCYCLE, COCO80_CLASS::BUS,
+        COCO80_CLASS::TRUCK
+    };  // bicycle, car, motorcycle, bus, train, truck
     bool is_normalize_ = false;
 };

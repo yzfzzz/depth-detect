@@ -10,17 +10,14 @@ namespace approach {
 
 namespace {
 
-// 时间步下限（避免 dt 为 0）
 const double kMinDt = 1e-6;
 
-// 非负信号在 log 域滤波时的下限（避免 log(0)）
+// log 域下限，防 log(0)
 const double kMinLogValue = 1e-6;
 
-// score 分母下限：阈值配 0 时用极小量兜底，
-// 保证 thr_depth / thr_height 配 0 时 score 只会在 0/1 之间跳变，不会产生 inf/NaN
+// score 分母下限：阈值配 0 时 score 退化为 0/1 跳变，但不产生 inf/NaN
 const double kMinThreshold = 1e-3;
 
-// 二维小矩阵装配工具（cv::KalmanFilter 负责预测/更新/增益，这里只填 F/H/Q/R 等矩阵）
 cv::Mat mat2x2(double a00, double a01, double a10, double a11) {
     cv::Mat m          = cv::Mat::zeros(2, 2, CV_64F);
     m.at<double>(0, 0) = a00;
@@ -44,8 +41,6 @@ cv::Mat mat1x1(double value) {
 }
 
 }  // namespace
-
-// [SignalFilterBank] 1€ 用第三方库（third_party/OneEuroFilter），kalman 用 OpenCV
 
 FilterMode parseFilterMode(const std::string & name) {
     std::string lower;
@@ -75,7 +70,6 @@ const char * filterModeName(FilterMode mode) {
 }
 
 SignalFilterBank::TrackFilters::TrackFilters(double freq) {
-    // 1€ 库对象：freq 只作为“无时间戳时”的频率估计，实际按传入时间戳自适应更新
     height_one_euro.reset(
         new OneEuroFilter(freq, kOneEuroMinCutoff, kOneEuroBeta, kOneEuroDerivCutoff));
     depth_one_euro.reset(
@@ -95,13 +89,13 @@ double SignalFilterBank::kalmanStep(cv::KalmanFilter & kf,
         z = std::log(std::max(z, kMinLogValue));
     }
 
-    // 首帧：按量测幅值自动估计量测/过程噪声并初始化状态，
-    // 直接返回原值（无历史可预测）。H = [1, 0]：只观测位置。
+    // 首帧无历史可预测，直接用量测初始化并原值返回；
+    // R/Q 按量测幅值自动估计，避免固定噪声参数在近/远目标上失配
     if (!ready) {
         ready = true;
 
         kf.init(2, 1, 0, CV_64F);
-        kf.measurementMatrix          = mat1x2(1.0, 0.0);  // H：只观测位置
+        kf.measurementMatrix          = mat1x2(1.0, 0.0);
         const double r                = std::pow(0.05 * std::abs(z) + 1e-3, 2);
         q                             = std::pow(0.03 * std::abs(z) + 1e-3, 2);
         kf.measurementNoiseCov        = mat1x1(r);
@@ -115,13 +109,12 @@ double SignalFilterBank::kalmanStep(cv::KalmanFilter & kf,
     const double dt = std::max(t - t_prev, kMinDt);
     t_prev          = t;
 
-    // F = [[1, dt], [0, 1]]：匀速模型；Q 由速度过程噪声 q 生成
+    // 匀速模型的 F 与过程噪声离散化（由速度噪声 q 与 dt 导出）
     kf.transitionMatrix = mat2x2(1.0, dt, 0.0, 1.0);
     const double dt2    = dt * dt;
     kf.processNoiseCov =
         mat2x2(q * dt2 * dt2 / 4.0, q * dt2 * dt / 2.0, q * dt2 * dt / 2.0, q * dt2);
 
-    // 预测 + 更新（增益/协方差更新由 OpenCV 完成），量测为当前帧原始值
     kf.predict();
     kf.correct(mat1x1(z));
     return kf.statePost.at<double>(0, 0);
@@ -139,7 +132,6 @@ void SignalFilterBank::update(int      track_id,
         return;
     }
 
-    // 每条 track 一份滤波器（unique_ptr：库对象持有内部指针，不能拷贝）
     std::unique_ptr<TrackFilters> & holder = tracks_[track_id];
     if (!holder) {
         holder.reset(new TrackFilters(freq_));
@@ -149,29 +141,25 @@ void SignalFilterBank::update(int      track_id,
     if (mode_ == FilterMode::ONE_EURO) {
         height_filtered = filters.height_one_euro->filter(height, ts);
     } else {
-        // height 非负且接近指数增长 -> 在 log 域滤波（更贴合指数增长）
-        height_filtered = kalmanStep(filters.height_kalman, filters.height_ready,
-                                     filters.height_q, filters.height_t, height, ts, true);
+        height_filtered = kalmanStep(filters.height_kalman, filters.height_ready, filters.height_q,
+                                     filters.height_t_prev, height, ts, true);
     }
 
-    // 无效深度（<= 0）不过滤，原值透传，避免 0 值把滤波器带偏
     if (depth > 0.0) {
         if (mode_ == FilterMode::ONE_EURO) {
             depth_filtered = filters.depth_one_euro->filter(depth, ts);
         } else {
             depth_filtered = kalmanStep(filters.depth_kalman, filters.depth_ready, filters.depth_q,
-                                        filters.depth_t, depth, ts, false);
+                                        filters.depth_t_prev, depth, ts, false);
         }
     } else {
         depth_filtered = depth;
     }
 }
 
-// ApproachDetectorCumulative
-
 ApproachDetectorCumulative::ApproachDetectorCumulative(const ApproachParams & params) :
     params_(params) {
-    // 统一走 setter，保证参数合法（warmup >= 1、recent_w >= 2 等）
+    // 走 setter 复用参数钳制（warmup >= 1、recent_w >= 2 等）
     setWarmup(params.warmup);
     setThrDepth(params.thr_depth);
     setThrHeight(params.thr_height);
@@ -226,7 +214,7 @@ bool ApproachDetectorCumulative::medianPositive(const std::vector<double> & valu
         return false;
     }
     std::sort(xs.begin(), xs.end());
-    out = xs[xs.size() / 2];  // 上中位
+    out = xs[xs.size() / 2];
     return true;
 }
 
@@ -238,13 +226,13 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
                                                  double height,
                                                  double depth,
                                                  double ts) {
-    // 方案 d 只按帧序推进判定；ts 仅由前置滤波层使用（这里保留参数只为接口一致）
+    // 判定按帧序推进；ts 只有前置滤波层用，保留参数只为接口一致
     static_cast<void>(ts);
 
     ApproachState out;
     TrackState &  state = tracks_[track_id];
 
-    // 阶段 1：攒基线（前 warmup 帧只收集样本，不产生任何判定）
+    // 基线未就绪前只攒样本，不产生判定
     if (!state.has_baseline) {
         state.hist.push_back(Sample{ height, depth });
         if (static_cast<int>(state.hist.size()) < params_.warmup) {
@@ -262,7 +250,7 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
         }
         state.hist.clear();
 
-        // 框高与深度都要能取到有效中位数，否则本帧仍无判定（下一帧重新攒基线）
+        // 任一通道取不到有效中位数则维持无基线，下一帧重新攒（避免用 0 基线除零）
         if (!medianPositive(depths, state.baseline_d) ||
             !medianPositive(heights, state.baseline_h)) {
             applyScores(state, out);
@@ -271,7 +259,6 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
         state.has_baseline = true;
     }
 
-    // 阶段 2：维护最近 recent_w 帧窗口
     state.recent.push_back(Sample{ height, depth });
     while (static_cast<int>(state.recent.size()) > params_.recent_w) {
         state.recent.pop_front();
@@ -281,7 +268,6 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
         return out;
     }
 
-    // 前后半窗中位数：前半窗 = 较早的 recent_w/2 帧，后半窗 = 最近的若干帧
     const int           half = params_.recent_w / 2;
     std::vector<double> d_prev;
     std::vector<double> d_cur;
@@ -304,15 +290,13 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
     double h_cur_median  = 0.0;
     if (!medianPositive(d_prev, d_prev_median) || !medianPositive(d_cur, d_cur_median) ||
         !medianPositive(h_prev, h_prev_median) || !medianPositive(h_cur, h_cur_median)) {
-        // 该窗口无有效样本（例如卡尔曼滤波后的深度被过冲到 <= 0）：保持上一帧分数
+        // 窗口内出现无效样本（如深度被滤波过冲到 <= 0）：保持上一帧分数
         applyScores(state, out);
         return out;
     }
 
-    // 近期趋势门控：是否“当前仍在靠近”（深度继续降，框高继续涨）
     const bool trend_ok = d_cur_median < d_prev_median && h_cur_median > h_prev_median;
 
-    // 累计变化率（相对基线）与融合分数
     const double depth_drop  = (state.baseline_d - d_cur_median) / state.baseline_d;
     const double height_gain = h_cur_median / state.baseline_h - 1.0;
     const double depth_score = clip01(depth_drop / std::max(params_.thr_depth, kMinThreshold));
@@ -323,10 +307,7 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
     state.depth_score = depth_score;
     state.scale_score = scale_score;
 
-    // 阶段 3：双边迟滞 + 去抖
-    //   进入证据：趋势在靠近 且 score >= score_thr
-    //   退出证据：趋势不再靠近 或 score <= exit_score_thr
-    //   中间态：保持当前状态（抗闪烁，只有连续证据才切换）
+    // 双边迟滞：进/出都需连续帧证据，中间态保持现状，防报警闪烁
     const bool enter_ev = trend_ok && score >= params_.score_thr;
     const bool exit_ev  = !trend_ok || score <= params_.exit_score_thr;
 
@@ -363,8 +344,7 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
 }
 
 void ApproachDetectorCumulative::applyScores(const TrackState & state, ApproachState & out) {
-    // 三项分数取“最近一次有效计算值”：
-    // 本帧无有效窗口时保持上一帧分数，而不是把分数归零，避免下游画面上分数闪烁
+    // 保持上一帧分数而非归零：无有效窗口的帧不让下游画面/日志上的分数闪烁
     out.score       = static_cast<float>(state.score);
     out.depth_score = static_cast<float>(state.depth_score);
     out.scale_score = static_cast<float>(state.scale_score);
@@ -372,11 +352,9 @@ void ApproachDetectorCumulative::applyScores(const TrackState & state, ApproachS
 
 }  // namespace approach
 
-// [MotionStateEngine] 对外接口
-
 void MotionStateEngine::configureApproach(const approach::ApproachParams & params,
-                                          approach::FilterMode            filter_mode,
-                                          bool                            enabled) {
+                                          approach::FilterMode             filter_mode,
+                                          bool                             enabled) {
     approach_enabled_  = enabled;
     approach_detector_ = approach::ApproachDetectorCumulative(params);
     approach_filter_bank_.reset();
@@ -405,7 +383,6 @@ approach::ApproachState MotionStateEngine::updateApproachState(int    track_id,
         return state;
     }
 
-    // 前置因果滤波（只依赖历史）：height 用 log 域卡尔曼更贴合指数增长；无效深度不过滤
     double height_filtered = height;
     double depth_filtered  = raw_depth;
     if (approach_filter_bank_) {
@@ -415,7 +392,7 @@ approach::ApproachState MotionStateEngine::updateApproachState(int    track_id,
 
     state = approach_detector_.update(track_id, height_filtered, depth_filtered, timestamp);
 
-    // 报警边沿打日志（上升沿 / 下降沿各一条）
+    // 只在报警沿打日志，避免逐帧刷屏
     if (state.alarm_started) {
         APP_INFO(
             "[Approach] track {} alarm triggered: score={:.3f} depth_score={:.3f} "
@@ -447,11 +424,9 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
         return 0.0f;
     }
 
-    // 存储当前目标收集到的有效深度点
     std::vector<float> sampled_depths;
 
-    // 在目标框内均匀网格采样，统计有效深度值
-    // 采样策略：缩进 20% 边界以避开边缘背景，按 grid_size × grid_size 在框内均匀采点
+    // 缩进 20% 边界：框边缘容易混入背景像素
     int   grid_size    = static_cast<int>(std::sqrt(num_samples));
     float shrink_ratio = 0.2f;
     for (int i = 0; i < grid_size; ++i) {
@@ -484,17 +459,15 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
         return 0.0f;
     }
 
-    // 截断均值法：先排序，剔除两端 25% 异常值（前 25% 可能是前景遮挡，后 25% 可能是背景噪声）
-    // 再对中间 50% 的数据取均值，得到该目标在当前帧的鲁棒深度估计
+    // 截断均值：最近的 25% 多为前景遮挡毛刺、最远的 25% 多为背景噪声
     std::sort(sampled_depths.begin(), sampled_depths.end());
     int num_valid = sampled_depths.size();
     if (num_valid < 4) {
-        // 数据太少，直接取中位数
-        return sampled_depths[num_valid / 2];
+        return sampled_depths[num_valid / 2];  // 样本太少不截断，直接取中位
     }
 
-    int skip_low  = static_cast<int>(num_valid * 0.25f);  // 剔除25%最近距离（前景毛刺与遮挡）
-    int skip_high = static_cast<int>(num_valid * 0.25f);  // 剔除25%最远距离（背景噪声）
+    int skip_low  = static_cast<int>(num_valid * 0.25f);
+    int skip_high = static_cast<int>(num_valid * 0.25f);
 
     float sum   = 0.0f;
     int   count = 0;
