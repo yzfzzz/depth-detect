@@ -23,8 +23,8 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
     for (const auto & track : infer_output.tracked_objects) {
         // 过滤小目标
         if (filter_small_objects_) {
-            float s = track.tlwh_[2] * track.tlwh_[3];
-            if(track.class_id_ == 2 && s <= min_object_area_ * 4){
+            float s = track.tlwh[2] * track.tlwh[3];
+            if(track.class_id == 2 && s <= min_object_area_ * 4){
                 continue;
             }
             else if(s <= min_object_area_){
@@ -33,21 +33,21 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
         }
 
         // 查找本帧的判定结果（不在接近单元内的目标没有记录）
-        auto it = infer_output.motion_records.find(track.track_id_);
+        auto it = infer_output.motion_records.find(track.track_id);
         if (it == infer_output.motion_records.end()) {
             continue;
         }
 
         const MotionStateInfoRecord & motion = it->second;
-        int class_id = track.class_id_;
-        int d = track.distance_;
+        int class_id = track.class_id;
+        int d = static_cast<int>(std::lround(track.distance_));
 
 
-        // 全部发送（depth 截到小数点后 2 位）
+        // 全部发送（depth 四舍五入到整数米）
         dangerous_objects.push_back(
-            { static_cast<int>(track.tlwh_[0]), static_cast<int>(track.tlwh_[1]),
-              static_cast<int>(track.tlwh_[2]), static_cast<int>(track.tlwh_[3]),
-              d, class_id, track.track_id_, 0, -1.0f,
+            { static_cast<int>(track.tlwh[0]), static_cast<int>(track.tlwh[1]),
+              static_cast<int>(track.tlwh[2]), static_cast<int>(track.tlwh[3]),
+              d, class_id, track.track_id, 0, -1.0f,
               isDangerous(motion) });
     }
 

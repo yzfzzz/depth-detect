@@ -21,8 +21,18 @@ double durationMs(const std::chrono::steady_clock::time_point & begin,
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
-    tracker_(30, 30) {
+    // 新版 BYTETracker 构造参数：(max_time_lost, track_high_thresh, track_low_thresh,
+    //                            new_track_thresh, match_thresh)
+    // max_time_lost 沿用旧语义：frame_rate / 30 * track_buffer（30fps 下即丢 track_buffer 帧删轨迹）
+    tracker_(static_cast<int>(60, 0.3, 0.1, 0.5, 0.8)) {
     bool is_normalize = false;
+
+    APP_INFO("ByteTracker params: max_time_lost={}, track_high_thresh={}, track_low_thresh={}, "
+             "new_track_thresh={}, match_thresh={}",
+             static_cast<int>(config_manager.getCameraFps() / 30.0 *
+                              config_manager.getTrackerTrackBuffer()),
+             config_manager.getTrackHighThresh(), config_manager.getTrackLowThresh(),
+             config_manager.getNewTrackThresh(), config_manager.getMatchThresh());
 
     // 快速靠近（approach）检测：参数取自 config.motion_state_engine.approach，
     // 默认值即 mini_python/pipeline.py 调好的最优参数（方案 d + 1€ 滤波）
@@ -170,19 +180,19 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         approach::ApproachState approach_state;
         bool                    has_approach = false;
         float                   depth        = 0.0f;
-        if(track.tlwh_[3] * track.tlwh_[2] < 400){
+        if(track.tlwh[3] * track.tlwh[2] < 400){
             continue;
         }
 
-        if (isTrackingClass(track.class_id_)) {
+        if (isTrackingClass(track.class_id)) {
             // 框内鲁棒深度估计（深度不可用时为 0，检测器视为无效值）
             if (!depth_metric.empty()) {
-                depth           = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+                depth           = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh);
                 track.distance_ = depth;
             }
             // 目标框高度 + 框内深度 -> 逐帧接近判定（track_id 即判定状态索引）
             approach_state = motion_state_engine_.updateApproachState(
-                track.track_id_, track.tlwh_[3], depth, frame_input_context.timestamp);
+                track.track_id, track.tlwh[3], depth, frame_input_context.timestamp);
             has_approach = true;
         }
 
@@ -195,32 +205,37 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
             motion.approach_depth_score = approach_state.depth_score;
             motion.approach_scale_score = approach_state.scale_score;
         }
-        infer_output_context.motion_records.emplace(track.track_id_, motion);
+        infer_output_context.motion_records.emplace(track.track_id, motion);
 
         // track_log：每个目标框一行（与 Python 侧 CSV 口径一致）；
         // 参与判定的类别复用上面那次深度采样，其它类别单独采样
         if (track_log_enabled_) {
             float raw_depth = depth;
             if (!has_approach && !depth_metric.empty()) {
-                raw_depth = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
+                raw_depth = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh);
             }
-            track_log_data_[track.track_id_].push_back(
-                { frame_input_context.frame_id, track.class_id_, track.tlwh_[0], track.tlwh_[2],
-                  track.tlwh_[1], track.tlwh_[3], track.tlwh_[2] * track.tlwh_[3], raw_depth });
+            track_log_data_[track.track_id].push_back(
+                { frame_input_context.frame_id, track.class_id, track.tlwh[0], track.tlwh[2],
+                  track.tlwh[1], track.tlwh[3], track.tlwh[2] * track.tlwh[3], raw_depth });
         }
     }
 }
 
 void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
-    // 从检测结果中筛选需要跟踪的类别（person/bicycle/car/motorcycle/bus/truck）
+    // 从检测结果中筛选需要跟踪的类别（bicycle/car/motorcycle/bus/truck）
     std::vector<Detection> & res = infer_output_context.detections;
     std::vector<Object>      objects;
     for (size_t j = 0; j < res.size(); j++) {
         if (isTrackingClass(res[j].classId)) {
             cv::Rect_<float> rect(res[j].bbox[0], res[j].bbox[1], (res[j].bbox[2] - res[j].bbox[0]),
                                   (res[j].bbox[3] - res[j].bbox[1]));
-            objects.push_back({ rect, res[j].classId, res[j].conf });
+            // Object: { rect, label, prob, distance }，检测阶段无深度，先填 0
+            objects.push_back({ rect, res[j].classId, res[j].conf, 0.0f });
         }
     }
-    infer_output_context.tracked_objects = tracker_.update(objects);
+    // 新版 BYTETracker::update 为输出参数式接口：
+    //   update(objects, lost_stracks 输出, output_stracks 输出)，只做 push_back，需先清空
+    infer_output_context.tracked_objects.clear();
+    std::vector<STrack> lost_stracks;  // 本帧丢失轨迹（输出参数，当前业务不使用）
+    tracker_.update(objects, lost_stracks, infer_output_context.tracked_objects);
 }

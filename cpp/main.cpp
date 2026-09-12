@@ -30,22 +30,22 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     }
     for (int i = 0; i < infer_output_context.tracked_objects.size(); i++) {
         auto & track = infer_output_context.tracked_objects[i];
-        if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
+        if (track.tlwh[2] * track.tlwh[3] <= 20) {
             continue;
         }
 
         // 每个目标都画框+分数；不在接近单元内的目标用默认记录（分数为 0.00）
         static const MotionStateInfoRecord kDefaultMotion;
-        auto it = infer_output_context.motion_records.find(track.track_id_);
+        auto it = infer_output_context.motion_records.find(track.track_id);
         const MotionStateInfoRecord & motion =
             (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
         DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
             "6.Drawing Manager", drawing_manager, drawTrackedObject,
-            frame_input_context.raw_img, track, motion, get_color_func(track.track_id_));
+            frame_input_context.raw_img, track, motion, get_color_func(track.track_id));
 #else
         drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, motion,
-                                          get_color_func(track.track_id_));
+                                          get_color_func(track.track_id));
 #endif
     }
     // FPS

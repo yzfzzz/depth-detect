@@ -106,9 +106,9 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
 }
 
 void DisplayManager::printTargetInfo(const STrack & track) const {
-    int                        class_id = track.class_id_;
-    int                        track_id = track.track_id_;
-    const std::vector<float> & tlwh     = track.tlwh_;
+    int                        class_id = track.class_id;
+    int                        track_id = track.track_id;
+    const std::vector<float> & tlwh     = track.tlwh;
 
     // 使用多点采样计算深度均值
     float depth = computeMeanDepth(tlwh);
@@ -123,7 +123,7 @@ void DisplayManager::printTargetInfo(const STrack & track) const {
 
 void DisplayManager::handleMouseClick(int x, int y) {
     for (const auto & track : tracks_) {
-        const std::vector<float> & tlwh   = track.tlwh_;
+        const std::vector<float> & tlwh   = track.tlwh;
         float                      left   = tlwh[0];
         float                      top    = tlwh[1];
         float                      right  = tlwh[0] + tlwh[2];
@@ -192,9 +192,9 @@ void DrawingManager::drawTrackedObject(cv::Mat &                     img,
                                        const STrack &                track,
                                        const MotionStateInfoRecord & motion,
                                        cv::Scalar                    color) {
-    const std::vector<float> & tlwh     = track.tlwh_;
-    int                        class_id = track.class_id_;
-    int                        track_id = track.track_id_;
+    const std::vector<float> & tlwh     = track.tlwh;
+    int                        class_id = track.class_id;
+    int                        track_id = track.track_id;
 
     // 准备文字标签
     std::string label = cv::format("%s #%d", vClassNames_[class_id].c_str(), track_id);
