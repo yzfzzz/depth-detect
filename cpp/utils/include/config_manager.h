@@ -31,13 +31,6 @@ class ConfigManager {
     int                                getApproachConfirm() const;
     float                              getApproachExitScoreThr() const;
     int                                getApproachExitConfirm() const;
-    bool                               isApproachUseUnits() const;
-    std::vector<int>                   getApproachAlarmClassIds() const;
-    std::vector<int>                   getApproachTwoWheelerClassIds() const;
-    std::vector<int>                   getApproachPersonClassIds() const;
-    bool                               isApproachRequireRider() const;
-    float                              getApproachRiderIou() const;
-    bool                               isApproachMergePerson() const;
     bool                               isUseGPU() const;
     bool                               isOverlapEnabled() const;
     bool                               isLogFileSaveEnabled() const;
@@ -172,38 +165,6 @@ inline float ConfigManager::getApproachExitScoreThr() const {
 
 inline int ConfigManager::getApproachExitConfirm() const {
     return config_["motion_state_engine"]["approach"]["exit_confirm"].as<int>(3);
-}
-
-inline bool ConfigManager::isApproachUseUnits() const {
-    return config_["motion_state_engine"]["approach"]["use_units"].as<bool>(true);
-}
-
-// 报警白名单：COCO 类别索引（0 person / 1 bicycle / 2 car / 3 motorcycle / 5 bus / 7 truck）
-inline std::vector<int> ConfigManager::getApproachAlarmClassIds() const {
-    return config_["motion_state_engine"]["approach"]["alarm_class_ids"].as<std::vector<int>>(
-        std::vector<int>{ 0, 1, 2, 3, 5, 7 });
-}
-
-inline std::vector<int> ConfigManager::getApproachTwoWheelerClassIds() const {
-    return config_["motion_state_engine"]["approach"]["two_wheeler_class_ids"].as<std::vector<int>>(
-        std::vector<int>{ 1, 3 });
-}
-
-inline std::vector<int> ConfigManager::getApproachPersonClassIds() const {
-    return config_["motion_state_engine"]["approach"]["person_class_ids"].as<std::vector<int>>(
-        std::vector<int>{ 0 });
-}
-
-inline bool ConfigManager::isApproachRequireRider() const {
-    return config_["motion_state_engine"]["approach"]["require_rider"].as<bool>(true);
-}
-
-inline float ConfigManager::getApproachRiderIou() const {
-    return config_["motion_state_engine"]["approach"]["rider_iou"].as<float>(0.05f);
-}
-
-inline bool ConfigManager::isApproachMergePerson() const {
-    return config_["motion_state_engine"]["approach"]["merge_person"].as<bool>(true);
 }
 
 inline bool ConfigManager::isLogFileSaveEnabled() const {
