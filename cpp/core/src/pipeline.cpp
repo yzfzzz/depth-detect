@@ -170,8 +170,11 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
         approach::ApproachState approach_state;
         bool                    has_approach = false;
         float                   depth        = 0.0f;
+        if(track.tlwh_[3] * track.tlwh_[2] < 400){
+            continue;
+        }
 
-        if (isApproachClass(track.class_id_)) {
+        if (isTrackingClass(track.class_id_)) {
             // 框内鲁棒深度估计（深度不可用时为 0，检测器视为无效值）
             if (!depth_metric.empty()) {
                 depth           = motion_state_engine_.computeMeanDepth(depth_metric, track.tlwh_);
