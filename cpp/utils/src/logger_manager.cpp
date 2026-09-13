@@ -193,6 +193,8 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     APP_INFO("  [io_manager] send_tcp: {}", config.isSendTcpEnabled());
     APP_INFO("  [io_manager] send_tcp_ip: {}", config.getSendTcpIp());
     APP_INFO("  [io_manager] send_tcp_port: {}", config.getSendTcpPort());
+    APP_INFO("  [io_manager] simulate_delay: {}", config.isSimulateDelayEnabled());
+    APP_INFO("  [io_manager] simulate_fps: {}", config.getSimulateFps());
 
     // logger
     APP_INFO("  [logger] save_file: {}", config.isLogFileSaveEnabled());

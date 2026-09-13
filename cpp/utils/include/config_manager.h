@@ -42,13 +42,14 @@ class ConfigManager {
     int                                getSendTcpPort() const;
     bool                               isSendTcpEnabled() const;
     bool                               isTrackLogEnabled() const;
+    bool                               isSimulateDelayEnabled() const;
+    int                                getSimulateFps() const;
     bool                               isFilterSmallObjectsEnabled() const;
     float                              getMinObjectArea() const;
     int                                getCameraWidth() const;
     int                                getCameraHeight() const;
     int                                getCameraFps() const;
     std::string                        getDepthModelType() const;
-    // ---- ByteTrack 跟踪器参数：对应 bytetrack_shaky.yaml，见 bytetrack/BYTETracker.h ----
     int                                getTrackerTrackBuffer() const;
     float                              getTrackHighThresh() const;
     float                              getTrackLowThresh() const;
@@ -209,6 +210,15 @@ inline bool ConfigManager::isSendTcpEnabled() const {
 
 inline bool ConfigManager::isTrackLogEnabled() const {
     return config_["io_manager"]["save_track_log"].as<bool>(false);
+}
+
+inline bool ConfigManager::isSimulateDelayEnabled() const {
+    return config_["io_manager"]["simulate_delay"].as<bool>(true);
+}
+
+
+inline int ConfigManager::getSimulateFps() const {
+    return config_["io_manager"]["simulate_fps"].as<int>(0);
 }
 
 inline bool ConfigManager::isFilterSmallObjectsEnabled() const {

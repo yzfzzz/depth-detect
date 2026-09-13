@@ -82,15 +82,17 @@ int run(char * video_path, char * config_path) {
                                      display_manager.windowName());
     // 报警管理器（负责报警信息生成）
     DangerAlertHandler alert_handler(config_manager);
-    int                num_frames = 0;
-    double             total_us   = 0;
+    int                num_frames     = 0;
+    double             total_us       = 0;
+    // 是否按视频帧率模拟实时节奏（yaml: io_manager.simulate_delay）
+    const bool         simulate_delay = config_manager.isSimulateDelayEnabled();
     FrameInputContext  frame_input_context(num_frames, frame_meta);
     InferOutputContext infer_output_context;
     while (true) {
         frame_input_context.setFrameID(num_frames);
 #if defined(ENABLE_TIMER)
         if (!DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("1.Cap Read", io_manager, readNextFrame,
-                                                    frame_input_context, false) ||
+                                                    frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
             break;
         }
@@ -106,7 +108,7 @@ int run(char * video_path, char * config_path) {
         }
         total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
 #else
-        if (!io_manager.readNextFrame(frame_input_context, false) ||
+        if (!io_manager.readNextFrame(frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
             break;
         }

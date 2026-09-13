@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config_manager.h"
+#include "frame.h"
 #include "motion_state_engine.h"
 #include "public.h"
 #include "STrack.h"
