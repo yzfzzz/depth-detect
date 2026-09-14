@@ -5,20 +5,24 @@ display_manager:
 prefer:
   use_gpu: true      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
   overlap: true      # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
+  stagger_infer: true # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
 
 yolo:
+  detect_interval: 1   # 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰模式生效）
   yolo_model_path:
     - type: engine
-      path: "../model/engine/yolo26s/yolo26s_640_op11_fp16_trt10.9.engine"
+      path: "../model/engine/yolo26s/yolo26s_640_op11_fp16_trt10.9.engine"   # 主模型（非碰撞帧使用）
     - type: onnx
       path: "../model/onnx/yolo26n/yolo26n_640_op11.onnx"
+    - type: light_engine
+      path: "../model/engine/yolo26n/yolo26n_640_op11_fp16_trt10.9.engine"   # 轻量模型：错峰碰撞帧重叠推理专用；删除则复用主模型
 
-  yolo_nms_thresh: 0.4    # YOLO NMS阈值 (下采样截断遮挡框)
-  yolo_conf_thresh: 0.25
+  yolo_nms_thresh: 0.6    # YOLO NMS阈值 (下采样截断遮挡框)
+  yolo_conf_thresh: 0.4
 
 depth:
   enabled : true
-  depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
+  depth_interval: 3       # 深度推理间隔：1=每帧，2=隔帧，3=隔2帧（语义同 yolo.detect_interval，错峰模式生效）
   model_type: "yolo_depth"   # 选项：lite_mono 或 yolo_depth
   depth_model_path:
     - type: engine
@@ -27,35 +31,19 @@ depth:
       path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
 
 motion_state_engine:      # 运动/危险判定引擎：只保留 approach（快速靠近）一路，见 cpp/core/include/motion_state_engine.h
-  # ---- 快速靠近检测（approach）：mini_python/pipeline.py 运动估计部分（方案 d）的 C++ 移植 ----
-  # 默认值 = 已在 906-2-1.mp4 上调好的最优参数，对应 Python 命令行：
-  #   python pipeline.py --approach d --filter one_euro \
-  #     --approach-score-thr 0.45 --approach-confirm 3 \
-  #     --approach-thr-depth 0.15 --approach-thr-area 0.35 \
-  #     --approach-exit-confirm 3 --approach-exit-score-thr 0.2
-  # 原理：先用每条轨迹前 warmup 帧攒基线（深度/面积中位数，抗噪），之后每帧算
-  #       “相对基线的累计变化率”，并要求最近 recent_w 帧内仍在靠近（深度降+面积涨）；
-  #       进入报警需连续 confirm 帧达标，解除需连续 exit_confirm 帧出现退出证据（双边去抖）。
-  # 注意：前 warmup 帧必然无输出；判定只依赖历史，可逐帧实时触发。
   approach:
     enabled: true          # 是否启用快速靠近检测（关闭后不动任何既有行为）
     filter: "kalman"     # area/raw_depth 因果滤波: none / one_euro(1€) / kalman(一维匀速)
-    warmup: 15             # 基线攒帧数（对应 --approach-warmup）
-    recent_w: 10           # 近期趋势窗口长度（前后半窗各 recent_w/2）
-    thr_depth: 0.15        # 相对基线的深度降幅阈值（对应 --approach-thr-depth）
-    thr_height: 0.15         # 相对基线的高度增幅阈值（对应 --approach-thr-area）
-    score_thr: 0.45        # 进入分数线（对应 --approach-score-thr）
-    confirm: 3             # 进入需连续达标帧数（对应 --approach-confirm）
-    exit_score_thr: 0.2    # 退出分数线（对应 --approach-exit-score-thr）
-    exit_confirm: 3        # 退出需连续证据帧数（对应 --approach-exit-confirm）
-    # ---- 接近单元装配（对应 pipeline.py 的报警白名单与“两轮车需载人”规则）----
-    use_units: true        # false: 每个目标各自判定（不做白名单与载人合并）
-    alarm_class_ids: [0, 1, 2, 3, 5, 7]        # 报警白名单: person/bicycle/car/motorcycle/bus/truck
-    two_wheeler_class_ids: [1, 3]              # 两轮车: bicycle / motorcycle
-    person_class_ids: [0]                      # 人: person（用于“载人”判定）
-    require_rider: true    # 两轮车必须检测到骑车人才参与判定（停放/推行的两轮车不报警）
-    rider_iou: 0.05        # 人/车重合判定的 IoU 阈值
-    merge_person: true     # 载人时把“人 + 两轮车”合并成外接大框作为一个单元
+    detect_warmup: 5      # 框高（检测）通道基线攒帧数
+    detect_recent_w: 10   # 框高通道近期趋势窗口长度（前后半窗各 recent_w/2）
+    depth_warmup: 3       # 深度（模型）通道基线攒帧数
+    depth_recent_w: 6     # 深度通道近期趋势窗口长度
+    thr_depth: 0.15        # 相对基线的深度降幅阈值
+    thr_height: 0.15         # 相对基线的框高增幅阈值
+    score_thr: 0.45        # 进入分数线
+    confirm: 2             # 进入需连续达标帧数
+    exit_score_thr: 0.2    # 退出分数线
+    exit_confirm: 2        # 退出需连续证据帧数
 
 danger_alert:
   is_filter_small_objects: true   # 是否过滤小目标（快速靠近的目标若面积过小则不上报）
@@ -66,16 +54,17 @@ camera:
   width: 1280    # 相机采集宽度（USB 相机索引模式时生效）
   height: 720    # 相机采集高度
   fps: 30        # 相机采集帧率
-  stabilize: true # 是否启用视频稳定（抑制骑行/车载上下抖动）
 
 
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
   save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
-  save_mode: images        # 保存输出: video / images / both / none
+  save_mode: video        # 保存输出: video / images / both / none
   send_tcp: true          # 是否发送TCP数据包
   send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址
   send_tcp_port: 5005     # 发送TCP数据包的端口号
+  simulate_delay: true    # 是否按视频自身帧率模拟实时节奏（快了等待、慢了跳帧；仅视频文件源有效，跑满算力压测时改 false）
+  simulate_fps: 12        # 模拟的现场帧率（仅 simulate_delay 开启时生效）；0 = 跟随视频文件自身的 fps
   
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
