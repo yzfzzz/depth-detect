@@ -2,6 +2,7 @@
 
 #include "STrack.h"
 
+#include <chrono>
 #include <cmath>
 
 // namespace
@@ -48,14 +49,16 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
               track.track_id, 0, -1.0f, isDangerous(motion) });
     }
 
+    // 报警时间戳必须是真实墙钟时刻（Unix 秒）
+    const double alert_ts =
+        std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+
     if (dangerous_objects.empty()) {
-        return AlertMessage{ frame_input.timestamp,
-                             frame_input.frame_id,
-                             frame_input.meta.img_w,
-                             frame_input.meta.img_h,
-                             {} };
+        return AlertMessage{
+            alert_ts, frame_input.frame_id, frame_input.meta.img_w, frame_input.meta.img_h, {}
+        };
     }
 
-    return AlertMessage{ frame_input.timestamp, frame_input.frame_id, frame_input.meta.img_w,
+    return AlertMessage{ alert_ts, frame_input.frame_id, frame_input.meta.img_w,
                          frame_input.meta.img_h, std::move(dangerous_objects) };
 }

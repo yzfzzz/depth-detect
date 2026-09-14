@@ -91,7 +91,7 @@ int run(char * video_path, char * config_path) {
     while (true) {
         frame_input_context.setFrameID(num_frames);
 #if defined(ENABLE_TIMER)
-        if (!DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("1.Cap Read", io_manager, readNextFrame,
+        if (!DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Cap Read", io_manager, readNextFrame,
                                                     frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
             break;
@@ -128,16 +128,32 @@ int run(char * video_path, char * config_path) {
                      (total_us > 0 ? (num_frames * 1000000LL / total_us) : 0));
         }
         // 发送报警信息
-        auto alert = alert_handler.buildAlert(frame_input_context, infer_output_context);
+        AlertMessage alert;
+#if defined(ENABLE_TIMER)
+        alert = DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Build Alert", alert_handler, buildAlert,
+                                                       frame_input_context, infer_output_context);
+
+#else
+        alert = alert_handler.buildAlert(frame_input_context, infer_output_context);
+#endif
         if (alert.has_value()) {
+#if defined(ENABLE_TIMER)
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("IO Send Alert", io_manager, sendAlert, alert);
+#else
             io_manager.sendAlert(alert);
+#endif
         }
         // 画图
         cv::Mat out_frame = drawOneFrame(
             frame_input_context, infer_output_context, drawing_manager,
             [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us);
-        // 保存结果
+// 保存结果
+#if defined(ENABLE_TIMER)
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("IO Save Frame", io_manager, saveFrame, out_frame,
+                                               num_frames);
+#else
         io_manager.saveFrame(out_frame, num_frames);
+#endif
 
         // 显示图像（通过 DisplayManager）
         // display_manager.updateData(infer_output_context.tracked_objects,
