@@ -17,6 +17,7 @@ class ConfigManager {
     bool                               isDepthEnabled() const;
     std::string                        getSaveMode() const;
     std::string                        getOutDir() const;
+    double                             getSaveBufferGb() const;
     bool                               isDisplayEnabled() const;
     bool                               isControlPanelEnabled() const;
     bool                               isSaveEnabled() const;
@@ -114,6 +115,11 @@ inline bool ConfigManager::isDepthEnabled() const {
 
 inline std::string ConfigManager::getSaveMode() const {
     return config_["io_manager"]["save_mode"].as<std::string>("none");
+}
+
+// 异步落盘缓冲区上限（GB）；IOManager 侧会做下限钳制
+inline double ConfigManager::getSaveBufferGb() const {
+    return config_["io_manager"]["save_buffer_gb"].as<double>(0.5);
 }
 
 inline std::string ConfigManager::getOutDir() const {

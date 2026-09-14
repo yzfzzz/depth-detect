@@ -170,6 +170,7 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     }
     APP_INFO("  [depth] depth_interval: {}", config.getDepthInterval());
     APP_INFO("  [yolo] detect_interval: {}", config.getYoloDetectInterval());
+    APP_INFO("  [io_manager] save_buffer_gb: {}", config.getSaveBufferGb());
 
     // motion_state_engine：快速靠近（approach）检测参数（原 TTC/运动状态一路已移除）
     APP_INFO("  [motion_state_engine.approach] enabled: {}", config.isApproachEnabled());

@@ -7,7 +7,25 @@
 #include <algorithm>  // std::all_of
 #include <cctype>     // std::isdigit
 #include <cstdlib>    // For system()
-#include <thread>     // std::this_thread::sleep_for（实时节奏模拟）
+#include <cstdio>
+#include <fstream>
+#include <thread>  // std::this_thread::sleep_for（实时节奏模拟）
+
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
+
+namespace {
+// GB -> 字节；下限钳到 0.1 GB（约 100 MB），防止配 0 导致缓冲永远为满
+size_t gbToBytes(double gb) {
+    const double clamped = std::max(0.1, gb);
+    return static_cast<size_t>(clamped * 1024.0 * 1024.0 * 1024.0);
+}
+}  // namespace
 
 IOManager::IOManager(const ConfigManager & config_manager) :
     IOManager(config_manager.getSaveMode(),
@@ -19,7 +37,8 @@ IOManager::IOManager(const ConfigManager & config_manager) :
               config_manager.getCameraHeight(),
               config_manager.getCameraFps(),
               config_manager.getSimulateFps(),
-              config_manager.isSimulateDelayEnabled()) {}
+              config_manager.isSimulateDelayEnabled(),
+              config_manager.getSaveBufferGb()) {}
 
 IOManager::IOManager(std::string save_mode,
                      std::string out_dir,
@@ -30,7 +49,8 @@ IOManager::IOManager(std::string save_mode,
                      int         camera_height,
                      int         camera_fps,
                      int         simulate_fps,
-                     bool        simulate_delay) :
+                     bool        simulate_delay,
+                     double      save_buffer_gb) :
     save_mode_(std::move(save_mode)),
     out_dir_(std::move(out_dir)),
     send_tcp_ip_(std::move(send_tcp_ip)),
@@ -40,12 +60,17 @@ IOManager::IOManager(std::string save_mode,
     camera_height_(camera_height),
     camera_fps_(camera_fps),
     simulate_fps_(simulate_fps),
-    simulate_delay_(simulate_delay) {}
+    simulate_delay_(simulate_delay),
+    save_buffer_limit_(gbToBytes(save_buffer_gb)) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
     if (save_mode_ != "none" && out_dir_ != "" && !dirExists(out_dir_)) {
         makeDir(out_dir_);
+    }
+    if (save_mode_ != "none") {
+        APP_INFO("[SaveWorker] async saving enabled: mode={}, buffer limit={:.1f} MB", save_mode_,
+                 static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0));
     }
     bool flag = openVideoSource(video_path);
     if (!flag) {
@@ -94,6 +119,9 @@ FrameMeta IOManager::Init(const std::string & video_path) {
 }
 
 IOManager::~IOManager() {
+    // 先停消费者线程（排空缓冲、join），之后才能释放 VideoWriter——
+    // 消费者还在用它写帧；排空保证退出时缓冲内未落盘数据完整写出
+    stopSaveWorker();
     if (video_writer_.isOpened()) {
         video_writer_.release();
     }
@@ -101,13 +129,36 @@ IOManager::~IOManager() {
 }
 
 void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
-    if (save_mode_ == "images" || save_mode_ == "both") {
-        std::string save_path = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
-        cv::imwrite(save_path, frame);
+    const bool save_image = (save_mode_ == "images" || save_mode_ == "both");
+    const bool save_video = (save_mode_ == "video" || save_mode_ == "both");
+    if (!save_image && !save_video) {
+        return;
     }
 
-    if (save_mode_ == "video" || save_mode_ == "both") {
-        // 首帧懒初始化：写盘尺寸取实际落盘帧尺寸（深度启用时为上下拼接的 2 倍高）
+    // 首次保存时拉起消费者线程（幂等，仅执行一次）
+    if (!save_worker_started_.load()) {
+        startSaveWorker();
+    }
+    if (save_stop_) {
+        return;  // 已进入退出流程，拒绝新任务
+    }
+
+    // 生产者侧完成 JPG 编码：队列里只放压缩字节流（一帧约 0.2~0.5 MB），
+    // 计账可控；imencode 与 imwrite 默认质量一致（95）
+    if (save_image) {
+        SaveTask task;
+        task.path = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
+        std::vector<int> encode_params;
+        encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
+        encode_params.push_back(95);
+        cv::imencode(".jpg", frame, task.encoded, encode_params);
+        task.bytes = task.encoded.size();
+        enqueueTask(std::move(task));
+    }
+
+    if (save_video) {
+        // 首帧懒初始化（生产者侧执行；之后只有消费者调用 write，无并发访问）：
+        // 写盘尺寸取实际落盘帧尺寸（深度启用时为上下拼接的 2 倍高）
         if (!video_writer_.isOpened() && !video_save_path_.empty()) {
             video_writer_.open(video_save_path_, cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
                                writer_fps_, frame.size());
@@ -117,9 +168,131 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
             }
         }
         if (video_writer_.isOpened()) {
-            video_writer_.write(frame);
+            SaveTask task;
+            task.is_video = true;
+            task.frame    = frame;  // Mat 浅拷贝（引用计数），队列入队 O(1)
+            task.bytes    = static_cast<size_t>(frame.total()) * frame.elemSize();
+            enqueueTask(std::move(task));
         }
     }
+}
+
+void IOManager::startSaveWorker() {
+    bool expected = false;
+    if (!save_worker_started_.compare_exchange_strong(expected, true)) {
+        return;  // 已启动（或并发启动中由赢家执行）
+    }
+    save_worker_ = std::thread(&IOManager::saveWorkerLoop, this);
+}
+
+void IOManager::saveWorkerLoop() {
+#ifdef __linux__
+    // Linux "CPU 空闲"调度：线程内自降优先级，无需特权（不需要 CAP_SYS_NICE）。
+    // 优先 SCHED_IDLE（低于所有普通线程，绝对让路）→ 失败退 nice 19 → 再失败保持默认
+    sched_param sp;
+    sp.sched_priority = 0;
+    if (pthread_setschedparam(pthread_self(), SCHED_IDLE, &sp) == 0) {
+        APP_INFO("[SaveWorker] scheduling: SCHED_IDLE (runs only when CPU idle)");
+    } else if (setpriority(PRIO_PROCESS, static_cast<int>(syscall(SYS_gettid)), 19) == 0) {
+        APP_INFO("[SaveWorker] scheduling: nice 19 (SCHED_IDLE unavailable)");
+    } else {
+        APP_WARN("[SaveWorker] priority lowering failed, running at default niceness");
+    }
+#else
+    APP_WARN("[SaveWorker] non-Linux platform: idle-priority scheduling not applied");
+#endif
+
+    for (;;) {
+        SaveTask task;
+        {
+            std::unique_lock<std::mutex> lock(save_mutex_);
+            // 队列空则等待；stop 置位后继续排空剩余任务（drain），保证退出不丢数据
+            save_cv_.wait(lock, [this] { return save_stop_ || !save_queue_.empty(); });
+            if (save_queue_.empty()) {
+                break;  // stop 且已排空
+            }
+            task = std::move(save_queue_.front());
+            save_queue_.pop_front();
+            save_buffer_bytes_ -= task.bytes;
+        }
+
+        // 写盘在锁外执行：fwrite/VideoWriter 耗时不占用生产者的入队路径
+        bool ok = true;
+        if (task.is_video) {
+            if (video_writer_.isOpened()) {
+                video_writer_.write(task.frame);
+            }
+        } else {
+            std::ofstream out(task.path.c_str(), std::ios::binary);
+            if (out.is_open()) {
+                out.write(reinterpret_cast<const char *>(task.encoded.data()),
+                          static_cast<std::streamsize>(task.encoded.size()));
+                ok = out.good();
+            } else {
+                ok = false;
+            }
+        }
+        save_written_ += 1;
+        if (!ok) {
+            save_failed_ += 1;
+            const size_t fail_total = save_failed_.load();
+            if (fail_total == 1 || fail_total % 100 == 0) {
+                APP_WARN("[SaveWorker] disk write failed (total {}): {}", fail_total, task.path);
+            }
+        }
+    }
+
+    APP_INFO(
+        "[SaveWorker] exit: written={}, dropped={}, io_failed={}, peak_buffer={:.1f} MB", save_written_.load(), save_dropped_.load(),
+        save_failed_.load(), static_cast<double>(save_peak_bytes_) / (1024.0 * 1024.0));
+}
+
+void IOManager::stopSaveWorker() {
+    {
+        std::lock_guard<std::mutex> lock(save_mutex_);
+        if (!save_worker_started_.load() || save_stop_) {
+            return;
+        }
+        save_stop_ = true;
+    }
+    save_cv_.notify_all();
+    if (save_worker_.joinable()) {
+        save_worker_.join();
+    }
+}
+
+void IOManager::enqueueTask(SaveTask && task) {
+    bool   dropped   = false;
+    size_t drop_seq  = 0;
+    double used_mb   = 0.0;
+    double limit_mb  = 0.0;
+    {
+        std::lock_guard<std::mutex> lock(save_mutex_);
+        // 满策略：丢新帧 + 计数告警（不阻塞生产者，保实时节拍）。
+        // 阻塞生产者会让视频时间与墙钟的 1:1 同步漂移，故不采用
+        if (save_buffer_bytes_ + task.bytes > save_buffer_limit_) {
+            save_dropped_ += 1;
+            dropped   = true;
+            drop_seq  = save_dropped_.load();
+            used_mb   = static_cast<double>(save_buffer_bytes_) / (1024.0 * 1024.0);
+            limit_mb  = static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0);
+        } else {
+            save_buffer_bytes_ += task.bytes;
+            save_peak_bytes_ = std::max(save_peak_bytes_, save_buffer_bytes_);
+            save_queue_.push_back(std::move(task));
+        }
+    }
+    // 告警在锁外打：日志写文件本身也有 IO 开销，不能拖住消费者出队
+    if (dropped) {
+        if (drop_seq == 1 || drop_seq % 100 == 0) {
+            APP_WARN(
+                "[SaveWorker] buffer full ({:.1f} / {:.1f} MB), dropped {} frame(s) total "
+                "(disk too slow; raise io_manager.save_buffer_gb or check storage)",
+                used_mb, limit_mb, drop_seq);
+        }
+        return;
+    }
+    save_cv_.notify_one();
 }
 
 bool IOManager::dirExists(const std::string & path) {
