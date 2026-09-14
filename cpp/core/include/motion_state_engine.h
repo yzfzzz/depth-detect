@@ -77,12 +77,14 @@ class SignalFilterBank {
 };
 
 struct ApproachParams {
-    int    warmup     = 30;    // 基线帧数；此期间无任何输出
-    double thr_depth  = 0.20;  // 深度相对基线的降幅阈值（0.2 = 20%），无量纲比值
-    double thr_height = 0.30;  // 框高相对基线的增幅阈值（0.2 = 20%）
-    int    recent_w   = 10;    // 近期趋势窗口长度（前后半窗各 recent_w/2）
-    double score_thr  = 0.60;  // 进入分数线
-    int    confirm    = 2;     // 连续达标帧数才进报警
+    int    detect_warmup = 30;    // 框高（检测）通道基线帧数
+    int    depth_warmup  = 30;    // 深度（模型）通道基线帧数
+    double thr_depth     = 0.20;  // 深度相对基线的降幅阈值
+    double thr_height    = 0.30;  // 框高相对基线的增幅阈值
+    int detect_recent_w = 10;  // 框高通道近期趋势窗口长度（前后半窗各 recent_w/2）
+    int    depth_recent_w = 10;    // 深度通道近期趋势窗口长度
+    double score_thr      = 0.60;  // 进入分数线
+    int    confirm        = 2;     // 连续达标帧数才进报警
     double exit_score_thr = 0.30;  // 退出分数线
     int    exit_confirm   = 3;     // 连续退出证据帧数才解除
 };
@@ -98,12 +100,10 @@ struct ApproachState {
 };
 
 // 判定"目标是否正在快速靠近"。
-//
-// 基线取前 warmup 帧的中位数（抗单帧噪声）；此后每帧算相对基线的累计变化，
-// 并要求最近 recent_w 帧仍在靠近（深度降 + 框高涨）——保证只报"正在靠近"，
-// 而不是"曾经靠近过"的目标持续报警。
+// 框高与深度两通道各自取前 warmup 帧的中位数做基线（抗单帧噪声），各自维护
+// recent_w 长度的趋势窗口；此后每帧算相对基线的累计变化，并要求两通道最近
+// 窗口均仍在靠近（深度降 + 框高涨）——保证只报"正在靠近"，而不是"曾经靠近过"的目标持续报警。
 // 进/出都要求连续帧证据（双边迟滞）：单帧分数抖动不会让报警闪烁；
-// 代价是 warmup 期间无输出，基线质量取决于该时段目标是否稳定。
 class ApproachDetectorCumulative {
   public:
     explicit ApproachDetectorCumulative(const ApproachParams & params = ApproachParams());
@@ -113,38 +113,51 @@ class ApproachDetectorCumulative {
 
     const ApproachParams & params() const { return params_; }
 
-    // 热更新（控制面板滑动条）：不清空已累积的轨迹状态；warmup 只对新轨迹生效
-    void setWarmup(int value);
+    // 热更新（控制面板滑动条）
+    void setDetectWarmup(int value);
+    void setDepthWarmup(int value);
     void setThrDepth(double value);
     void setThrHeight(double value);
-    void setRecentW(int value);
+    void setDetectRecentW(int value);
+    void setDepthRecentW(int value);
     void setScoreThr(double value);
     void setConfirm(int value);
     void setExitScoreThr(double value);
     void setExitConfirm(int value);
 
   private:
-    struct Sample {
-        double height = 0.0;
-        double depth  = 0.0;
+    // 各自攒基线、各自维护趋势窗口，互不共享样本
+    struct ChannelState {
+        std::vector<double> hist;  // 基线攒样队列
+        bool                has_baseline = false;
+        double              baseline     = 0.0;
+        std::deque<double>  recent;  // 近期趋势窗口
     };
 
     struct TrackState {
-        std::vector<Sample> hist;
-        bool                has_baseline = false;
-        double              baseline_d   = 0.0;
-        double              baseline_h   = 0.0;
-        std::deque<Sample>  recent;
-        int                 streak      = 0;  // 连续进入证据帧数
-        int                 exit_streak = 0;  // 连续退出证据帧数
-        bool                alarm       = false;
-        double              score       = 0.0;
-        double              depth_score = 0.0;
-        double              scale_score = 0.0;
+        ChannelState height_ch;
+        ChannelState depth_ch;
+        int          streak      = 0;  // 连续进入证据帧数
+        int          exit_streak = 0;  // 连续退出证据帧数
+        bool         alarm       = false;
+        double       score       = 0.0;
+        double       depth_score = 0.0;
+        double       scale_score = 0.0;
     };
 
     // 只统计 > 0 且有限的样本，全无效返回 false
     static bool medianPositive(const std::vector<double> & values, double & out);
+
+    // 推进单通道：攒基线（warmup 个样本取中位数）+ 灌趋势窗。
+    // 返回 true 表示通道就绪（基线立好且窗口填满），出参给出基线与前后半窗中位数；
+    // 基线攒样全无效时清空重攒、窗口含无效样本时本帧不判定（均返回 false）
+    static bool advanceChannel(ChannelState & ch,
+                               double         value,
+                               int            warmup,
+                               int            recent_w,
+                               double &       baseline,
+                               double &       prev_median,
+                               double &       cur_median);
 
     static double clip01(double value);
 

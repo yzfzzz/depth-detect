@@ -41,11 +41,24 @@ class Pipeline {
 
   private:
     void updateTracker(InferOutputContext & infer_output_context);
+    void runDepthInference(FrameInputContext &  frame_input_context,
+                           InferOutputContext & infer_output_context);
 
-    YoloDetectModel    detector_;
+    // 重叠帧使用的检测模型：优先轻量模型，未加载则回落主模型
+    YoloDetectModel & overlapDetector() {
+        return has_light_detector_ ? detector_light_ : detector_;
+    }
+
+    YoloDetectModel detector_;        // 主检测模型（yaml 配置，如 yolo26s）
+    YoloDetectModel detector_light_;  // 碰撞帧专用轻量模型（yolo26n），仅错峰时加载
+    bool               has_light_detector_ = false;  // 轻量模型是否可用
     LiteMonoDepthModel depth_model_;
     YoloDepthModel     yolo_depth_model_;
-    bool               depth_enabled_ = false;  // 由 config 的 depth.enabled 控制
+    bool               depth_enabled_   = false;  // 由 config 的 depth.enabled 控制
+    bool               stagger_infer_   = false;  // 错峰推理
+    int                detect_interval_ = 1;      // 检测推理间隔：N = 每 N 帧推 1 次
+    int                depth_interval_  = 1;      // 深度推理间隔：N = 每 N 帧推 1 次
+    bool use_yolo_depth_ = false;  // 深度模型类型：true = yolo_depth，false = lite_mono
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {
@@ -68,8 +81,7 @@ class Pipeline {
     std::string                                       track_log_path_;
     std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
     std::vector<int>                                  track_classes_{
-        COCO80_CLASS::BICYCLE, COCO80_CLASS::CAR, COCO80_CLASS::MOTORCYCLE, COCO80_CLASS::BUS,
-        COCO80_CLASS::TRUCK
+        COCO80::BICYCLE, COCO80::CAR, COCO80::MOTORCYCLE, COCO80::BUS, COCO80::TRUCK
     };  // bicycle, car, motorcycle, bus, train, truck
     bool is_normalize_ = false;
 };

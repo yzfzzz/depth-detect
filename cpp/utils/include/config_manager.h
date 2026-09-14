@@ -10,8 +10,10 @@ class ConfigManager {
   public:
     ConfigManager(const std::string config_path);
     std::map<std::string, std::string> getYoloModelPath() const;
+    std::string                        getYoloLightEnginePath() const;
     std::map<std::string, std::string> getDepthModelPath() const;
     int                                getDepthInterval() const;
+    int                                getYoloDetectInterval() const;
     bool                               isDepthEnabled() const;
     std::string                        getSaveMode() const;
     std::string                        getOutDir() const;
@@ -23,16 +25,19 @@ class ConfigManager {
     // ---- 快速靠近（approach）检测参数：方案 d 的 C++ 移植，见 approach_detector.h ----
     bool                               isApproachEnabled() const;
     std::string                        getApproachFilterMode() const;
-    int                                getApproachWarmup() const;
+    int                                getApproachDetectWarmup() const;
+    int                                getApproachDepthWarmup() const;
     float                              getApproachThrDepth() const;
     float                              getApproachThrHeight() const;
-    int                                getApproachRecentW() const;
+    int                                getApproachDetectRecentW() const;
+    int                                getApproachDepthRecentW() const;
     float                              getApproachScoreThr() const;
     int                                getApproachConfirm() const;
     float                              getApproachExitScoreThr() const;
     int                                getApproachExitConfirm() const;
     bool                               isUseGPU() const;
     bool                               isOverlapEnabled() const;
+    bool                               isStaggerInferEnabled() const;
     bool                               isLogFileSaveEnabled() const;
     bool                               isLogConsoleOutputEnabled() const;
     std::string                        getLogLevel() const;
@@ -74,6 +79,17 @@ inline std::map<std::string, std::string> ConfigManager::getYoloModelPath() cons
     return model_paths;
 }
 
+// 轻量检测引擎路径（yolo_model_path 中 type=light_engine 的条目），
+// 供错峰碰撞帧的重叠推理使用；未配置返回空串
+inline std::string ConfigManager::getYoloLightEnginePath() const {
+    for (const auto & model_path : config_["yolo"]["yolo_model_path"]) {
+        if (model_path["type"].as<std::string>() == "light_engine") {
+            return model_path["path"].as<std::string>();
+        }
+    }
+    return "";
+}
+
 inline std::map<std::string, std::string> ConfigManager::getDepthModelPath() const {
     std::map<std::string, std::string> model_paths;
     const auto &                       depth_model_paths = config_["depth"]["depth_model_path"];
@@ -85,6 +101,11 @@ inline std::map<std::string, std::string> ConfigManager::getDepthModelPath() con
 
 inline int ConfigManager::getDepthInterval() const {
     return config_["depth"]["depth_interval"].as<int>(1);
+}
+
+// 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰调度开启时生效）
+inline int ConfigManager::getYoloDetectInterval() const {
+    return config_["yolo"]["detect_interval"].as<int>(1);
 }
 
 inline bool ConfigManager::isDepthEnabled() const {
@@ -136,8 +157,14 @@ inline std::string ConfigManager::getApproachFilterMode() const {
     return config_["motion_state_engine"]["approach"]["filter"].as<std::string>("one_euro");
 }
 
-inline int ConfigManager::getApproachWarmup() const {
-    return config_["motion_state_engine"]["approach"]["warmup"].as<int>(30);
+inline int ConfigManager::getApproachDetectWarmup() const {
+    return config_["motion_state_engine"]["approach"]["detect_warmup"].as<int>(30);
+}
+
+// 深度通道未配置时回落到框高通道的值，保持与旧版单参数行为一致
+inline int ConfigManager::getApproachDepthWarmup() const {
+    return config_["motion_state_engine"]["approach"]["depth_warmup"].as<int>(
+        getApproachDetectWarmup());
 }
 
 inline float ConfigManager::getApproachThrDepth() const {
@@ -148,8 +175,13 @@ inline float ConfigManager::getApproachThrHeight() const {
     return config_["motion_state_engine"]["approach"]["thr_height"].as<float>(0.30f);
 }
 
-inline int ConfigManager::getApproachRecentW() const {
-    return config_["motion_state_engine"]["approach"]["recent_w"].as<int>(10);
+inline int ConfigManager::getApproachDetectRecentW() const {
+    return config_["motion_state_engine"]["approach"]["detect_recent_w"].as<int>(10);
+}
+
+inline int ConfigManager::getApproachDepthRecentW() const {
+    return config_["motion_state_engine"]["approach"]["depth_recent_w"].as<int>(
+        getApproachDetectRecentW());
 }
 
 inline float ConfigManager::getApproachScoreThr() const {
@@ -192,6 +224,11 @@ inline bool ConfigManager::isOverlapEnabled() const {
     return config_["prefer"]["overlap"].as<bool>(true);
 }
 
+// 错峰推理：奇数帧只跑检测、偶数帧只跑深度（每帧峰值算力减半；开启后优先于 overlap 走串行错峰路径）
+inline bool ConfigManager::isStaggerInferEnabled() const {
+    return config_["prefer"]["stagger_infer"].as<bool>(false);
+}
+
 inline void ConfigManager::setLogLevel(const std::string & log_level) {
     config_["logger"]["log_level"] = log_level;
 }
@@ -215,7 +252,6 @@ inline bool ConfigManager::isTrackLogEnabled() const {
 inline bool ConfigManager::isSimulateDelayEnabled() const {
     return config_["io_manager"]["simulate_delay"].as<bool>(true);
 }
-
 
 inline int ConfigManager::getSimulateFps() const {
     return config_["io_manager"]["simulate_fps"].as<int>(0);

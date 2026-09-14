@@ -62,16 +62,17 @@ class IOManager {
     cv::VideoWriter video_writer_;
 
     cv::VideoCapture video_capture_;
-    double           frame_interval_ms_;      // 模拟节奏的墙钟 tick（毫秒）= 1000/simulate_fps
-    double           video_frame_ms_ = 0.0;   // 视频自身帧间隔；0 = 无有效 fps 元数据
-    double           skip_accumulator_ = 0.0; // 已产出但尚未消费的帧数（带小数，跨 tick 累计防漂移）
-    int              simulate_fps_ = 0;       // 模拟的现场帧率；0 = 跟随视频自身 fps
-    bool             simulate_delay_ = false; // 是否启用实时节奏模拟（决定写盘 fps 的取值）
-    std::chrono::steady_clock::time_point last_tick_time_; // 上个 tick 唤醒时刻（产出计费窗口起点）
-    bool                                  is_first_frame_;   // 标记第一帧
+    double frame_interval_ms_;     // 模拟节奏的墙钟 tick（毫秒）= 1000/simulate_fps
+    double video_frame_ms_ = 0.0;  // 视频自身帧间隔；0 = 无有效 fps 元数据
+    double skip_accumulator_ = 0.0;  // 已产出但尚未消费的帧数（带小数，跨 tick 累计防漂移）
+    int  simulate_fps_   = 0;      // 模拟的现场帧率；0 = 跟随视频自身 fps
+    bool simulate_delay_ = false;  // 是否启用实时节奏模拟（决定写盘 fps 的取值）
+    std::chrono::steady_clock::time_point
+         last_tick_time_;          // 上个 tick 唤醒时刻（产出计费窗口起点）
+    bool is_first_frame_;          // 标记第一帧
 
-    std::string     video_save_path_;          // 结果视频保存路径（Init 计算，首帧保存时懒初始化写盘）
-    double          writer_fps_ = 30.0;        // 写盘 fps = 实际产出帧率（模拟节奏下为 simulate_fps）
+    std::string video_save_path_;  // 结果视频保存路径（Init 计算，首帧保存时懒初始化写盘）
+    double writer_fps_ = 30.0;  // 写盘 fps = 实际产出帧率（模拟节奏下为 simulate_fps）
 
     std::unique_ptr<JsonSender> json_sender_ptr_ = nullptr;  // 用于发送 JSON 数据的对象
     std::string                 send_tcp_ip_;                // 发送 JSON 数据的 TCP 地址

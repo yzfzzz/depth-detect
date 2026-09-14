@@ -169,12 +169,15 @@ void LoggerManager::logConfig(const ConfigManager & config) {
         APP_INFO("  [depth] model_path[{}]: {}", kv.first, kv.second);
     }
     APP_INFO("  [depth] depth_interval: {}", config.getDepthInterval());
+    APP_INFO("  [yolo] detect_interval: {}", config.getYoloDetectInterval());
 
     // motion_state_engine：快速靠近（approach）检测参数（原 TTC/运动状态一路已移除）
     APP_INFO("  [motion_state_engine.approach] enabled: {}", config.isApproachEnabled());
     APP_INFO("  [motion_state_engine.approach] filter: {}", config.getApproachFilterMode());
-    APP_INFO("  [motion_state_engine.approach] warmup/recent_w: {}/{}", config.getApproachWarmup(),
-             config.getApproachRecentW());
+    APP_INFO("  [motion_state_engine.approach] detect_warmup/recent_w (height): {}/{}",
+             config.getApproachDetectWarmup(), config.getApproachDetectRecentW());
+    APP_INFO("  [motion_state_engine.approach] warmup/recent_w (depth): {}/{}",
+             config.getApproachDepthWarmup(), config.getApproachDepthRecentW());
     APP_INFO("  [motion_state_engine.approach] thr_depth/thr_height: {}/{}",
              config.getApproachThrDepth(), config.getApproachThrHeight());
     APP_INFO("  [motion_state_engine.approach] score_thr/confirm: {}/{}",

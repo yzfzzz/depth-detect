@@ -159,19 +159,24 @@ void SignalFilterBank::update(int      track_id,
 
 ApproachDetectorCumulative::ApproachDetectorCumulative(const ApproachParams & params) :
     params_(params) {
-    // 走 setter 复用参数钳制（warmup >= 1、recent_w >= 2 等）
-    setWarmup(params.warmup);
+    setDetectWarmup(params.detect_warmup);
+    setDepthWarmup(params.depth_warmup);
     setThrDepth(params.thr_depth);
     setThrHeight(params.thr_height);
-    setRecentW(params.recent_w);
+    setDetectRecentW(params.detect_recent_w);
+    setDepthRecentW(params.depth_recent_w);
     setScoreThr(params.score_thr);
     setConfirm(params.confirm);
     setExitScoreThr(params.exit_score_thr);
     setExitConfirm(params.exit_confirm);
 }
 
-void ApproachDetectorCumulative::setWarmup(int value) {
-    params_.warmup = std::max(1, value);
+void ApproachDetectorCumulative::setDetectWarmup(int value) {
+    params_.detect_warmup = std::max(1, value);
+}
+
+void ApproachDetectorCumulative::setDepthWarmup(int value) {
+    params_.depth_warmup = std::max(1, value);
 }
 
 void ApproachDetectorCumulative::setThrDepth(double value) {
@@ -182,8 +187,12 @@ void ApproachDetectorCumulative::setThrHeight(double value) {
     params_.thr_height = value;
 }
 
-void ApproachDetectorCumulative::setRecentW(int value) {
-    params_.recent_w = std::max(2, value);
+void ApproachDetectorCumulative::setDetectRecentW(int value) {
+    params_.detect_recent_w = std::max(2, value);
+}
+
+void ApproachDetectorCumulative::setDepthRecentW(int value) {
+    params_.depth_recent_w = std::max(2, value);
 }
 
 void ApproachDetectorCumulative::setScoreThr(double value) {
@@ -222,6 +231,49 @@ double ApproachDetectorCumulative::clip01(double value) {
     return std::max(0.0, std::min(1.0, value));
 }
 
+bool ApproachDetectorCumulative::advanceChannel(ChannelState & ch,
+                                                double         value,
+                                                int            warmup,
+                                                int            recent_w,
+                                                double &       baseline,
+                                                double &       prev_median,
+                                                double &       cur_median) {
+    // 基线未就绪前只攒样本；全无效（如深度持续 <= 0）时清空重攒，避免 0 基线除零
+    if (!ch.has_baseline) {
+        ch.hist.push_back(value);
+        if (static_cast<int>(ch.hist.size()) < warmup) {
+            return false;
+        }
+        if (!medianPositive(ch.hist, ch.baseline)) {
+            ch.hist.clear();
+            return false;
+        }
+        ch.hist.clear();
+        ch.has_baseline = true;
+    }
+
+    ch.recent.push_back(value);
+    while (static_cast<int>(ch.recent.size()) > recent_w) {
+        ch.recent.pop_front();
+    }
+    if (static_cast<int>(ch.recent.size()) < recent_w) {
+        return false;
+    }
+
+    const int           half = recent_w / 2;
+    std::vector<double> prev;
+    std::vector<double> cur;
+    for (int i = 0; i < recent_w; ++i) {
+        (i < half ? prev : cur).push_back(ch.recent[static_cast<size_t>(i)]);
+    }
+    // 窗口内出现无效样本（如深度被滤波过冲到 <= 0）：本帧不判定
+    if (!medianPositive(prev, prev_median) || !medianPositive(cur, cur_median)) {
+        return false;
+    }
+    baseline = ch.baseline;
+    return true;
+}
+
 ApproachState ApproachDetectorCumulative::update(int    track_id,
                                                  double height,
                                                  double depth,
@@ -232,73 +284,30 @@ ApproachState ApproachDetectorCumulative::update(int    track_id,
     ApproachState out;
     TrackState &  state = tracks_[track_id];
 
-    // 基线未就绪前只攒样本，不产生判定
-    if (!state.has_baseline) {
-        state.hist.push_back(Sample{ height, depth });
-        if (static_cast<int>(state.hist.size()) < params_.warmup) {
-            applyScores(state, out);
-            return out;
-        }
+    // 两通道按各自的 warmup / recent_w 独立推进
+    double     h_baseline    = 0.0;
+    double     h_prev_median = 0.0;
+    double     h_cur_median  = 0.0;
+    double     d_baseline    = 0.0;
+    double     d_prev_median = 0.0;
+    double     d_cur_median  = 0.0;
+    const bool h_ready =
+        advanceChannel(state.height_ch, height, params_.detect_warmup, params_.detect_recent_w,
+                       h_baseline, h_prev_median, h_cur_median);
+    const bool d_ready =
+        advanceChannel(state.depth_ch, depth, params_.depth_warmup, params_.depth_recent_w,
+                       d_baseline, d_prev_median, d_cur_median);
 
-        std::vector<double> heights;
-        std::vector<double> depths;
-        heights.reserve(state.hist.size());
-        depths.reserve(state.hist.size());
-        for (const Sample & sample : state.hist) {
-            heights.push_back(sample.height);
-            depths.push_back(sample.depth);
-        }
-        state.hist.clear();
-
-        // 任一通道取不到有效中位数则维持无基线，下一帧重新攒（避免用 0 基线除零）
-        if (!medianPositive(depths, state.baseline_d) ||
-            !medianPositive(heights, state.baseline_h)) {
-            applyScores(state, out);
-            return out;
-        }
-        state.has_baseline = true;
-    }
-
-    state.recent.push_back(Sample{ height, depth });
-    while (static_cast<int>(state.recent.size()) > params_.recent_w) {
-        state.recent.pop_front();
-    }
-    if (static_cast<int>(state.recent.size()) < params_.recent_w) {
-        applyScores(state, out);
-        return out;
-    }
-
-    const int           half = params_.recent_w / 2;
-    std::vector<double> d_prev;
-    std::vector<double> d_cur;
-    std::vector<double> h_prev;
-    std::vector<double> h_cur;
-    for (int i = 0; i < params_.recent_w; ++i) {
-        const Sample & sample = state.recent[static_cast<size_t>(i)];
-        if (i < half) {
-            d_prev.push_back(sample.depth);
-            h_prev.push_back(sample.height);
-        } else {
-            d_cur.push_back(sample.depth);
-            h_cur.push_back(sample.height);
-        }
-    }
-
-    double d_prev_median = 0.0;
-    double d_cur_median  = 0.0;
-    double h_prev_median = 0.0;
-    double h_cur_median  = 0.0;
-    if (!medianPositive(d_prev, d_prev_median) || !medianPositive(d_cur, d_cur_median) ||
-        !medianPositive(h_prev, h_prev_median) || !medianPositive(h_cur, h_cur_median)) {
-        // 窗口内出现无效样本（如深度被滤波过冲到 <= 0）：保持上一帧分数
+    // score 与趋势门需要两路证据，任一通道未就绪时保持上帧分数
+    if (!h_ready || !d_ready) {
         applyScores(state, out);
         return out;
     }
 
     const bool trend_ok = d_cur_median < d_prev_median && h_cur_median > h_prev_median;
 
-    const double depth_drop  = (state.baseline_d - d_cur_median) / state.baseline_d;
-    const double height_gain = h_cur_median / state.baseline_h - 1.0;
+    const double depth_drop  = (d_baseline - d_cur_median) / d_baseline;
+    const double height_gain = h_cur_median / h_baseline - 1.0;
     const double depth_score = clip01(depth_drop / std::max(params_.thr_depth, kMinThreshold));
     const double scale_score = clip01(height_gain / std::max(params_.thr_height, kMinThreshold));
     const double score       = 0.4 * depth_score + 0.6 * scale_score;
@@ -367,11 +376,12 @@ void MotionStateEngine::configureApproach(const approach::ApproachParams & param
         approach_filter_bank_.reset(new approach::SignalFilterBank(filter_mode));
     }
     APP_INFO(
-        "[Approach] enabled: filter={}, warmup={}, thr_depth={:.3f}, thr_height={:.3f}, "
-        "recent_w={}, score_thr={:.3f}, confirm={}, exit_score_thr={:.3f}, exit_confirm={}",
-        approach::filterModeName(filter_mode), params.warmup, params.thr_depth, params.thr_height,
-        params.recent_w, params.score_thr, params.confirm, params.exit_score_thr,
-        params.exit_confirm);
+        "[Approach] enabled: filter={}, detect_warmup={}/depth {}, thr_depth={:.3f}, "
+        "thr_height={:.3f}, detect_recent_w={}/depth {}, score_thr={:.3f}, confirm={}, "
+        "exit_score_thr={:.3f}, exit_confirm={}",
+        approach::filterModeName(filter_mode), params.detect_warmup, params.depth_warmup,
+        params.thr_depth, params.thr_height, params.detect_recent_w, params.depth_recent_w,
+        params.score_thr, params.confirm, params.exit_score_thr, params.exit_confirm);
 }
 
 approach::ApproachState MotionStateEngine::updateApproachState(int    track_id,

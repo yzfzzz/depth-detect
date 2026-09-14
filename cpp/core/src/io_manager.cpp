@@ -66,7 +66,7 @@ FrameMeta IOManager::Init(const std::string & video_path) {
         video_save_path_ = out_dir_ + "/" + oss.str();
         // 写盘 fps = 实际产出帧率：模拟节奏下每墙钟秒只产出 simulate_fps 帧，
         // 若仍按源视频 fps 写文件头，回放会被等比加速（帧数少了一半，播放速度却不变）
-        writer_fps_ = frame_meta.fps;
+        writer_fps_      = frame_meta.fps;
         if (simulate_delay_ && simulate_fps_ > 0) {
             writer_fps_ = simulate_fps_;
         }
@@ -168,21 +168,22 @@ bool IOManager::openVideoSource(const std::string & video_path) {
         APP_ERROR("Failed to open video: {}", video_path);
         return false;
     }
-    is_first_frame_  = true;
+    is_first_frame_   = true;
     skip_accumulator_ = 0.0;
-    double fps       = video_capture_.get(cv::CAP_PROP_FPS);
+    double fps        = video_capture_.get(cv::CAP_PROP_FPS);
     // 视频自身帧间隔：跳帧对齐的基准（墙钟走 1ms，视频前进多少由它决定）
-    video_frame_ms_  = (fps > 0) ? 1000.0 / fps : 0.0;
+    video_frame_ms_   = (fps > 0) ? 1000.0 / fps : 0.0;
     if (simulate_fps_ > 0) {
         // 模拟现场帧率优先：不依赖视频自身的 fps 元数据
         frame_interval_ms_ = 1000.0 / simulate_fps_;
-        APP_INFO("Simulate delay enabled: {} fps (tick {:.1f} ms), video fps = {:.1f}, "
-                 "video will advance 1:1 with wall clock",
-                 simulate_fps_, frame_interval_ms_, fps);
+        APP_INFO(
+            "Simulate delay enabled: {} fps (tick {:.1f} ms), video fps = {:.1f}, "
+            "video will advance 1:1 with wall clock",
+            simulate_fps_, frame_interval_ms_, fps);
     } else if (fps > 0) {
         frame_interval_ms_ = 1000.0 / fps;
-        APP_INFO("Simulate delay enabled: follow video fps = {:.1f} (tick {:.1f} ms)",
-                 fps, frame_interval_ms_);
+        APP_INFO("Simulate delay enabled: follow video fps = {:.1f} (tick {:.1f} ms)", fps,
+                 frame_interval_ms_);
     } else {
         // 视频无有效 fps 元数据时退化为不限速（frame_interval_ms_ <= 0 时不做节奏控制）
         frame_interval_ms_ = 0.0;
@@ -216,17 +217,16 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     }
 
     if (is_first_frame_ || !simulate_delay || frame_interval_ms_ <= 0) {
-        is_first_frame_  = false;
-        last_tick_time_  = std::chrono::steady_clock::now();
+        is_first_frame_ = false;
+        last_tick_time_ = std::chrono::steady_clock::now();
     } else {
         // 实时节拍模拟: 模拟端侧设备低帧率运行
         // 从相机取流，每个 tick 只保留这段时间里视频产出的最新一帧，过时帧直接丢弃
-        std::this_thread::sleep_until(last_tick_time_ +
-                                      std::chrono::duration<double, std::milli>(frame_interval_ms_));
-        auto now = std::chrono::steady_clock::now();
-        double window_ms =
-            std::chrono::duration<double, std::milli>(now - last_tick_time_).count();
-        last_tick_time_ = now;
+        std::this_thread::sleep_until(
+            last_tick_time_ + std::chrono::duration<double, std::milli>(frame_interval_ms_));
+        auto   now       = std::chrono::steady_clock::now();
+        double window_ms = std::chrono::duration<double, std::milli>(now - last_tick_time_).count();
+        last_tick_time_  = now;
         if (video_frame_ms_ > 0) {
             // 窗口内视频产出的帧数；小数进累积器跨 tick 累计，保证总量一致
             skip_accumulator_ += window_ms / video_frame_ms_;

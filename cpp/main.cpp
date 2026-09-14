@@ -99,7 +99,9 @@ int run(char * video_path, char * config_path) {
         // 执行推理流水线
         std::string name = "Infer Pipeline";
         // DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context, infer_output_context);
-        if (config_manager.isOverlapEnabled()) {
+        // 错峰推理开启时走 process（内部按间隔调度，检测/深度同帧时转发 processOverlap）；
+        // 错峰关闭且 overlap 开启时走纯重叠路径
+        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
             DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap,
                                                    frame_input_context, infer_output_context);
         } else {
@@ -113,7 +115,7 @@ int run(char * video_path, char * config_path) {
             break;
         }
 
-        if (config_manager.isOverlapEnabled()) {
+        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
             pipeline.processOverlap(frame_input_context, infer_output_context);
         } else {
             pipeline.process(frame_input_context, infer_output_context);

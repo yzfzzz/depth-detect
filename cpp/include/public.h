@@ -59,7 +59,7 @@ const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "
                                               "vase",          "scissors",     "teddy bear",
                                               "hair drier",    "toothbrush" };
 
-enum COCO80_CLASS {
+enum COCO80 {
     PERSON     = 0,
     BICYCLE    = 1,
     CAR        = 2,

@@ -9,6 +9,7 @@
 #include "public.h"
 #include "STrack.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 
@@ -21,6 +22,9 @@ double durationMs(const std::chrono::steady_clock::time_point & begin,
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
+    stagger_infer_(config_manager.isStaggerInferEnabled()),
+    detect_interval_(std::max(1, config_manager.getYoloDetectInterval())),
+    depth_interval_(std::max(1, config_manager.getDepthInterval())),
     tracker_(static_cast<int>(60, 0.3, 0.1, 0.5, 0.8)) {
     bool is_normalize = false;
 
@@ -34,14 +38,16 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
 
     // 快速靠近检测参数
     approach::ApproachParams approach_params;
-    approach_params.warmup         = config_manager.getApproachWarmup();
-    approach_params.thr_depth      = config_manager.getApproachThrDepth();
-    approach_params.thr_height     = config_manager.getApproachThrHeight();
-    approach_params.recent_w       = config_manager.getApproachRecentW();
-    approach_params.score_thr      = config_manager.getApproachScoreThr();
-    approach_params.confirm        = config_manager.getApproachConfirm();
-    approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
-    approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
+    approach_params.detect_warmup   = config_manager.getApproachDetectWarmup();
+    approach_params.depth_warmup    = config_manager.getApproachDepthWarmup();
+    approach_params.thr_depth       = config_manager.getApproachThrDepth();
+    approach_params.thr_height      = config_manager.getApproachThrHeight();
+    approach_params.detect_recent_w = config_manager.getApproachDetectRecentW();
+    approach_params.depth_recent_w  = config_manager.getApproachDepthRecentW();
+    approach_params.score_thr       = config_manager.getApproachScoreThr();
+    approach_params.confirm         = config_manager.getApproachConfirm();
+    approach_params.exit_score_thr  = config_manager.getApproachExitScoreThr();
+    approach_params.exit_confirm    = config_manager.getApproachExitConfirm();
 
     // 未识别的取值回落到 none 并告警
     const std::string    filter_name = config_manager.getApproachFilterMode();
@@ -53,20 +59,52 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
                                            config_manager.isApproachEnabled());
 
     // 是否加载深度模型由 config 的 depth.enabled 控制
+    use_yolo_depth_ = (config_manager.getDepthModelType() == "yolo_depth");
     if (config_manager.isDepthEnabled()) {
         if (config_manager.getDepthModelType() == "lite_mono") {
             depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
                               frame_meta.img_h, is_normalize, config_manager.isUseGPU());
-        } else if (config_manager.getDepthModelType() == "yolo_depth") {
+        } else if (use_yolo_depth_) {
             yolo_depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
                                    frame_meta.img_h, config_manager.isUseGPU());
         } else {
             APP_ERROR("Unsupported depth model type: {}", config_manager.getDepthModelType());
         }
     }
-    detector_.init(config_manager.getYoloModelPath(), frame_meta.img_w, frame_meta.img_h,
+    // 主检测模型, 非碰撞帧用它保精度
+    std::map<std::string, std::string> yolo_model_paths = config_manager.getYoloModelPath();
+    detector_.init(yolo_model_paths, frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
                    config_manager.isUseGPU());
+
+    // 错峰调度下碰撞帧（检测与深度同帧）走重叠推理，主模型与深度模型同帧抢占 GPU
+    // 延迟过大 → 加载 yaml 配置的 light_engine（yolo26n）专用于碰撞帧；
+    // 两实例各自持有独立的 engine/context，GPU 显存会多占一份
+    if (stagger_infer_ && depth_enabled_) {
+        const std::string light_engine_path = config_manager.getYoloLightEnginePath();
+        if (!light_engine_path.empty()) {
+            detector_light_.init(
+                {
+                    { "engine", light_engine_path }
+            },
+                frame_meta.img_w, frame_meta.img_h, config_manager.getYoloNmsThresh(),
+                config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU());
+            has_light_detector_ = true;
+            APP_INFO("[Pipeline] overlap-frame light detector: {}", light_engine_path);
+        } else {
+            APP_WARN(
+                "[Pipeline] yolo.light_engine not configured; "
+                "overlap frames will reuse the main detector");
+        }
+    }
+
+    if (stagger_infer_ && depth_enabled_) {
+        APP_INFO(
+            "[Pipeline] staggered inference enabled: detect every {} frame(s), depth every {} "
+            "frame(s); frames where both fire use overlapped inference "
+            "(skipped model reuses last result)",
+            detect_interval_, depth_interval_);
+    }
 
     // 是否记录每个 track 的类别/原始深度/面积/帧数等到 CSV
     if (config_manager.isTrackLogEnabled()) {
@@ -105,44 +143,63 @@ Pipeline::~Pipeline() {
 
 void Pipeline::init() {}
 
+void Pipeline::runDepthInference(FrameInputContext &  frame_input_context,
+                                 InferOutputContext & infer_output_context) {
+    if (use_yolo_depth_) {
+        yolo_depth_model_.runInference(frame_input_context, infer_output_context);
+    } else {
+        depth_model_.runInference(frame_input_context, infer_output_context);
+    }
+}
+
 void Pipeline::process(FrameInputContext &  frame_input_context,
                        InferOutputContext & infer_output_context) {
-    // 检测模型（YoloDetectModel detector_）同步推理耗时
+    // 间隔调度（stagger_infer 开启时生效）：frame_id % interval == 0 的帧触发对应模型推理，
+    // interval=1 每帧推、2 隔帧推、3 隔2帧推。被跳过的一路沿用上一帧结果：
+    // 检测帧不更新深度图（depth_raw_infer_out 保持），深度帧不调用 updateTracker
+    const bool stagger      = stagger_infer_ && depth_enabled_;
+    const bool detect_frame = !stagger || (frame_input_context.frame_id % detect_interval_ == 0);
+    const bool depth_frame =
+        depth_enabled_ && (!stagger || (frame_input_context.frame_id % depth_interval_ == 0));
+
+    // 两路调度到同一帧：走重叠推理（异步并行提交，算力重叠利用）。
+    // 重叠实现仅 yolo_depth 支持（异步双 stream），lite_mono 回落为串行同帧执行
+    if (stagger && detect_frame && depth_frame && use_yolo_depth_) {
+        processOverlap(frame_input_context, infer_output_context);
+        return;
+    }
+
     const auto t_detect_begin = std::chrono::steady_clock::now();
-    detector_.runInference(frame_input_context, infer_output_context);
-    const auto t_detect_end = std::chrono::steady_clock::now();
+    if (detect_frame) {
+        detector_.runInference(frame_input_context, infer_output_context);
+    }
 
-    // 深度模型推理耗时（注意：同步路径用的是 depth_model_，重叠路径才用 yolo_depth_model_）
     double depth_ms = 0.0;
-    if (depth_enabled_) {
+    if (depth_frame) {
         const auto t_depth_begin = std::chrono::steady_clock::now();
-        depth_model_.runInference(frame_input_context, infer_output_context);
+        runDepthInference(frame_input_context, infer_output_context);
         const auto t_depth_end = std::chrono::steady_clock::now();
-        depth_ms               = durationMs(t_depth_begin, t_depth_end);
     }
 
-    updateTracker(infer_output_context);
+    if (detect_frame) {
+        updateTracker(infer_output_context);
+    }
     updateMotionStates(frame_input_context, infer_output_context);
-
-    if (depth_enabled_) {
-        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms, depth_model_ = {:.2f} ms",
-                 frame_input_context.frame_id, durationMs(t_detect_begin, t_detect_end), depth_ms);
-    } else {
-        APP_INFO("infer latency frame {}: yolo_detect = {:.2f} ms", frame_input_context.frame_id,
-                 durationMs(t_detect_begin, t_detect_end));
-    }
 }
 
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
-    // yolo_detect_model_ (detector_)：从发起异步推理到结果可取
-    detector_.runInferenceAsync(frame_input_context);
+    // 重叠帧用轻量检测模型（yolo26n），降低与深度模型同帧抢占 GPU 的延迟
+    YoloDetectModel & detector = overlapDetector();
+
+    // detector：从发起异步推理到结果可取
+    detector.runInferenceAsync(frame_input_context);
 
     // yolo_depth_model_：从发起异步推理到结果可取（与检测在不同 stream 上可重叠执行）
     if (depth_enabled_) {
         yolo_depth_model_.runInferenceAsync(frame_input_context);
     }
-    detector_.getInferOutputResult(infer_output_context);
+    detector.getInferOutputResult(infer_output_context);
     updateTracker(infer_output_context);
     if (depth_enabled_) {
         yolo_depth_model_.getInferOutputResult(infer_output_context);
@@ -158,7 +215,9 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
     // 深度不可用时接近判定拿到 0 深度（视为无效，检测器不产生虚假变化）
     cv::Mat depth_metric;
     if (depth_enabled_ && !infer_output_context.depth_raw_infer_out.empty()) {
-        const auto dims = yolo_depth_model_.getInputDims();
+        // 输入尺寸取自实际执行推理的那个深度模型
+        const auto dims =
+            use_yolo_depth_ ? yolo_depth_model_.getInputDims() : depth_model_.getInputDims();
         if (dims.size() >= 4 && dims[2] > 0 && dims[3] > 0) {
             cv::Mat raw_depth_map(dims[2], dims[3], CV_32FC1,
                                   infer_output_context.depth_raw_infer_out.data());
