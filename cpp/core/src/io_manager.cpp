@@ -151,7 +151,7 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         task.path = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
         std::vector<int> encode_params;
         encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-        encode_params.push_back(9);
+        encode_params.push_back(75);
         cv::imencode(".jpg", frame, task.encoded, encode_params);
         task.bytes = task.encoded.size();
         enqueueTask(std::move(task));
