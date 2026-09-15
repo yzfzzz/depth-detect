@@ -8,12 +8,12 @@
 #include <opencv2/core/hal/interface.h>
 #include <sys/stat.h>
 
-#include <nlohmann/json.hpp>
-#include <opencv2/opencv.hpp>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <nlohmann/json.hpp>
+#include <opencv2/opencv.hpp>
 #include <string>
 #include <thread>
 #include <vector>
@@ -95,30 +95,30 @@ class IOManager {
     // 消费者（低优先级线程）：CPU 空闲时逐条写盘。缓冲按字节计账，上限
     // save_buffer_limit_ = save_buffer_gb * 1024^3，写满时丢新帧并计数告警。
     struct SaveTask {
-        bool               is_video = false;  // true=视频帧（顺序写 VideoWriter），false=JPG 图片
-        std::string        path;              // 图片保存路径（视频帧忽略）
-        cv::Mat            frame;             // 视频模式：原始帧（Mat 引用计数，无深拷贝）
-        std::vector<uchar> encoded;           // 图片模式：JPG 编码字节流
-        size_t             bytes = 0;         // 本任务占用缓冲的字节数（计账用）
+        bool is_video = false;     // true=视频帧（顺序写 VideoWriter），false=JPG 图片
+        std::string        path;   // 图片保存路径（视频帧忽略）
+        cv::Mat            frame;  // 视频模式：原始帧（Mat 引用计数，无深拷贝）
+        std::vector<uchar> encoded;    // 图片模式：JPG 编码字节流
+        size_t             bytes = 0;  // 本任务占用缓冲的字节数（计账用）
     };
 
-    void startSaveWorker();   // 首次 saveFrame 时拉起消费者线程（幂等）
-    void saveWorkerLoop();    // 消费者主循环：排队空后随 stop 标志退出
-    void stopSaveWorker();    // 置停止标志、唤醒、排空队列、join（析构时调用，保证不丢数据）
+    void startSaveWorker();  // 首次 saveFrame 时拉起消费者线程（幂等）
+    void saveWorkerLoop();   // 消费者主循环：排队空后随 stop 标志退出
+    void stopSaveWorker();  // 置停止标志、唤醒、排空队列、join（析构时调用，保证不丢数据）
     void enqueueTask(SaveTask && task);  // 非阻塞入队；写满丢弃新帧并计数告警
 
-    std::deque<SaveTask>   save_queue_;
-    std::mutex             save_mutex_;
+    std::deque<SaveTask>    save_queue_;
+    std::mutex              save_mutex_;
     std::condition_variable save_cv_;
-    size_t                 save_buffer_bytes_ = 0;  // 当前占用（字节，仅持锁访问）
-    size_t                 save_buffer_limit_ = 0;  // 上限（字节）
-    size_t                 save_peak_bytes_   = 0;  // 峰值占用（统计，仅持锁访问）
-    std::atomic<size_t>    save_written_{0};        // 已落盘帧数（消费者累计）
-    std::atomic<size_t>    save_dropped_{0};        // 因缓冲满被丢弃的帧数（生产者累计）
-    std::atomic<size_t>    save_failed_{0};         // 写盘失败次数（磁盘满/IO 错误）
-    std::atomic<bool>      save_worker_started_{false};
-    std::atomic<bool>      save_stop_{false};       // 停止标志（生产者检查、消费者退出条件）
-    std::thread            save_worker_;
+    size_t                  save_buffer_bytes_ = 0;  // 当前占用（字节，仅持锁访问）
+    size_t                  save_buffer_limit_ = 0;  // 上限（字节）
+    size_t                  save_peak_bytes_   = 0;  // 峰值占用（统计，仅持锁访问）
+    std::atomic<size_t>     save_written_{ 0 };      // 已落盘帧数（消费者累计）
+    std::atomic<size_t> save_dropped_{ 0 };  // 因缓冲满被丢弃的帧数（生产者累计）
+    std::atomic<size_t> save_failed_{ 0 };   // 写盘失败次数（磁盘满/IO 错误）
+    std::atomic<bool>   save_worker_started_{ false };
+    std::atomic<bool> save_stop_{ false };  // 停止标志（生产者检查、消费者退出条件）
+    std::thread save_worker_;
 };
 
 struct SendObjectData {

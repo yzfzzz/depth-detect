@@ -6,17 +6,18 @@
 
 #include <algorithm>  // std::all_of
 #include <cctype>     // std::isdigit
-#include <cstdlib>    // For system()
 #include <cstdio>
+#include <cstdlib>    // For system()
 #include <fstream>
+#include <opencv2/imgcodecs.hpp>
 #include <thread>  // std::this_thread::sleep_for（实时节奏模拟）
 
 #ifdef __linux__
-#include <pthread.h>
-#include <sched.h>
-#include <sys/resource.h>
-#include <sys/syscall.h>
-#include <unistd.h>
+#    include <pthread.h>
+#    include <sched.h>
+#    include <sys/resource.h>
+#    include <sys/syscall.h>
+#    include <unistd.h>
 #endif
 
 namespace {
@@ -150,7 +151,7 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         task.path = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
         std::vector<int> encode_params;
         encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-        encode_params.push_back(95);
+        encode_params.push_back(9);
         cv::imencode(".jpg", frame, task.encoded, encode_params);
         task.bytes = task.encoded.size();
         enqueueTask(std::move(task));
@@ -242,9 +243,9 @@ void IOManager::saveWorkerLoop() {
         }
     }
 
-    APP_INFO(
-        "[SaveWorker] exit: written={}, dropped={}, io_failed={}, peak_buffer={:.1f} MB", save_written_.load(), save_dropped_.load(),
-        save_failed_.load(), static_cast<double>(save_peak_bytes_) / (1024.0 * 1024.0));
+    APP_INFO("[SaveWorker] exit: written={}, dropped={}, io_failed={}, peak_buffer={:.1f} MB",
+             save_written_.load(), save_dropped_.load(), save_failed_.load(),
+             static_cast<double>(save_peak_bytes_) / (1024.0 * 1024.0));
 }
 
 void IOManager::stopSaveWorker() {
@@ -262,20 +263,20 @@ void IOManager::stopSaveWorker() {
 }
 
 void IOManager::enqueueTask(SaveTask && task) {
-    bool   dropped   = false;
-    size_t drop_seq  = 0;
-    double used_mb   = 0.0;
-    double limit_mb  = 0.0;
+    bool   dropped  = false;
+    size_t drop_seq = 0;
+    double used_mb  = 0.0;
+    double limit_mb = 0.0;
     {
         std::lock_guard<std::mutex> lock(save_mutex_);
         // 满策略：丢新帧 + 计数告警（不阻塞生产者，保实时节拍）。
         // 阻塞生产者会让视频时间与墙钟的 1:1 同步漂移，故不采用
         if (save_buffer_bytes_ + task.bytes > save_buffer_limit_) {
             save_dropped_ += 1;
-            dropped   = true;
-            drop_seq  = save_dropped_.load();
-            used_mb   = static_cast<double>(save_buffer_bytes_) / (1024.0 * 1024.0);
-            limit_mb  = static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0);
+            dropped  = true;
+            drop_seq = save_dropped_.load();
+            used_mb  = static_cast<double>(save_buffer_bytes_) / (1024.0 * 1024.0);
+            limit_mb = static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0);
         } else {
             save_buffer_bytes_ += task.bytes;
             save_peak_bytes_ = std::max(save_peak_bytes_, save_buffer_bytes_);
