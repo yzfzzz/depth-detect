@@ -2,7 +2,7 @@
 #include "config_manager.h"
 #include "danger_alert_handler.h"
 #include "frame.h"
-#include "JsonSender.hpp"
+#include "tcp_handler.h"
 
 #include <memory.h>
 #include <opencv2/core/hal/interface.h>
@@ -32,7 +32,10 @@ class IOManager {
               int         camera_fps       = 30,
               int         simulate_fps     = 0,
               bool        simulate_delay   = false,
-              double      save_buffer_gb   = 0.5);
+              double      save_buffer_gb   = 0.5,
+              bool        tcp_reconnect    = true,
+              int         tcp_check_interval_s  = 5,
+              int         tcp_connect_timeout_s = 3);
 
     FrameMeta Init(const std::string & video_path);
 
@@ -81,15 +84,17 @@ class IOManager {
     std::string video_save_path_;  // 结果视频保存路径（Init 计算，首帧保存时懒初始化写盘）
     double writer_fps_ = 30.0;  // 写盘 fps = 实际产出帧率（模拟节奏下为 simulate_fps）
 
-    std::unique_ptr<JsonSender> json_sender_ptr_ = nullptr;  // 用于发送 JSON 数据的对象
+    std::unique_ptr<TcpHandler> tcp_handler_ = nullptr;  // TCP 发送 + 断联自动重连（看门狗线程）
     std::string                 send_tcp_ip_;                // 发送 JSON 数据的 TCP 地址
     int                         send_tcp_port_;              // 发送 JSON 数据的 TCP 端口
     bool                        send_tcp_enabled_;           // 是否启用 TCP 发送
+    int                         tcp_check_interval_s_  = 5;  // 看门狗探活/重试周期
+    int                         tcp_connect_timeout_s_ = 3;  // 单次非阻塞 connect 上限
+    bool                        tcp_reconnect_         = true;  // 断联自动重连开关
     // 仅在外接 usb相机时生效
     int                         camera_width_  = 1280;   // 相机采集宽度
     int                         camera_height_ = 720;    // 相机采集高度
     int                         camera_fps_    = 30;     // 相机采集帧率
-    bool is_json_sender_ok_                    = false;  // 标记 JsonSender 是否初始化成功
 
     // 生产者（主循环）：saveFrame 内 imencode 成 JPG 字节流后非阻塞入队；
     // 消费者（低优先级线程）：CPU 空闲时逐条写盘。缓冲按字节计账，上限

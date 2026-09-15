@@ -39,7 +39,10 @@ IOManager::IOManager(const ConfigManager & config_manager) :
               config_manager.getCameraFps(),
               config_manager.getSimulateFps(),
               config_manager.isSimulateDelayEnabled(),
-              config_manager.getSaveBufferGb()) {}
+              config_manager.getSaveBufferGb(),
+              config_manager.isTcpReconnectEnabled(),
+              config_manager.getTcpCheckIntervalS(),
+              config_manager.getTcpConnectTimeoutS()) {}
 
 IOManager::IOManager(std::string save_mode,
                      std::string out_dir,
@@ -51,7 +54,10 @@ IOManager::IOManager(std::string save_mode,
                      int         camera_fps,
                      int         simulate_fps,
                      bool        simulate_delay,
-                     double      save_buffer_gb) :
+                     double      save_buffer_gb,
+                     bool        tcp_reconnect,
+                     int         tcp_check_interval_s,
+                     int         tcp_connect_timeout_s) :
     save_mode_(std::move(save_mode)),
     out_dir_(std::move(out_dir)),
     send_tcp_ip_(std::move(send_tcp_ip)),
@@ -62,7 +68,10 @@ IOManager::IOManager(std::string save_mode,
     camera_fps_(camera_fps),
     simulate_fps_(simulate_fps),
     simulate_delay_(simulate_delay),
-    save_buffer_limit_(gbToBytes(save_buffer_gb)) {}
+    save_buffer_limit_(gbToBytes(save_buffer_gb)),
+    tcp_reconnect_(tcp_reconnect),
+    tcp_check_interval_s_(tcp_check_interval_s),
+    tcp_connect_timeout_s_(tcp_connect_timeout_s) {}
 
 FrameMeta IOManager::Init(const std::string & video_path) {
     // 如果需要保存图片，检查目标文件夹并创建
@@ -103,16 +112,12 @@ FrameMeta IOManager::Init(const std::string & video_path) {
     if (send_tcp_enabled_) {
         APP_INFO("TCP sending is enabled. Will send JSON data to {}:{}", send_tcp_ip_,
                  send_tcp_port_);
-        json_sender_ptr_   = std::make_unique<JsonSender>(send_tcp_ip_, send_tcp_port_);
-        is_json_sender_ok_ = (json_sender_ptr_->get_fd() >= 0);
-        if (!is_json_sender_ok_) {
-            APP_WARN(
-                "Failed to initialize JsonSender for {}:{}, we will not send json data to server.",
-                send_tcp_ip_, send_tcp_port_);
-        } else {
-            // 对端处理慢或 TCP 发送缓冲区满了，会导致发送失败，因此需要设置非阻塞，直接放弃发送防止卡死
-            json_sender_ptr_->set_nonblocking();
-        }
+        // 连接建立与断联重连全部交给 TcpHandler 的看门狗线程：
+        // 首连非阻塞（服务端未启动不会被卡死），断开后按 tcp_check_interval_s 周期重连
+        tcp_handler_ = std::make_unique<TcpHandler>(send_tcp_ip_, send_tcp_port_,
+                                                    tcp_check_interval_s_, tcp_connect_timeout_s_,
+                                                    tcp_reconnect_);
+        tcp_handler_->start();
     } else {
         APP_WARN("TCP sending is disabled.");
     }
@@ -120,8 +125,11 @@ FrameMeta IOManager::Init(const std::string & video_path) {
 }
 
 IOManager::~IOManager() {
-    // 先停消费者线程（排空缓冲、join），之后才能释放 VideoWriter——
-    // 消费者还在用它写帧；排空保证退出时缓冲内未落盘数据完整写出
+    // 先停 TCP 看门狗（放弃未完成的重连、打连接统计），再停落盘线程——
+    // 消费者还在用 VideoWriter 写帧；排空保证退出时缓冲内未落盘数据完整写出
+    if (tcp_handler_) {
+        tcp_handler_->stop();
+    }
     stopSaveWorker();
     if (video_writer_.isOpened()) {
         video_writer_.release();
@@ -440,11 +448,13 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
 }
 
 bool IOManager::sendAlert(const AlertMessage & alert) const {
-    if (!is_json_sender_ok_ || !send_tcp_enabled_) {
+    if (!send_tcp_enabled_ || !tcp_handler_) {
         return false;
     }
     nlohmann::json j(alert);
-    bool           success = json_sender_ptr_->send(j);
+    // TcpHandler 状态感知发送：非 CONNECTED 直接丢弃并计数（断联期间告警不重发）；
+    // 发送失败时由 TcpHandler 内部标记 BROKEN 并唤醒看门狗重连
+    bool           success = tcp_handler_->sendJson(j);
     if (!success) {
         APP_WARN("Failed to send JSON message: {}", j.dump());
         return false;

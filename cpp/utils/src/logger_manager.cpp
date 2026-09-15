@@ -197,6 +197,9 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     APP_INFO("  [io_manager] send_tcp: {}", config.isSendTcpEnabled());
     APP_INFO("  [io_manager] send_tcp_ip: {}", config.getSendTcpIp());
     APP_INFO("  [io_manager] send_tcp_port: {}", config.getSendTcpPort());
+    APP_INFO("  [io_manager] tcp_reconnect: {} (interval {} s, connect timeout {} s)",
+             config.isTcpReconnectEnabled(), config.getTcpCheckIntervalS(),
+             config.getTcpConnectTimeoutS());
     APP_INFO("  [io_manager] simulate_delay: {}", config.isSimulateDelayEnabled());
     APP_INFO("  [io_manager] simulate_fps: {}", config.getSimulateFps());
 

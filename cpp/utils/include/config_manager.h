@@ -47,6 +47,9 @@ class ConfigManager {
     std::string                        getSendTcpIp() const;
     int                                getSendTcpPort() const;
     bool                               isSendTcpEnabled() const;
+    bool                               isTcpReconnectEnabled() const;
+    int                                getTcpCheckIntervalS() const;
+    int                                getTcpConnectTimeoutS() const;
     bool                               isTrackLogEnabled() const;
     bool                               isSimulateDelayEnabled() const;
     int                                getSimulateFps() const;
@@ -249,6 +252,19 @@ inline int ConfigManager::getSendTcpPort() const {
 
 inline bool ConfigManager::isSendTcpEnabled() const {
     return config_["io_manager"]["send_tcp"].as<bool>(false);
+}
+
+// 断联自动重连：关闭则保持旧行为（失败即停发，不重试）
+inline bool ConfigManager::isTcpReconnectEnabled() const {
+    return config_["io_manager"]["tcp_reconnect"].as<bool>(true);
+}
+
+inline int ConfigManager::getTcpCheckIntervalS() const {
+    return config_["io_manager"]["tcp_check_interval_s"].as<int>(5);
+}
+
+inline int ConfigManager::getTcpConnectTimeoutS() const {
+    return config_["io_manager"]["tcp_connect_timeout_s"].as<int>(3);
 }
 
 inline bool ConfigManager::isTrackLogEnabled() const {
