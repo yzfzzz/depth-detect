@@ -11,6 +11,7 @@ class ConfigManager {
     ConfigManager(const std::string config_path);
     std::map<std::string, std::string> getYoloModelPath() const;
     std::string                        getYoloLightEnginePath() const;
+    std::string                        getYoloLightOnnxPath() const;
     std::map<std::string, std::string> getDepthModelPath() const;
     int                                getDepthInterval() const;
     int                                getYoloDetectInterval() const;
@@ -78,7 +79,13 @@ inline std::map<std::string, std::string> ConfigManager::getYoloModelPath() cons
     std::map<std::string, std::string> model_paths;
     const auto &                       yolo_model_paths = config_["yolo"]["yolo_model_path"];
     for (const auto & model_path : yolo_model_paths) {
-        model_paths[model_path["type"].as<std::string>()] = model_path["path"].as<std::string>();
+        const std::string type = model_path["type"].as<std::string>();
+        // light_engine / light_onnx 是碰撞帧轻量模型的专用条目，不属于主模型：
+        // 主模型初始化会校验 map 内每个文件都存在，混入轻量条目会让主模型被牵连失败
+        if (type == "light_engine" || type == "light_onnx") {
+            continue;
+        }
+        model_paths[type] = model_path["path"].as<std::string>();
     }
     return model_paths;
 }
@@ -88,6 +95,17 @@ inline std::map<std::string, std::string> ConfigManager::getYoloModelPath() cons
 inline std::string ConfigManager::getYoloLightEnginePath() const {
     for (const auto & model_path : config_["yolo"]["yolo_model_path"]) {
         if (model_path["type"].as<std::string>() == "light_engine") {
+            return model_path["path"].as<std::string>();
+        }
+    }
+    return "";
+}
+
+// 轻量检测模型的 ONNX 路径（type=light_onnx）：GPU 不可用或强制 CPU 时，
+// 轻量模型改走 ONNX Runtime 后端；未配置返回空串
+inline std::string ConfigManager::getYoloLightOnnxPath() const {
+    for (const auto & model_path : config_["yolo"]["yolo_model_path"]) {
+        if (model_path["type"].as<std::string>() == "light_onnx") {
             return model_path["path"].as<std::string>();
         }
     }

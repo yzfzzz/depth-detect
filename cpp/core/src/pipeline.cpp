@@ -12,13 +12,20 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <fstream>
 
-namespace {
 double durationMs(const std::chrono::steady_clock::time_point & begin,
                   const std::chrono::steady_clock::time_point & end) {
     return std::chrono::duration<double, std::milli>(end - begin).count();
 }
-}  // namespace
+
+bool fileReadable(const std::string & path) {
+    if (path.empty()) {
+        return false;
+    }
+    std::ifstream file(path);
+    return file.good();
+}
 
 Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
@@ -78,22 +85,41 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
                    config_manager.isUseGPU());
 
     // 错峰调度下碰撞帧（检测与深度同帧）走重叠推理，主模型与深度模型同帧抢占 GPU
-    // 延迟过大 → 加载 yaml 配置的 light_engine（yolo26n）专用于碰撞帧；
-    // 两实例各自持有独立的 engine/context，GPU 显存会多占一份
+    // 延迟过大 → 加载 yaml 配置的轻量模型（yolo26n）专用于碰撞帧；
+    // 两实例各自持有独立的 engine/context，GPU 显存会多占一份。
+    // 路径按"双臂"构建：engine 优先、onnx 兜底（CPU 模式或 GPU 不可用时 base_model
+    // 会自动回落到 onnx），因此降级到 onnx 后端同样能正常出结果
     if (stagger_infer_ && depth_enabled_) {
         const std::string light_engine_path = config_manager.getYoloLightEnginePath();
-        if (!light_engine_path.empty()) {
-            detector_light_.init(
-                {
-                    { "engine", light_engine_path }
-            },
-                frame_meta.img_w, frame_meta.img_h, config_manager.getYoloNmsThresh(),
-                config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU());
-            has_light_detector_ = true;
-            APP_INFO("[Pipeline] overlap-frame light detector: {}", light_engine_path);
+        const std::string light_onnx_path   = config_manager.getYoloLightOnnxPath();
+
+        std::map<std::string, std::string> light_paths;
+        if (fileReadable(light_engine_path)) {
+            light_paths["engine"] = light_engine_path;
+        }
+        if (fileReadable(light_onnx_path)) {
+            light_paths["onnx"] = light_onnx_path;
+        }
+
+        if (!light_paths.empty()) {
+            detector_light_.init(light_paths, frame_meta.img_w, frame_meta.img_h,
+                                 config_manager.getYoloNmsThresh(),
+                                 config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU());
+            has_light_detector_ = detector_light_.isBackendInitialized();
+            if (has_light_detector_) {
+                APP_INFO(
+                    "[Pipeline] overlap-frame light detector: engine='{}', onnx='{}', "
+                    "backend={}",
+                    light_paths.count("engine") ? light_engine_path : std::string("<none>"),
+                    light_paths.count("onnx") ? light_onnx_path : std::string("<none>"),
+                    detector_light_.backendTypeName().c_str());
+            } else {
+                APP_WARN(
+                    "[Pipeline] light detector init failed, overlap frames reuse main detector");
+            }
         } else {
             APP_WARN(
-                "[Pipeline] yolo.light_engine not configured; "
+                "[Pipeline] yolo.light_engine / light_onnx neither configured nor readable; "
                 "overlap frames will reuse the main detector");
         }
     }
@@ -192,17 +218,38 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
     // 重叠帧用轻量检测模型（yolo26n），降低与深度模型同帧抢占 GPU 的延迟
     YoloDetectModel & detector = overlapDetector();
 
-    // detector：从发起异步推理到结果可取
-    detector.runInferenceAsync(frame_input_context);
+    // 异步重叠只有 TensorRT 后端支持（双 stream 并行提交）；ONNX Runtime 没有异步接口
+    // （BaseModel::runInferenceAsync 会直接报错返回 false），该路退回同步执行——
+    // 降级到 onnx 后端时依然能正常出结果，只是失去重叠收益
+    const bool detect_async = (detector.getBackendType() == BackendType::TensorRT);
+    const bool depth_async  = depth_enabled_ && use_yolo_depth_ &&
+                             (yolo_depth_model_.getBackendType() == BackendType::TensorRT);
 
-    // yolo_depth_model_：从发起异步推理到结果可取（与检测在不同 stream 上可重叠执行）
-    if (depth_enabled_) {
+    // 先提交深度异步（TRT），让深度在 GPU 上跑的同时 CPU 侧推进检测，最大化重叠窗口
+    if (depth_async) {
         yolo_depth_model_.runInferenceAsync(frame_input_context);
     }
-    detector.getInferOutputResult(infer_output_context);
+
+    // TRT 走异步提交，其他后端走同步
+    if (detect_async) {
+        detector.runInferenceAsync(frame_input_context);
+    } else {
+        detector.runInference(frame_input_context, infer_output_context);
+    }
+
+    if (detect_async) {
+        detector.getInferOutputResult(infer_output_context);
+    }
     updateTracker(infer_output_context);
+
     if (depth_enabled_) {
-        yolo_depth_model_.getInferOutputResult(infer_output_context);
+        if (depth_async) {
+            yolo_depth_model_.getInferOutputResult(infer_output_context);
+        } else {
+            // 非异步深度（ONNX 后端 / lite_mono）：此处同步执行，由 runDepthInference
+            // 按 yolo_depth / lite_mono 分发到实际初始化的那个模型
+            runDepthInference(frame_input_context, infer_output_context);
+        }
     }
     updateMotionStates(frame_input_context, infer_output_context);
 }

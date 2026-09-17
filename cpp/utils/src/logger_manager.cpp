@@ -162,6 +162,10 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     }
     APP_INFO("  [yolo] nms_thresh: {}", config.getYoloNmsThresh());
     APP_INFO("  [yolo] conf_thresh: {}", config.getYoloConfThresh());
+    APP_INFO("  [yolo] light_engine: {}",
+             config.getYoloLightEnginePath().empty() ? "<none>" : config.getYoloLightEnginePath());
+    APP_INFO("  [yolo] light_onnx: {}",
+             config.getYoloLightOnnxPath().empty() ? "<none>" : config.getYoloLightOnnxPath());
 
     // depth
     auto depth_models = config.getDepthModelPath();
