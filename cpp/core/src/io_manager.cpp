@@ -112,8 +112,22 @@ FrameMeta IOManager::Init(const std::string & video_path) {
     if (send_tcp_enabled_) {
         APP_INFO("TCP sending is enabled. Will send JSON data to {}:{}", send_tcp_ip_,
                  send_tcp_port_);
-        // 连接建立与断联重连全部交给 TcpHandler 的看门狗线程：
-        // 首连非阻塞（服务端未启动不会被卡死），断开后按 tcp_check_interval_s 周期重连
+        // 网络能力归 third_party/JsonSenderTest 的 TcpHandler：连接建立与断联重连全在
+        // 它的看门狗线程里（首连非阻塞，服务端未启动不会被卡死，断开后按
+        // tcp_check_interval_s 周期重连）。
+        TcpHandler::setLogSink([](TcpHandler::LogLevel level, const std::string & msg) {
+            switch (level) {
+                case TcpHandler::LogLevel::WARN:
+                    APP_WARN("{}", msg);
+                    break;
+                case TcpHandler::LogLevel::ERROR:
+                    APP_ERROR("{}", msg);
+                    break;
+                default:
+                    APP_INFO("{}", msg);
+                    break;
+            }
+        });
         tcp_handler_ = std::make_unique<TcpHandler>(send_tcp_ip_, send_tcp_port_,
                                                     tcp_check_interval_s_, tcp_connect_timeout_s_,
                                                     tcp_reconnect_);
@@ -453,7 +467,7 @@ bool IOManager::sendAlert(const AlertMessage & alert) const {
     }
     nlohmann::json j(alert);
     // TcpHandler 状态感知发送：非 CONNECTED 直接丢弃并计数（断联期间告警不重发）；
-    // 发送失败时由 TcpHandler 内部标记 BROKEN 并唤醒看门狗重连
+    // 发送失败时由 JsonSenderTcp 内部标记 BROKEN 并唤醒看门狗重连
     bool           success = tcp_handler_->sendJson(j);
     if (!success) {
         APP_WARN("Failed to send JSON message: {}", j.dump());

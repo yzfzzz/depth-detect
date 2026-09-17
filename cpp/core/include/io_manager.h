@@ -1,8 +1,8 @@
 #pragma once
+#include "TcpHandler.hpp"
 #include "config_manager.h"
 #include "danger_alert_handler.h"
 #include "frame.h"
-#include "tcp_handler.h"
 
 #include <memory.h>
 #include <opencv2/core/hal/interface.h>
@@ -84,7 +84,7 @@ class IOManager {
     std::string video_save_path_;  // 结果视频保存路径（Init 计算，首帧保存时懒初始化写盘）
     double writer_fps_ = 30.0;  // 写盘 fps = 实际产出帧率（模拟节奏下为 simulate_fps）
 
-    std::unique_ptr<TcpHandler> tcp_handler_ = nullptr;  // TCP 发送 + 断联自动重连（看门狗线程）
+    std::unique_ptr<TcpHandler> tcp_handler_ = nullptr;
     std::string                 send_tcp_ip_;                // 发送 JSON 数据的 TCP 地址
     int                         send_tcp_port_;              // 发送 JSON 数据的 TCP 端口
     bool                        send_tcp_enabled_;           // 是否启用 TCP 发送
