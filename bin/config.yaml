@@ -59,18 +59,21 @@ camera:
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
   save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
-  save_mode: images        # 保存输出: video / images / both / none
+  save_mode: video        # 保存输出: video / images / both / none
   save_buffer_gb: 1.0     # 异步落盘缓冲区上限（GB）；写满时丢新帧并计数告警（不阻塞主流程），退出时自动排空不丢数据
   send_tcp: true          # 是否发送TCP数据包
   send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址
   send_tcp_port: 5005     # 发送TCP数据包的端口号
+  tcp_reconnect: true     # 断联自动重连；false = 保持旧行为（失败即停发，不重试）
+  tcp_check_interval_s: 5 # 看门狗探活/重连周期（秒）
+  tcp_connect_timeout_s: 3 # 单次非阻塞 connect 的超时上限（秒）
   simulate_delay: true    # 是否按视频自身帧率模拟实时节奏（快了等待、慢了跳帧；仅视频文件源有效，跑满算力压测时改 false）
   simulate_fps: 12        # 模拟的现场帧率（仅 simulate_delay 开启时生效）；0 = 跟随视频文件自身的 fps
   
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
   console_output: true    # 是否在终端显示日志
-  log_level: debug         # 日志级别: trace / debug / info / warn / err / critical
+  log_level: info          # 日志级别: trace / debug / info / warn / err / critical
 
 bytetrack:
   track_high_thresh: 0.50
