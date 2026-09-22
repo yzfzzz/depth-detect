@@ -2,7 +2,8 @@
 
 本项目是一个基于 C++ 与 TensorRT 的高性能视觉推理框架，融合 **YOLO** 目标检测与 **单目/双目深度估计（Depth-Anything / Lite-Mono / YOLO-Depth）**，并在检测结果上叠加“快速靠近”（approach）判定：深度下降 + 目标框高增大且趋势持续，即视为危险目标并高亮、上报。兼容 x86 与嵌入式（aarch64，Jetson）平台，提供同步、重叠异步与错峰三种调度方式
 
-![产品图](./doc/product.png)
+[![自行车智能后视镜](https://markdown-videos-api.jorgenkh.no/url?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D7MTgNl1jFrk)](https://www.youtube.com/watch?v=7MTgNl1jFrk)
+
 **⭐ 快速亮点**
 - 🎯 多模型并行（Depth + Detection）流水线（Sync / Async）
 - ⏱️ 错峰推理（stagger）：检测 / 深度按各自间隔调度，同帧时自动走重叠推理，碰撞帧可切轻量检测模型
