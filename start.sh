@@ -15,24 +15,6 @@
 #    ./start.sh --skip-export             # 跳过 engine 导出
 #    ./start.sh --help                    # 查看全部参数
 #
-#  设计要点:
-#    1. 模型清单不再硬编码：由 scripts/read_config.py 解析 bin/config.yaml 中
-#       type=engine|light_engine 的条目，按「engine 所在目录名」去
-#       model/onnx/<同名目录>/ 找对应 ONNX 再导出。
-#       -> config 换模型（yolo26s / yolo26n / yolo26n-depth / lite-mono-tiny ...）
-#          本脚本零改动。
-#    2. 无 GPU 或 prefer.use_gpu=false 时**不中断**：跳过 engine 导出，
-#       自动降级为 config 里 type=onnx 的 CPU 推理路径，依赖安装 / 编译 / 运行照常。
-#    3. 引擎路径刷新由 scripts/update_config.py 完成：模型身份取自条目自身目录名
-#       （绝不被扫描到的其它模型顶替），并写回相对 bin/ 的相对路径。
-#    4. 不安装 Python 依赖：假定运行环境（Docker 镜像等）已具备
-#       pyyaml / numpy / opencv / pycuda 等。
-#    5. 本脚本**运行时输出全部为英文 ASCII**（仅注释保留中文），
-#       避免在缺少中文字体 / 编码支持的系统上出现乱码。
-#    6. 配套脚本放在父仓库的 scripts/ 下，**不放 model/ 子模块**：
-#       model/ 是 submodule，放进去的改动会被 submodule 更新重置掉；
-#       同时第 1 步的子模块更新**永不使用 --force**，任何情况下都不会丢弃
-#       子模块内已跟踪文件的本地改动。
 # =============================================================================
 set -euo pipefail
 
@@ -311,7 +293,7 @@ fi
 if ${DO_EXPORT}; then
     # 精度集合：默认 fp16 + fp32（config 的 engine 条目即 fp16）；
     # INT8 需 --int8 显式开启（校准耗时，且 aarch64 不支持）
-    PRECISIONS=("fp16" "fp32")
+    PRECISIONS=("fp16" )
     if ${ENABLE_INT8} && [[ "$ARCH" != "aarch64" ]]; then
         PRECISIONS=("int8" "fp16" "fp32")
     fi
@@ -324,12 +306,12 @@ if ${DO_EXPORT}; then
         local onnx_base
         onnx_base="$(basename "${onnx_path%.onnx}")"
         # 与 export_trt_engine.py 的默认命名规则对齐：engine/<模型目录>/<onnx基名>_<精度>_trtX.Y.engine
-        if compgen -G "engine/${model_dir}/${onnx_base}_${precision}_*.engine" >/dev/null 2>&1; then
+        if compgen -G "./model/engine/${model_dir}/${onnx_base}_${precision}_*.engine" >/dev/null 2>&1; then
             echo "  [SKIP] ${model_dir} (${precision}) already exists"
             return 0
         fi
 
-        local cmd=("${PY}" export_trt_engine.py --onnx "$onnx_path" --preprocess "$preprocess")
+        local cmd=("${PY}" model/export_trt_engine.py --onnx "$onnx_path" --preprocess "$preprocess")
         case "$precision" in
             int8)
                 [[ -f "$CALIB_VIDEO" ]] || {
