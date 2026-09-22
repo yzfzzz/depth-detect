@@ -1,8 +1,8 @@
 #pragma once
-#include "TcpHandler.hpp"
 #include "config_manager.h"
 #include "danger_alert_handler.h"
 #include "frame.h"
+#include "TcpHandler.hpp"
 
 #include <memory.h>
 #include <opencv2/core/hal/interface.h>
@@ -23,17 +23,17 @@ class IOManager {
     // 构造函数，传入配置管理器以获取保存模式和保存路径，同时传入视频参数
     IOManager(const ConfigManager & config_manager);
     IOManager(std::string save_mode,
-              std::string out_dir          = "out_dir",
-              std::string send_tcp_ip      = "127.0.0.1",
-              int         send_tcp_port    = 12345,
-              bool        send_tcp_enabled = false,
-              int         camera_width     = 1280,
-              int         camera_height    = 720,
-              int         camera_fps       = 30,
-              int         simulate_fps     = 0,
-              bool        simulate_delay   = false,
-              double      save_buffer_gb   = 0.5,
-              bool        tcp_reconnect    = true,
+              std::string out_dir               = "out_dir",
+              std::string send_tcp_ip           = "127.0.0.1",
+              int         send_tcp_port         = 12345,
+              bool        send_tcp_enabled      = false,
+              int         camera_width          = 1280,
+              int         camera_height         = 720,
+              int         camera_fps            = 30,
+              int         simulate_fps          = 0,
+              bool        simulate_delay        = false,
+              double      save_buffer_gb        = 0.5,
+              bool        tcp_reconnect         = true,
               int         tcp_check_interval_s  = 5,
               int         tcp_connect_timeout_s = 3);
 
@@ -85,16 +85,16 @@ class IOManager {
     double writer_fps_ = 30.0;  // 写盘 fps = 实际产出帧率（模拟节奏下为 simulate_fps）
 
     std::unique_ptr<TcpHandler> tcp_handler_ = nullptr;
-    std::string                 send_tcp_ip_;                // 发送 JSON 数据的 TCP 地址
-    int                         send_tcp_port_;              // 发送 JSON 数据的 TCP 端口
-    bool                        send_tcp_enabled_;           // 是否启用 TCP 发送
-    int                         tcp_check_interval_s_  = 5;  // 看门狗探活/重试周期
-    int                         tcp_connect_timeout_s_ = 3;  // 单次非阻塞 connect 上限
+    std::string                 send_tcp_ip_;                   // 发送 JSON 数据的 TCP 地址
+    int                         send_tcp_port_;                 // 发送 JSON 数据的 TCP 端口
+    bool                        send_tcp_enabled_;              // 是否启用 TCP 发送
+    int                         tcp_check_interval_s_  = 5;     // 看门狗探活/重试周期
+    int                         tcp_connect_timeout_s_ = 3;     // 单次非阻塞 connect 上限
     bool                        tcp_reconnect_         = true;  // 断联自动重连开关
     // 仅在外接 usb相机时生效
-    int                         camera_width_  = 1280;   // 相机采集宽度
-    int                         camera_height_ = 720;    // 相机采集高度
-    int                         camera_fps_    = 30;     // 相机采集帧率
+    int                         camera_width_          = 1280;  // 相机采集宽度
+    int                         camera_height_         = 720;   // 相机采集高度
+    int                         camera_fps_            = 30;    // 相机采集帧率
 
     // 生产者（主循环）：saveFrame 内 imencode 成 JPG 字节流后非阻塞入队；
     // 消费者（低优先级线程）：CPU 空闲时逐条写盘。缓冲按字节计账，上限
