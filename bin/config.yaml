@@ -3,7 +3,7 @@ display_manager:
   enable_control_panel: true   # 是否启用运行时参数控制面板（纯滑动条，拖动实时生效，需 is_display 开启）
 
 prefer:
-  use_gpu: true      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
+  use_gpu: false      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
   overlap: true      # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
   stagger_infer: true # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
 
