@@ -59,6 +59,10 @@ class BaseModel {
 
     int getNumOutputs() const { return backend_ ? static_cast<int>(backend_->getNumOutputs()) : 0; }
 
+    std::string backendTypeName() const {
+        return backend_ ? backend_->getBackendTypeName().c_str() : "Unkown";
+    }
+
   protected:
     // 创建后端（子类可重写以自定义后端选择逻辑）
     virtual std::unique_ptr<InferenceBackend> createBackend(
@@ -109,6 +113,10 @@ class BaseModel {
         return backend_->getOutputIndexFromName(name);
     }
 
+    virtual size_t getRawImgHxW() const { return raw_img_h_ * raw_img_w_; }
+
+    virtual size_t getInputHxW() const { return input_h_ * input_w_; }
+
 
   protected:
     // 原始图像分辨率
@@ -122,6 +130,6 @@ class BaseModel {
     // 模型输入输出缓冲区: d_infer_io_[0] -> input, d_infer_io_[1] -> output
     std::vector<unique_ptr_cuda<void>> d_infer_io_;
     std::unique_ptr<InferenceBackend>  backend_;
-    cudaStream_t                       stream_;
+    cudaStream_t                       stream_ = 0;
     std::vector<std::vector<float>>    h_infer_out_;
 };

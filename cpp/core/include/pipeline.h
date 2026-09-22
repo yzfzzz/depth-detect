@@ -3,7 +3,9 @@
 #include "config_manager.h"
 #include "depth_model.h"
 #include "frame.h"
+#include "logger_manager.h"
 #include "motion_state_engine.h"
+#include "yolo_depth_model.h"
 #include "yolo_detect_model.h"
 
 class Pipeline {
@@ -15,6 +17,7 @@ class Pipeline {
              bool        use_gpu          = false,
              float       yolo_nms_thresh  = 0.4f,
              float       yolo_conf_thresh = 0.25f);
+    ~Pipeline();
     void init();
 
     // 核心推理接口，供正常业务和 Benchmark 调用
@@ -30,7 +33,7 @@ class Pipeline {
 
     YoloDetectModel & getDetector() { return detector_; }
 
-    DepthModel & getDepthModel() { return depth_model_; }
+    LiteMonoDepthModel & getDepthModel() { return depth_model_; }
 
     BYTETracker & getTracker() { return tracker_; }
 
@@ -38,9 +41,24 @@ class Pipeline {
 
   private:
     void updateTracker(InferOutputContext & infer_output_context);
+    void runDepthInference(FrameInputContext &  frame_input_context,
+                           InferOutputContext & infer_output_context);
 
-    YoloDetectModel detector_;
-    DepthModel      depth_model_;
+    // 重叠帧使用的检测模型：优先轻量模型，未加载则回落主模型
+    YoloDetectModel & overlapDetector() {
+        return has_light_detector_ ? detector_light_ : detector_;
+    }
+
+    YoloDetectModel detector_;        // 主检测模型（yaml 配置，如 yolo26s）
+    YoloDetectModel detector_light_;  // 碰撞帧专用轻量模型（yolo26n），仅错峰时加载
+    bool               has_light_detector_ = false;  // 轻量模型是否可用
+    LiteMonoDepthModel depth_model_;
+    YoloDepthModel     yolo_depth_model_;
+    bool               depth_enabled_   = false;  // 由 config 的 depth.enabled 控制
+    bool               stagger_infer_   = false;  // 错峰推理
+    int                detect_interval_ = 1;      // 检测推理间隔：N = 每 N 帧推 1 次
+    int                depth_interval_  = 1;      // 深度推理间隔：N = 每 N 帧推 1 次
+    bool use_yolo_depth_ = false;  // 深度模型类型：true = yolo_depth，false = lite_mono
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {
@@ -55,12 +73,15 @@ class Pipeline {
     MotionStateEngine motion_state_engine_;
 
     // 跨帧缓存状态
-    bool             has_cached_depth_ = false;
-    cv::Mat          cached_depth_;
-    cv::Mat          cached_depth_vis_;
-    // 需要跟踪的类别，可以根据自己需求调整，筛选自己想要跟踪的对象的种类（以下对应COCO数据集类别索引）
-    std::vector<int> track_classes_{ 1, 2, 3, 5,
-                                     7 };  // person, bicycle, car, motorcycle, bus, truck
-
+    bool                                              has_cached_depth_ = false;
+    cv::Mat                                           cached_depth_;
+    cv::Mat                                           cached_depth_vis_;
+    // 累积每个 track 的逐帧记录，运行结束时由 LoggerManager 统一写入 CSV
+    bool                                              track_log_enabled_ = false;
+    std::string                                       track_log_path_;
+    std::unordered_map<int, std::vector<TrackRecord>> track_log_data_;
+    std::vector<int>                                  track_classes_{
+        COCO80::BICYCLE, COCO80::CAR, COCO80::MOTORCYCLE, COCO80::BUS, COCO80::TRUCK
+    };  // bicycle, car, motorcycle, bus, train, truck
     bool is_normalize_ = false;
 };

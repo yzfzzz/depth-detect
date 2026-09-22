@@ -106,9 +106,9 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
 }
 
 void DisplayManager::printTargetInfo(const STrack & track) const {
-    int                        class_id = track.class_id_;
-    int                        track_id = track.track_id_;
-    const std::vector<float> & tlwh     = track.tlwh_;
+    int                        class_id = track.class_id;
+    int                        track_id = track.track_id;
+    const std::vector<float> & tlwh     = track.tlwh;
 
     // 使用多点采样计算深度均值
     float depth = computeMeanDepth(tlwh);
@@ -123,7 +123,7 @@ void DisplayManager::printTargetInfo(const STrack & track) const {
 
 void DisplayManager::handleMouseClick(int x, int y) {
     for (const auto & track : tracks_) {
-        const std::vector<float> & tlwh   = track.tlwh_;
+        const std::vector<float> & tlwh   = track.tlwh;
         float                      left   = tlwh[0];
         float                      top    = tlwh[1];
         float                      right  = tlwh[0] + tlwh[2];
@@ -188,13 +188,13 @@ int DisplayManager::waitKey(int delay) {
 DrawingManager::DrawingManager(const std::vector<std::string> & class_names) :
     vClassNames_(class_names) {}
 
-void DrawingManager::drawTrackedObject(cv::Mat &            img,
-                                       const STrack &       track,
-                                       const AlertMessage & alert_msg,
-                                       cv::Scalar           color) {
-    const std::vector<float> & tlwh     = track.tlwh_;
-    int                        class_id = track.class_id_;
-    int                        track_id = track.track_id_;
+void DrawingManager::drawTrackedObject(cv::Mat &                     img,
+                                       const STrack &                track,
+                                       const MotionStateInfoRecord & motion,
+                                       cv::Scalar                    color) {
+    const std::vector<float> & tlwh     = track.tlwh;
+    int                        class_id = track.class_id;
+    int                        track_id = track.track_id;
 
     // 准备文字标签
     std::string label = cv::format("%s #%d", vClassNames_[class_id].c_str(), track_id);
@@ -205,15 +205,12 @@ void DrawingManager::drawTrackedObject(cv::Mat &            img,
     cv::Rect rect_bg(cv::Point((int) tlwh[0], (int) tlwh[1] - label_size.height - 8),
                      cv::Size(label_size.width + 8, label_size.height + 8));
 
-    // 绘制目标主体矩形框
-    // 检查物体是否危险
-    bool is_danger = false;
-    for (size_t i = 0; i < alert_msg.objects.size(); ++i) {
-        if (alert_msg.objects[i].track_id == track_id) {
-            is_danger = alert_msg.objects[i].is_danger;
-            break;
-        }
-    }
+    // 三项分数文本（score / depth_score / scale_score，scale 基于框高变化），
+    // 画在每个目标框内部左上角，白色小字
+    const std::string score_text =
+        cv::format("s=%.2f d=%.2f h=%.2f", motion.approach_score, motion.approach_depth_score,
+                   motion.approach_scale_score);
+    cv::Size score_size = cv::getTextSize(score_text, cv::FONT_HERSHEY_SIMPLEX, 0.45, 1, &baseLine);
 
     int x1 = static_cast<int>(tlwh[0]);
     int y1 = static_cast<int>(tlwh[1]);
@@ -229,11 +226,12 @@ void DrawingManager::drawTrackedObject(cv::Mat &            img,
     int w = x2 - x1;
     int h = y2 - y1;
 
-    if (is_danger && w > 0 && h > 0) {
+    // 快速靠近（危险目标）：红色半透明填充 + 红色边框（与 pipeline.py 的红框语义一致）
+    if (motion.approach_alarm && w > 0 && h > 0) {
         // 半透明红色填充 (alpha ≈ 0.3)
         cv::Mat roi = img(cv::Rect(x1, y1, w, h));
         cv::Mat red_overlay(roi.size(), roi.type(), cv::Scalar(0, 0, 255));
-        cv::addWeighted(red_overlay, 0.2, roi, 0.7, 0, roi);
+        cv::addWeighted(red_overlay, 0.3, roi, 0.7, 0, roi);
 
         // 红色边框（用原始未裁剪的 bbox 绘制，保持视觉一致）
         color = cv::Scalar(0, 0, 255);
@@ -241,7 +239,17 @@ void DrawingManager::drawTrackedObject(cv::Mat &            img,
     cv::rectangle(img, cv::Rect(x1, y1, w, h), color, 2);
     cv::rectangle(img, rect_bg, color, cv::FILLED);
     cv::putText(img, label, cv::Point((int) tlwh[0] + 4, (int) tlwh[1] - 4),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+
+    // 三项分数画在框内左上角（白色小字，黑描边提高可读性）；
+    // 不在接近单元内的目标分数保持默认值 0.00
+    if (w > 0 && h > 0) {
+        const cv::Point score_org(x1 + 4, y1 + score_size.height + 4);
+        cv::putText(img, score_text, score_org + cv::Point(1, 1), cv::FONT_HERSHEY_SIMPLEX, 0.45,
+                    cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+        cv::putText(img, score_text, score_org, cv::FONT_HERSHEY_SIMPLEX, 0.45,
+                    cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
+    }
 }
 
 void DrawingManager::drawGlobalInfo(cv::Mat & img,

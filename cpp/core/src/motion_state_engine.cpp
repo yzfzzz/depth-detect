@@ -2,126 +2,416 @@
 
 #include "logger_manager.h"
 
-#include <cstdio>
-#include <opencv2/core/operations.hpp>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
 
-MotionStateEngine::MotionStateEngine(float velocity_threshold,
-                                     float acceleration_threshold,
-                                     float kf_process_noise_cov,
-                                     float kf_measurement_noise_cov) :
+namespace approach {
 
-    velocity_threshold_(velocity_threshold),
-    acceleration_threshold_(acceleration_threshold),
-    kf_process_noise_cov_(kf_process_noise_cov),
-    kf_measurement_noise_cov_(kf_measurement_noise_cov) {}
+namespace {
 
-MotionStateInfoRecord MotionStateEngine::computeMotionState(int    track_id,
-                                                            float  raw_value,
-                                                            double timestamp) {
-    if (raw_value <= 0.0f) {
-        return MotionStateInfoRecord(MotionState::INVAILD, MotionState::INVAILD, 0.0f);
-    }
+const double kMinDt = 1e-6;
 
-    // 1. 获取或创建对应 track_id 的滤波状态
-    auto & state = kf_states_[track_id];
+// log 域下限，防 log(0)
+const double kMinLogValue = 1e-6;
 
-    // 卡尔曼滤波初始化：状态维度=3 [位置,速度,加速度]，测量维度=1（仅观测位置）
-    if (!state.is_initialized) {
-        // 状态转移矩阵 F 在预测时根据 dt 动态更新
-        // x_k = x_{k-1} + v*dt + 0.5*a*dt^2, v_k = v_{k-1} + a*dt, a_k = a_{k-1}
-        state.kf.init(3, 1, 0);
+// score 分母下限：阈值配 0 时 score 退化为 0/1 跳变，但不产生 inf/NaN
+const double kMinThreshold = 1e-3;
 
-        // 测量矩阵 H - 仅测量位置（第一个元素）
-        state.kf.measurementMatrix                 = cv::Mat::zeros(1, 3, CV_32F);
-        state.kf.measurementMatrix.at<float>(0, 0) = 1.0f;
-
-        // 过程噪声协方差矩阵 Q
-        // (决定系统的平滑度，值越小越平滑但响应越慢，值越大越灵敏但抗噪弱)
-        // [由于加速度本身也是会变的，这里可以设置小一点]
-        cv::setIdentity(state.kf.processNoiseCov, cv::Scalar::all(kf_process_noise_cov_));
-
-        // 测量噪声协方差矩阵 R
-        // (决定对当前传入雷达/双目数值的信任度，测量噪声大则增大此值)
-        cv::setIdentity(state.kf.measurementNoiseCov, cv::Scalar::all(kf_measurement_noise_cov_));
-
-        // 误差协方差矩阵 P (初始的置信度，随便设个稍微大点的值)
-        cv::setIdentity(state.kf.errorCovPost, cv::Scalar::all(1));
-
-        // 状态初始化
-        state.kf.statePost   = (cv::Mat_<float>(3, 1) << raw_value, 0.0f, 0.0f);
-        state.last_timestamp = timestamp;
-        state.is_initialized = true;
-
-        return MotionStateInfoRecord(MotionState::STABLE, MotionState::CONSTANT, 0.0f);
-    }
-
-    // 卡尔曼滤波预测与更新：根据时间间隔 dt 更新状态转移矩阵
-    float dt = static_cast<float>(timestamp - state.last_timestamp);
-    if (dt <= 0.0f) {
-        dt = 0.033f;  // 兜底保护，假设默认30fps
-    }
-
-    // 动态更新状态转移矩阵 (根据 dt)
-    state.kf.transitionMatrix.at<float>(0, 1) = dt;
-    state.kf.transitionMatrix.at<float>(0, 2) = 0.5f * dt * dt;
-    state.kf.transitionMatrix.at<float>(1, 2) = dt;
-
-    // 1. 预测 (Predict)
-    state.kf.predict();
-
-    // 2. 更新 (Correct) 融入当前观测值
-    cv::Mat measurement     = (cv::Mat_<float>(1, 1) << raw_value);
-    cv::Mat estimated_state = state.kf.correct(measurement);
-
-    // 获取滤波后的最优状态
-    float smoothed_value   = estimated_state.at<float>(0, 0);
-    float current_velocity = estimated_state.at<float>(1, 0);
-    float current_accel    = estimated_state.at<float>(2, 0);
-
-    state.last_timestamp = timestamp;
-
-    // 运动状态判定：基于卡尔曼滤波估算的速度和加速度
-    // 注意：此逻辑基于视差（值变大=物体靠近），若使用绝对深度则需要反转方向判断
-
-    MotionState direction_state = MotionState::STABLE;
-    MotionState accel_state     = MotionState::CONSTANT;
-
-    // 当前按视差逻辑处理：值变大 → 靠近，若使用深度则需反转符号
-    if (current_velocity > velocity_threshold_) {
-        direction_state = MotionState::APPROACH;
-        if (current_accel > acceleration_threshold_) {
-            accel_state = MotionState::ACCELE;
-        } else if (current_accel < -acceleration_threshold_) {
-            accel_state = MotionState::DECELE;
-        }
-    }
-    // 视差变小=远离
-    else if (current_velocity < -velocity_threshold_) {
-        direction_state = MotionState::MOVE_AWAY;
-        if (current_accel < -acceleration_threshold_) {
-            accel_state = MotionState::ACCELE;  // 远离且加速远离（加速度与速度同向）
-        } else if (current_accel > acceleration_threshold_) {
-            accel_state = MotionState::DECELE;
-        }
-    }
-
-    return MotionStateInfoRecord(direction_state, accel_state, current_velocity);
+cv::Mat mat2x2(double a00, double a01, double a10, double a11) {
+    cv::Mat m          = cv::Mat::zeros(2, 2, CV_64F);
+    m.at<double>(0, 0) = a00;
+    m.at<double>(0, 1) = a01;
+    m.at<double>(1, 0) = a10;
+    m.at<double>(1, 1) = a11;
+    return m;
 }
 
-float MotionStateEngine::getObjectDepth(cv::Mat depth, const STrack & track, cv::Size image_size) {
-    if (!depth.empty()) {
-        cv::resize(depth, depth, image_size);
-    } else {
-        APP_WARN("depth_map is empty!");
-        return 0.0f;
+cv::Mat mat1x2(double a, double b) {
+    cv::Mat m          = cv::Mat::zeros(1, 2, CV_64F);
+    m.at<double>(0, 0) = a;
+    m.at<double>(0, 1) = b;
+    return m;
+}
+
+cv::Mat mat1x1(double value) {
+    cv::Mat m          = cv::Mat::zeros(1, 1, CV_64F);
+    m.at<double>(0, 0) = value;
+    return m;
+}
+
+}  // namespace
+
+FilterMode parseFilterMode(const std::string & name) {
+    std::string lower;
+    lower.reserve(name.size());
+    for (char c : name) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    if (lower == "one_euro" || lower == "oneeuro" || lower == "one-euro" || lower == "euro") {
+        return FilterMode::ONE_EURO;
+    }
+    if (lower == "kalman" || lower == "kf") {
+        return FilterMode::KALMAN;
+    }
+    return FilterMode::NONE;
+}
+
+const char * filterModeName(FilterMode mode) {
+    switch (mode) {
+        case FilterMode::ONE_EURO:
+            return "one_euro";
+        case FilterMode::KALMAN:
+            return "kalman";
+        case FilterMode::NONE:
+        default:
+            return "none";
+    }
+}
+
+SignalFilterBank::TrackFilters::TrackFilters(double freq) {
+    height_one_euro.reset(
+        new OneEuroFilter(freq, kOneEuroMinCutoff, kOneEuroBeta, kOneEuroDerivCutoff));
+    depth_one_euro.reset(
+        new OneEuroFilter(freq, kOneEuroMinCutoff, kOneEuroBeta, kOneEuroDerivCutoff));
+}
+
+SignalFilterBank::SignalFilterBank(FilterMode mode, double freq) : mode_(mode), freq_(freq) {}
+
+double SignalFilterBank::kalmanStep(cv::KalmanFilter & kf,
+                                    bool &             ready,
+                                    double &           q,
+                                    double &           t_prev,
+                                    double             z,
+                                    double             t,
+                                    bool               log_domain) {
+    if (log_domain) {
+        z = std::log(std::max(z, kMinLogValue));
     }
 
-    const std::vector<float> & tlwh        = track.tlwh_;
-    float                      depth_value = 0.0f;
+    // 首帧无历史可预测，直接用量测初始化并原值返回；
+    // R/Q 按量测幅值自动估计，避免固定噪声参数在近/远目标上失配
+    if (!ready) {
+        ready = true;
 
-    depth_value = computeMeanDepth(depth, tlwh);
+        kf.init(2, 1, 0, CV_64F);
+        kf.measurementMatrix          = mat1x2(1.0, 0.0);
+        const double r                = std::pow(0.05 * std::abs(z) + 1e-3, 2);
+        q                             = std::pow(0.03 * std::abs(z) + 1e-3, 2);
+        kf.measurementNoiseCov        = mat1x1(r);
+        kf.errorCovPost               = mat2x2(r, 0.0, 0.0, q);
+        kf.statePost                  = cv::Mat::zeros(2, 1, CV_64F);
+        kf.statePost.at<double>(0, 0) = z;
+        t_prev                        = t;
+        return log_domain ? std::exp(z) : z;
+    }
 
-    return depth_value;
+    const double dt = std::max(t - t_prev, kMinDt);
+    t_prev          = t;
+
+    // 匀速模型的 F 与过程噪声离散化（由速度噪声 q 与 dt 导出）
+    kf.transitionMatrix = mat2x2(1.0, dt, 0.0, 1.0);
+    const double dt2    = dt * dt;
+    kf.processNoiseCov =
+        mat2x2(q * dt2 * dt2 / 4.0, q * dt2 * dt / 2.0, q * dt2 * dt / 2.0, q * dt2);
+
+    kf.predict();
+    kf.correct(mat1x1(z));
+    return kf.statePost.at<double>(0, 0);
+}
+
+void SignalFilterBank::update(int      track_id,
+                              double   height,
+                              double   depth,
+                              double   ts,
+                              double & height_filtered,
+                              double & depth_filtered) {
+    if (mode_ == FilterMode::NONE) {
+        height_filtered = height;
+        depth_filtered  = depth;
+        return;
+    }
+
+    std::unique_ptr<TrackFilters> & holder = tracks_[track_id];
+    if (!holder) {
+        holder.reset(new TrackFilters(freq_));
+    }
+    TrackFilters & filters = *holder;
+
+    if (mode_ == FilterMode::ONE_EURO) {
+        height_filtered = filters.height_one_euro->filter(height, ts);
+    } else {
+        height_filtered = kalmanStep(filters.height_kalman, filters.height_ready, filters.height_q,
+                                     filters.height_t_prev, height, ts, true);
+    }
+
+    if (depth > 0.0) {
+        if (mode_ == FilterMode::ONE_EURO) {
+            depth_filtered = filters.depth_one_euro->filter(depth, ts);
+        } else {
+            depth_filtered = kalmanStep(filters.depth_kalman, filters.depth_ready, filters.depth_q,
+                                        filters.depth_t_prev, depth, ts, false);
+        }
+    } else {
+        depth_filtered = depth;
+    }
+}
+
+ApproachDetectorCumulative::ApproachDetectorCumulative(const ApproachParams & params) :
+    params_(params) {
+    setDetectWarmup(params.detect_warmup);
+    setDepthWarmup(params.depth_warmup);
+    setThrDepth(params.thr_depth);
+    setThrHeight(params.thr_height);
+    setDetectRecentW(params.detect_recent_w);
+    setDepthRecentW(params.depth_recent_w);
+    setScoreThr(params.score_thr);
+    setConfirm(params.confirm);
+    setExitScoreThr(params.exit_score_thr);
+    setExitConfirm(params.exit_confirm);
+}
+
+void ApproachDetectorCumulative::setDetectWarmup(int value) {
+    params_.detect_warmup = std::max(1, value);
+}
+
+void ApproachDetectorCumulative::setDepthWarmup(int value) {
+    params_.depth_warmup = std::max(1, value);
+}
+
+void ApproachDetectorCumulative::setThrDepth(double value) {
+    params_.thr_depth = value;
+}
+
+void ApproachDetectorCumulative::setThrHeight(double value) {
+    params_.thr_height = value;
+}
+
+void ApproachDetectorCumulative::setDetectRecentW(int value) {
+    params_.detect_recent_w = std::max(2, value);
+}
+
+void ApproachDetectorCumulative::setDepthRecentW(int value) {
+    params_.depth_recent_w = std::max(2, value);
+}
+
+void ApproachDetectorCumulative::setScoreThr(double value) {
+    params_.score_thr = std::max(0.0, std::min(1.0, value));
+}
+
+void ApproachDetectorCumulative::setConfirm(int value) {
+    params_.confirm = std::max(1, value);
+}
+
+void ApproachDetectorCumulative::setExitScoreThr(double value) {
+    params_.exit_score_thr = std::max(0.0, std::min(1.0, value));
+}
+
+void ApproachDetectorCumulative::setExitConfirm(int value) {
+    params_.exit_confirm = std::max(1, value);
+}
+
+bool ApproachDetectorCumulative::medianPositive(const std::vector<double> & values, double & out) {
+    std::vector<double> xs;
+    xs.reserve(values.size());
+    for (double value : values) {
+        if (std::isfinite(value) && value > 0.0) {
+            xs.push_back(value);
+        }
+    }
+    if (xs.empty()) {
+        return false;
+    }
+    std::sort(xs.begin(), xs.end());
+    out = xs[xs.size() / 2];
+    return true;
+}
+
+double ApproachDetectorCumulative::clip01(double value) {
+    return std::max(0.0, std::min(1.0, value));
+}
+
+bool ApproachDetectorCumulative::advanceChannel(ChannelState & ch,
+                                                double         value,
+                                                int            warmup,
+                                                int            recent_w,
+                                                double &       baseline,
+                                                double &       prev_median,
+                                                double &       cur_median) {
+    // 基线未就绪前只攒样本；全无效（如深度持续 <= 0）时清空重攒，避免 0 基线除零
+    if (!ch.has_baseline) {
+        ch.hist.push_back(value);
+        if (static_cast<int>(ch.hist.size()) < warmup) {
+            return false;
+        }
+        if (!medianPositive(ch.hist, ch.baseline)) {
+            ch.hist.clear();
+            return false;
+        }
+        ch.hist.clear();
+        ch.has_baseline = true;
+    }
+
+    ch.recent.push_back(value);
+    while (static_cast<int>(ch.recent.size()) > recent_w) {
+        ch.recent.pop_front();
+    }
+    if (static_cast<int>(ch.recent.size()) < recent_w) {
+        return false;
+    }
+
+    const int           half = recent_w / 2;
+    std::vector<double> prev;
+    std::vector<double> cur;
+    for (int i = 0; i < recent_w; ++i) {
+        (i < half ? prev : cur).push_back(ch.recent[static_cast<size_t>(i)]);
+    }
+    // 窗口内出现无效样本（如深度被滤波过冲到 <= 0）：本帧不判定
+    if (!medianPositive(prev, prev_median) || !medianPositive(cur, cur_median)) {
+        return false;
+    }
+    baseline = ch.baseline;
+    return true;
+}
+
+ApproachState ApproachDetectorCumulative::update(int    track_id,
+                                                 double height,
+                                                 double depth,
+                                                 double ts) {
+    // 判定按帧序推进；ts 只有前置滤波层用，保留参数只为接口一致
+    static_cast<void>(ts);
+
+    ApproachState out;
+    TrackState &  state = tracks_[track_id];
+
+    // 两通道按各自的 warmup / recent_w 独立推进
+    double     h_baseline    = 0.0;
+    double     h_prev_median = 0.0;
+    double     h_cur_median  = 0.0;
+    double     d_baseline    = 0.0;
+    double     d_prev_median = 0.0;
+    double     d_cur_median  = 0.0;
+    const bool h_ready =
+        advanceChannel(state.height_ch, height, params_.detect_warmup, params_.detect_recent_w,
+                       h_baseline, h_prev_median, h_cur_median);
+    const bool d_ready =
+        advanceChannel(state.depth_ch, depth, params_.depth_warmup, params_.depth_recent_w,
+                       d_baseline, d_prev_median, d_cur_median);
+
+    // score 与趋势门需要两路证据，任一通道未就绪时保持上帧分数
+    if (!h_ready || !d_ready) {
+        applyScores(state, out);
+        return out;
+    }
+
+    const bool trend_ok = d_cur_median < d_prev_median && h_cur_median > h_prev_median;
+
+    const double depth_drop  = (d_baseline - d_cur_median) / d_baseline;
+    const double height_gain = h_cur_median / h_baseline - 1.0;
+    const double depth_score = clip01(depth_drop / std::max(params_.thr_depth, kMinThreshold));
+    const double scale_score = clip01(height_gain / std::max(params_.thr_height, kMinThreshold));
+    const double score       = 0.4 * depth_score + 0.6 * scale_score;
+
+    state.score       = score;
+    state.depth_score = depth_score;
+    state.scale_score = scale_score;
+
+    // 双边迟滞：进/出都需连续帧证据，中间态保持现状，防报警闪烁
+    const bool enter_ev = trend_ok && score >= params_.score_thr;
+    const bool exit_ev  = !trend_ok || score <= params_.exit_score_thr;
+
+    const bool was_alarm = state.alarm;
+    if (state.alarm) {
+        if (exit_ev) {
+            state.exit_streak += 1;
+            if (state.exit_streak >= params_.exit_confirm) {
+                state.alarm       = false;
+                state.exit_streak = 0;
+            }
+        } else {
+            state.exit_streak = 0;
+        }
+        state.streak = enter_ev ? (state.streak + 1) : 0;
+    } else {
+        state.exit_streak = 0;
+        if (enter_ev) {
+            state.streak += 1;
+            if (state.streak >= params_.confirm) {
+                state.alarm  = true;
+                state.streak = 0;
+            }
+        } else {
+            state.streak = 0;
+        }
+    }
+
+    out.alarm         = state.alarm;
+    out.alarm_started = !was_alarm && state.alarm;
+    out.alarm_cleared = was_alarm && !state.alarm;
+    applyScores(state, out);
+    return out;
+}
+
+void ApproachDetectorCumulative::applyScores(const TrackState & state, ApproachState & out) {
+    // 保持上一帧分数而非归零：无有效窗口的帧不让下游画面/日志上的分数闪烁
+    out.score       = static_cast<float>(state.score);
+    out.depth_score = static_cast<float>(state.depth_score);
+    out.scale_score = static_cast<float>(state.scale_score);
+}
+
+}  // namespace approach
+
+void MotionStateEngine::configureApproach(const approach::ApproachParams & params,
+                                          approach::FilterMode             filter_mode,
+                                          bool                             enabled) {
+    approach_enabled_  = enabled;
+    approach_detector_ = approach::ApproachDetectorCumulative(params);
+    approach_filter_bank_.reset();
+
+    if (!approach_enabled_) {
+        APP_INFO("[Approach] disabled");
+        return;
+    }
+    if (filter_mode != approach::FilterMode::NONE) {
+        approach_filter_bank_.reset(new approach::SignalFilterBank(filter_mode));
+    }
+    APP_INFO(
+        "[Approach] enabled: filter={}, detect_warmup={}/depth {}, thr_depth={:.3f}, "
+        "thr_height={:.3f}, detect_recent_w={}/depth {}, score_thr={:.3f}, confirm={}, "
+        "exit_score_thr={:.3f}, exit_confirm={}",
+        approach::filterModeName(filter_mode), params.detect_warmup, params.depth_warmup,
+        params.thr_depth, params.thr_height, params.detect_recent_w, params.depth_recent_w,
+        params.score_thr, params.confirm, params.exit_score_thr, params.exit_confirm);
+}
+
+approach::ApproachState MotionStateEngine::updateApproachState(int    track_id,
+                                                               float  height,
+                                                               float  raw_depth,
+                                                               double timestamp) {
+    approach::ApproachState state;
+    if (!approach_enabled_) {
+        return state;
+    }
+
+    double height_filtered = height;
+    double depth_filtered  = raw_depth;
+    if (approach_filter_bank_) {
+        approach_filter_bank_->update(track_id, height, raw_depth, timestamp, height_filtered,
+                                      depth_filtered);
+    }
+
+    state = approach_detector_.update(track_id, height_filtered, depth_filtered, timestamp);
+
+    // 只在报警沿打日志，避免逐帧刷屏
+    if (state.alarm_started) {
+        APP_INFO(
+            "[Approach] track {} alarm triggered: score={:.3f} depth_score={:.3f} "
+            "scale_score={:.3f}",
+            track_id, state.score, state.depth_score, state.scale_score);
+    } else if (state.alarm_cleared) {
+        APP_INFO("[Approach] track {} alarm cleared: score={:.3f}", track_id, state.score);
+    }
+    return state;
 }
 
 float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
@@ -144,11 +434,9 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
         return 0.0f;
     }
 
-    // 存储当前目标收集到的有效深度点
     std::vector<float> sampled_depths;
 
-    // 在目标框内均匀网格采样，统计有效深度值
-    // 采样策略：缩进 20% 边界以避开边缘背景，按 grid_size × grid_size 在框内均匀采点
+    // 缩进 20% 边界：框边缘容易混入背景像素
     int   grid_size    = static_cast<int>(std::sqrt(num_samples));
     float shrink_ratio = 0.2f;
     for (int i = 0; i < grid_size; ++i) {
@@ -171,7 +459,7 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
                 depth_value = static_cast<float>(depth.at<uchar>(y, x));
             }
 
-            if (depth_value > 0.01f) {
+            if (depth_value > 0.0f) {
                 sampled_depths.push_back(depth_value);
             }
         }
@@ -181,17 +469,15 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
         return 0.0f;
     }
 
-    // 截断均值法：先排序，剔除两端 25% 异常值（前 25% 可能是前景遮挡，后 25% 可能是背景噪声）
-    // 再对中间 50% 的数据取均值，得到该目标在当前帧的鲁棒深度估计
+    // 截断均值：最近的 25% 多为前景遮挡毛刺、最远的 25% 多为背景噪声
     std::sort(sampled_depths.begin(), sampled_depths.end());
     int num_valid = sampled_depths.size();
     if (num_valid < 4) {
-        // 数据太少，直接取中位数
-        return sampled_depths[num_valid / 2];
+        return sampled_depths[num_valid / 2];  // 样本太少不截断，直接取中位
     }
 
-    int skip_low = static_cast<int>(num_valid * 0.25f);  // 剔除25%最近距离（前景毛刺与遮挡）
-    int skip_high = static_cast<int>(num_valid * 0.25f);  // 剔除25%最远距离（背景噪声）
+    int skip_low  = static_cast<int>(num_valid * 0.25f);
+    int skip_high = static_cast<int>(num_valid * 0.25f);
 
     float sum   = 0.0f;
     int   count = 0;

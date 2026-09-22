@@ -4,7 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// 列缩减和缩减传递，用于稠密代价矩阵
+/** Column-reduction and reduction transfer for a dense cost matrix.
+ */
 int_t _ccrrt_dense(const uint_t n,
                    cost_t *     cost[],
                    int_t *      free_rows,
@@ -70,7 +71,8 @@ int_t _ccrrt_dense(const uint_t n,
     return n_free_rows;
 }
 
-// 增广行缩减，用于稠密代价矩阵
+/** Augmenting row reduction for a dense cost matrix.
+ */
 int_t _carr_dense(const uint_t n,
                   cost_t *     cost[],
                   const uint_t n_free_rows,
@@ -144,7 +146,8 @@ int_t _carr_dense(const uint_t n,
     return new_free_rows;
 }
 
-// 找到具有最小 d[j] 的列并将它们放到 SCAN 列表中
+/** Find columns with minimum d[j] and put them on the SCAN list.
+ */
 uint_t _find_dense(const uint_t n, uint_t lo, cost_t * d, int_t * cols, int_t * y) {
     uint_t hi   = lo + 1;
     cost_t mind = d[cols[lo]];
@@ -162,8 +165,8 @@ uint_t _find_dense(const uint_t n, uint_t lo, cost_t * d, int_t * cols, int_t * 
     return hi;
 }
 
-// 扫描 SCAN 列表中的所有列，尝试用它们降低 TODO 列表中所有列的 d 值
-// 这是改进的 Dijkstra 最短路径算法的单次迭代核心
+// Scan all columns in TODO starting from arbitrary column in SCAN
+// and try to decrease d of the TODO columns using the SCAN column.
 int_t _scan_dense(const uint_t n,
                   cost_t *     cost[],
                   uint_t *     plo,
@@ -183,7 +186,7 @@ int_t _scan_dense(const uint_t n,
         const cost_t mind = d[j];
         h                 = cost[i][j] - v[j] - mind;
         PRINTF("i=%d j=%d h=%f\n", i, j, h);
-        // 遍历 TODO 列表中的所有列，尝试用当前 SCAN 列降低其 d 值
+        // For all columns in TODO
         for (uint_t k = hi; k < n; k++) {
             j       = cols[k];
             cred_ij = cost[i][j] - v[j] - h;
@@ -205,8 +208,12 @@ int_t _scan_dense(const uint_t n,
     return -1;
 }
 
-// 改进的 Dijkstra 最短路径算法单次迭代
-// 扫描 TODO 列表中的所有列，尝试用 SCAN 列降低 TODO 列的 d 值。
+/** Single iteration of modified Dijkstra shortest path algorithm as explained in the JV paper.
+ *
+ * This is a dense matrix version.
+ *
+ * \return The closest free column index.
+ */
 int_t find_path_dense(const uint_t n,
                       cost_t *     cost[],
                       const int_t  start_i,
@@ -229,7 +236,7 @@ int_t find_path_dense(const uint_t n,
     }
     PRINT_COST_ARRAY(d, n);
     while (final_j == -1) {
-        // SCAN 列表为空时，重新查找 d 值最小的列填充 SCAN 列表
+        // No columns left on the SCAN list.
         if (lo == hi) {
             PRINTF("%d..%d -> find\n", lo, hi);
             n_ready = lo;
@@ -268,7 +275,8 @@ int_t find_path_dense(const uint_t n,
     return final_j;
 }
 
-// 稠密代价矩阵的增广
+/** Augment for a dense cost matrix.
+ */
 int_t _ca_dense(const uint_t n,
                 cost_t *     cost[],
                 const uint_t n_free_rows,
@@ -306,7 +314,8 @@ int_t _ca_dense(const uint_t n,
     return 0;
 }
 
-// 求解稠密线性分配问题 (Linear Assignment Problem)
+/** Solve dense sparse LAP.
+ */
 int lapjv_internal(const uint_t n, cost_t * cost[], int_t * x, int_t * y) {
     int      ret;
     int_t *  free_rows;

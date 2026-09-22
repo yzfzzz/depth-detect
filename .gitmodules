@@ -7,3 +7,6 @@
 [submodule "third_party/JsonSenderTest"]
 	path = third_party/JsonSenderTest
 	url = https://github.com/yzfzzz/JsonSenderTest
+[submodule "third_party/OneEuroFilter"]
+	path = third_party/OneEuroFilter
+	url = https://github.com/casiez/OneEuroFilter

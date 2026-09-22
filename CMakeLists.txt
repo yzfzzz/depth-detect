@@ -174,6 +174,15 @@ list(APPEND YAML_CPP_TARGET dl)
 # ==================== Helper Function ====================
 set(PROJECT_CPP_DIR ${PROJECT_SOURCE_DIR}/cpp)
 set(ONNXRUNTIME_ROOT ${PROJECT_SOURCE_DIR}/third_party/onnxruntime)
+
+# 1€ 滤波库
+set(ONE_EURO_FILTER_DIR ${PROJECT_SOURCE_DIR}/third_party/OneEuroFilter)
+if(NOT EXISTS ${ONE_EURO_FILTER_DIR}/cpp/OneEuroFilter.cpp)
+    message(FATAL_ERROR "please git submodule update --init --recursive third_party/OneEuroFilter")
+endif()
+add_library(one_euro_filter STATIC ${ONE_EURO_FILTER_DIR}/cpp/OneEuroFilter.cpp)
+target_include_directories(one_euro_filter PUBLIC ${ONE_EURO_FILTER_DIR}/cpp)
+
 add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/spdlog)
 find_path(EIGEN3_INCLUDE_DIR NAMES Eigen/Core PATHS /usr/include/eigen3)
 if(NOT EIGEN3_INCLUDE_DIR)
@@ -306,7 +315,7 @@ file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
 add_library(core SHARED ${CORE_SRCS})
 configure_common_includes(core)
 target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
-target_link_libraries(core PUBLIC  inference utils ${OpenCV_LIBS} JsonSender)
+target_link_libraries(core PUBLIC  inference utils one_euro_filter ${OpenCV_LIBS} JsonSender JsonSenderTcp)
 
 # tools
 file(GLOB_RECURSE TOOL_SRCS ${PROJECT_CPP_DIR}/tools/src/*.cpp)
@@ -345,7 +354,7 @@ if(ENABLE_BENCHMARK)
     
     add_executable(test_trt_quant_latency ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_latency.cpp)
     configure_common_includes(test_trt_quant_latency)
-    target_link_libraries(test_trt_quant_latency PRIVATE 
+    target_link_libraries(test_trt_quant_latency PRIVATE
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 else()

@@ -1,5 +1,6 @@
 
 #include "config_manager.h"
+#include "control_panel.h"
 #include "danger_alert_handler.h"
 #include "frame.h"
 #include "io_manager.h"
@@ -21,9 +22,7 @@
 
 cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      InferOutputContext &           infer_output_context,
-                     const ConfigManager &          config_manager,
                      DrawingManager &               drawing_manager,
-                     AlertMessage &                 alert_msg,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us) {
     if (infer_output_context.tracked_objects.size() <= 0) {
@@ -31,21 +30,23 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     }
     for (int i = 0; i < infer_output_context.tracked_objects.size(); i++) {
         auto & track = infer_output_context.tracked_objects[i];
-        if (track.tlwh_[2] * track.tlwh_[3] <= 20) {
+        if (track.tlwh[2] * track.tlwh[3] <= 20) {
             continue;
         }
 
-        auto it = infer_output_context.motion_records.find(track.track_id_);
-        if (it != infer_output_context.motion_records.end()) {
+        // 每个目标都画框+分数；不在接近单元内的目标用默认记录（分数为 0.00）
+        static const MotionStateInfoRecord kDefaultMotion;
+        auto                          it = infer_output_context.motion_records.find(track.track_id);
+        const MotionStateInfoRecord & motion =
+            (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
-            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(
-                "6.Drawing Manager", drawing_manager, drawTrackedObject,
-                frame_input_context.raw_img, track, alert_msg, get_color_func(track.track_id_));
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("6.Drawing Manager", drawing_manager,
+                                               drawTrackedObject, frame_input_context.raw_img,
+                                               track, motion, get_color_func(track.track_id));
 #else
-            drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, alert_msg,
-                                              get_color_func(track.track_id_));
+        drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, motion,
+                                          get_color_func(track.track_id));
 #endif
-        }
     }
     // FPS
     int show_fps = (total_us > 0) ? (frame_input_context.frame_id * 1000000LL / total_us) : 0;
@@ -53,7 +54,7 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
     drawing_manager.drawGlobalInfo(frame_input_context.raw_img, frame_input_context.frame_id,
                                    show_fps, infer_output_context.tracked_objects.size());
 
-    // 上下拼接
+    // 上下拼接（深度未启用时 depth_vis 为空，自动退回仅显示原图）
     cv::Mat out_frame = drawing_manager.concatenateFrames(frame_input_context.raw_img,
                                                           infer_output_context.depth_vis);
     return out_frame;
@@ -76,24 +77,31 @@ int run(char * video_path, char * config_path) {
     // 显示管理器（负责窗口管理、显示、鼠标点击等）
     DisplayManager     display_manager(config_manager, "Detection Result",
                                        cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
+    // 运行时参数控制面板：纯滑动条，挂载在主显示窗口上
+    ControlPanel       control_panel(pipeline.getMotionStateEngine(), config_manager,
+                                     display_manager.windowName());
     // 报警管理器（负责报警信息生成）
     DangerAlertHandler alert_handler(config_manager);
-    int                num_frames = 0;
-    double             total_us   = 0;
+    int                num_frames     = 0;
+    double             total_us       = 0;
+    // 是否按视频帧率模拟实时节奏（yaml: io_manager.simulate_delay）
+    const bool         simulate_delay = config_manager.isSimulateDelayEnabled();
     FrameInputContext  frame_input_context(num_frames, frame_meta);
     InferOutputContext infer_output_context;
     while (true) {
         frame_input_context.setFrameID(num_frames);
 #if defined(ENABLE_TIMER)
-        if (!DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("1.Cap Read", io_manager, readNextFrame,
-                                                    frame_input_context, false) ||
+        if (!DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Cap Read", io_manager, readNextFrame,
+                                                    frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
             break;
         }
         // 执行推理流水线
         std::string name = "Infer Pipeline";
         // DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context, infer_output_context);
-        if (config_manager.isOverlapEnabled()) {
+        // 错峰推理开启时走 process（内部按间隔调度，检测/深度同帧时转发 processOverlap）；
+        // 错峰关闭且 overlap 开启时走纯重叠路径
+        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
             DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap,
                                                    frame_input_context, infer_output_context);
         } else {
@@ -102,12 +110,12 @@ int run(char * video_path, char * config_path) {
         }
         total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
 #else
-        if (!io_manager.readNextFrame(frame_input_context, false) ||
+        if (!io_manager.readNextFrame(frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
             break;
         }
 
-        if (config_manager.isOverlapEnabled()) {
+        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
             pipeline.processOverlap(frame_input_context, infer_output_context);
         } else {
             pipeline.process(frame_input_context, infer_output_context);
@@ -120,22 +128,40 @@ int run(char * video_path, char * config_path) {
                      (total_us > 0 ? (num_frames * 1000000LL / total_us) : 0));
         }
         // 发送报警信息
-        auto alert = alert_handler.buildAlert(frame_input_context, infer_output_context);
+        AlertMessage alert;
+#if defined(ENABLE_TIMER)
+        alert = DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Build Alert", alert_handler, buildAlert,
+                                                       frame_input_context, infer_output_context);
+
+#else
+        alert = alert_handler.buildAlert(frame_input_context, infer_output_context);
+#endif
         if (alert.has_value()) {
+#if defined(ENABLE_TIMER)
+            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("IO Send Alert", io_manager, sendAlert, alert);
+#else
             io_manager.sendAlert(alert);
+#endif
         }
         // 画图
         cv::Mat out_frame = drawOneFrame(
-            frame_input_context, infer_output_context, config_manager, drawing_manager, alert,
+            frame_input_context, infer_output_context, drawing_manager,
             [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us);
-        // 保存结果
+// 保存结果
+#if defined(ENABLE_TIMER)
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("IO Save Frame", io_manager, saveFrame, out_frame,
+                                               num_frames);
+#else
         io_manager.saveFrame(out_frame, num_frames);
+#endif
 
         // 显示图像（通过 DisplayManager）
         // display_manager.updateData(infer_output_context.tracked_objects,
         //                            infer_output_context.result_depth);
         if (display_manager.isEnabled()) {
             display_manager.show(out_frame);
+            // 刷新控制面板（无编辑状态，无需转发按键）
+            control_panel.update();
             char c      = display_manager.waitKey(1);
             int  result = display_manager.handleKey(c);
             if (result == Key_Input::ESC) {  // 用户按下 ESC 键退出

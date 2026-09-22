@@ -44,6 +44,35 @@ void normalize_colormap_resize(float *      src,
 
 void initColorMapTable();  // INFERNO 颜色映射表初始化，仅需调用一次
 
+// 用 cv::applyColorMap(COLORMAP_TURBO) 生成 256 色 TURBO 表并上传到 __constant__ 内存
+void initTurboColorTable();
+
+// float 深度转 TURBO 伪彩（YoloDepthModel 使用，全异步、无主机同步）。
+// 语义对齐 Python depth_to_colormap：去 letterbox 内容区 ROI → 双线性 resize 到原始分辨率
+// → 对有限值求 P1/P99 分位数 → clip 归一化 → 查 TURBO 表。
+// stage_float / stat_min / stat_max / stat_count / range_2f / hist / percentiles_2f
+// 均为调用方持有的设备端中间缓冲（每帧复用）。
+#define DEPTH_COLORMAP_STAT_BLOCKS 64
+void floatDepthColormapResize(const float * src,
+                              int           in_w,
+                              int           roi_x,
+                              int           roi_y,
+                              int           roi_w,
+                              int           roi_h,
+                              float *       stage_float,  // [out_w*out_h] float
+                              int           out_w,
+                              int           out_h,
+                              uchar *       dst_gray,        // [out_w*out_h] uchar
+                              uchar3 *      dst_color,       // [out_w*out_h] uchar3 (BGR)
+                              float *       stat_min,        // [DEPTH_COLORMAP_STAT_BLOCKS]
+                              float *       stat_max,        // [DEPTH_COLORMAP_STAT_BLOCKS]
+                              int *         stat_count,      // [DEPTH_COLORMAP_STAT_BLOCKS]
+                              float *       range_2f,        // [2]: {min, max}
+                              int *         hist,            // [256]
+                              float *       percentiles_2f,  // [2]: {P1, P99}
+                              int           stat_blocks,
+                              cudaStream_t  stream);
+
 __inline__ void scale_bbox(const cv::Mat & img, float bbox[4], int input_w, int input_h) {
     float r_w   = input_w / (img.cols * 1.0);
     float r_h   = input_h / (img.rows * 1.0);
