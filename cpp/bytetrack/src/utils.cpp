@@ -1,17 +1,16 @@
 #include "BYTETracker.h"
 #include "lapjv.h"
-#include "logger_manager.h"
 
-std::vector<STrack *> BYTETracker::jointStracks(std::vector<STrack *> & tlista,
-                                                std::vector<STrack> &   tlistb) {
+std::vector<STrack *> BYTETracker::joint_stracks(std::vector<STrack *> & tlista,
+                                                 std::vector<STrack> &   tlistb) {
     std::map<int, int>    exists;
     std::vector<STrack *> res;
     for (int i = 0; i < tlista.size(); i++) {
-        exists.insert(std::pair<int, int>(tlista[i]->track_id_, 1));
+        exists.insert(std::pair<int, int>(tlista[i]->track_id, 1));
         res.push_back(tlista[i]);
     }
     for (int i = 0; i < tlistb.size(); i++) {
-        int tid = tlistb[i].track_id_;
+        int tid = tlistb[i].track_id;
         if (!exists[tid] || exists.count(tid) == 0) {
             exists[tid] = 1;
             res.push_back(&tlistb[i]);
@@ -20,16 +19,16 @@ std::vector<STrack *> BYTETracker::jointStracks(std::vector<STrack *> & tlista,
     return res;
 }
 
-std::vector<STrack> BYTETracker::jointStracks(std::vector<STrack> & tlista,
-                                              std::vector<STrack> & tlistb) {
+std::vector<STrack> BYTETracker::joint_stracks(std::vector<STrack> & tlista,
+                                               std::vector<STrack> & tlistb) {
     std::map<int, int>  exists;
     std::vector<STrack> res;
     for (int i = 0; i < tlista.size(); i++) {
-        exists.insert(std::pair<int, int>(tlista[i].track_id_, 1));
+        exists.insert(std::pair<int, int>(tlista[i].track_id, 1));
         res.push_back(tlista[i]);
     }
     for (int i = 0; i < tlistb.size(); i++) {
-        int tid = tlistb[i].track_id_;
+        int tid = tlistb[i].track_id;
         if (!exists[tid] || exists.count(tid) == 0) {
             exists[tid] = 1;
             res.push_back(tlistb[i]);
@@ -38,14 +37,14 @@ std::vector<STrack> BYTETracker::jointStracks(std::vector<STrack> & tlista,
     return res;
 }
 
-std::vector<STrack> BYTETracker::subStracks(std::vector<STrack> & tlista,
-                                            std::vector<STrack> & tlistb) {
+std::vector<STrack> BYTETracker::sub_stracks(std::vector<STrack> & tlista,
+                                             std::vector<STrack> & tlistb) {
     std::map<int, STrack> stracks;
     for (int i = 0; i < tlista.size(); i++) {
-        stracks.insert(std::pair<int, STrack>(tlista[i].track_id_, tlista[i]));
+        stracks.insert(std::pair<int, STrack>(tlista[i].track_id, tlista[i]));
     }
     for (int i = 0; i < tlistb.size(); i++) {
-        int tid = tlistb[i].track_id_;
+        int tid = tlistb[i].track_id;
         if (stracks.count(tid) != 0) {
             stracks.erase(tid);
         }
@@ -60,11 +59,11 @@ std::vector<STrack> BYTETracker::subStracks(std::vector<STrack> & tlista,
     return res;
 }
 
-void BYTETracker::removeDuplicateStracks(std::vector<STrack> & resa,
-                                         std::vector<STrack> & resb,
-                                         std::vector<STrack> & stracksa,
-                                         std::vector<STrack> & stracksb) {
-    std::vector<std::vector<float>>  pdist = iouDistance(stracksa, stracksb);
+void BYTETracker::remove_duplicate_stracks(std::vector<STrack> & resa,
+                                           std::vector<STrack> & resb,
+                                           std::vector<STrack> & stracksa,
+                                           std::vector<STrack> & stracksb) {
+    std::vector<std::vector<float>>  pdist = iou_distance(stracksa, stracksb);
     std::vector<std::pair<int, int>> pairs;
     for (int i = 0; i < pdist.size(); i++) {
         for (int j = 0; j < pdist[i].size(); j++) {
@@ -76,8 +75,8 @@ void BYTETracker::removeDuplicateStracks(std::vector<STrack> & resa,
 
     std::vector<int> dupa, dupb;
     for (int i = 0; i < pairs.size(); i++) {
-        int timep = stracksa[pairs[i].first].frame_id_ - stracksa[pairs[i].first].start_frame_;
-        int timeq = stracksb[pairs[i].second].frame_id_ - stracksb[pairs[i].second].start_frame_;
+        int timep = stracksa[pairs[i].first].frame_id - stracksa[pairs[i].first].start_frame;
+        int timeq = stracksb[pairs[i].second].frame_id - stracksb[pairs[i].second].start_frame;
         if (timep > timeq) {
             dupb.push_back(pairs[i].second);
         } else {
@@ -86,27 +85,27 @@ void BYTETracker::removeDuplicateStracks(std::vector<STrack> & resa,
     }
 
     for (int i = 0; i < stracksa.size(); i++) {
-        std::vector<int>::iterator iter = std::find(dupa.begin(), dupa.end(), i);
+        std::vector<int>::iterator iter = find(dupa.begin(), dupa.end(), i);
         if (iter == dupa.end()) {
             resa.push_back(stracksa[i]);
         }
     }
 
     for (int i = 0; i < stracksb.size(); i++) {
-        std::vector<int>::iterator iter = std::find(dupb.begin(), dupb.end(), i);
+        std::vector<int>::iterator iter = find(dupb.begin(), dupb.end(), i);
         if (iter == dupb.end()) {
             resb.push_back(stracksb[i]);
         }
     }
 }
 
-void BYTETracker::linearAssignment(std::vector<std::vector<float>> & cost_matrix,
-                                   int                               cost_matrix_size,
-                                   int                               cost_matrix_size_size,
-                                   float                             thresh,
-                                   std::vector<std::vector<int>> &   matches,
-                                   std::vector<int> &                unmatched_a,
-                                   std::vector<int> &                unmatched_b) {
+void BYTETracker::linear_assignment(std::vector<std::vector<float>> & cost_matrix,
+                                    int                               cost_matrix_size,
+                                    int                               cost_matrix_size_size,
+                                    float                             thresh,
+                                    std::vector<std::vector<int>> &   matches,
+                                    std::vector<int> &                unmatched_a,
+                                    std::vector<int> &                unmatched_b) {
     if (cost_matrix.size() == 0) {
         for (int i = 0; i < cost_matrix_size; i++) {
             unmatched_a.push_back(i);
@@ -150,20 +149,19 @@ std::vector<std::vector<float>> BYTETracker::ious(std::vector<std::vector<float>
         ious[i].resize(btlbrs.size());
     }
 
-    // bbox_ious
+    //bbox_ious
     for (int k = 0; k < btlbrs.size(); k++) {
         std::vector<float> ious_tmp;
-        float box_area = (btlbrs[k][2] - btlbrs[k][0] + 1) * (btlbrs[k][3] - btlbrs[k][1] + 1);
+        float              box_area = (btlbrs[k][2] - btlbrs[k][0]) * (btlbrs[k][3] - btlbrs[k][1]);
         for (int n = 0; n < atlbrs.size(); n++) {
-            float iw =
-                std::min(atlbrs[n][2], btlbrs[k][2]) - std::max(atlbrs[n][0], btlbrs[k][0]) + 1;
+            float iw = std::max(
+                0.0f, std::min(atlbrs[n][2], btlbrs[k][2]) - std::max(atlbrs[n][0], btlbrs[k][0]));
             if (iw > 0) {
-                float ih =
-                    std::min(atlbrs[n][3], btlbrs[k][3]) - std::max(atlbrs[n][1], btlbrs[k][1]) + 1;
+                float ih = std::max(0.0f, std::min(atlbrs[n][3], btlbrs[k][3]) -
+                                              std::max(atlbrs[n][1], btlbrs[k][1]));
                 if (ih > 0) {
-                    float ua =
-                        (atlbrs[n][2] - atlbrs[n][0] + 1) * (atlbrs[n][3] - atlbrs[n][1] + 1) +
-                        box_area - iw * ih;
+                    float ua = (atlbrs[n][2] - atlbrs[n][0]) * (atlbrs[n][3] - atlbrs[n][1]) +
+                               box_area - iw * ih;
                     ious[n][k] = iw * ih / ua;
                 } else {
                     ious[n][k] = 0.0;
@@ -177,10 +175,11 @@ std::vector<std::vector<float>> BYTETracker::ious(std::vector<std::vector<float>
     return ious;
 }
 
-std::vector<std::vector<float>> BYTETracker::iouDistance(std::vector<STrack *> & atracks,
-                                                         std::vector<STrack> &   btracks,
-                                                         int &                   dist_size,
-                                                         int &                   dist_size_size) {
+std::vector<std::vector<float>> BYTETracker::iou_distance(std::vector<STrack *> & atracks,
+                                                          std::vector<STrack> &   btracks,
+                                                          int &                   dist_size,
+                                                          int &                   dist_size_size,
+                                                          bool                    fuse_score) {
     std::vector<std::vector<float>> cost_matrix;
     if (atracks.size() * btracks.size() == 0) {
         dist_size      = atracks.size();
@@ -189,46 +188,53 @@ std::vector<std::vector<float>> BYTETracker::iouDistance(std::vector<STrack *> &
     }
     std::vector<std::vector<float>> atlbrs, btlbrs;
     for (int i = 0; i < atracks.size(); i++) {
-        atlbrs.push_back(atracks[i]->tlbr_);
+        atlbrs.push_back(atracks[i]->tlbr);
     }
     for (int i = 0; i < btracks.size(); i++) {
-        btlbrs.push_back(btracks[i].tlbr_);
+        btlbrs.push_back(btracks[i].tlbr);
     }
 
     dist_size      = atracks.size();
     dist_size_size = btracks.size();
 
-    std::vector<std::vector<float>> ious_val = ious(atlbrs, btlbrs);
+    std::vector<std::vector<float>> _ious = ious(atlbrs, btlbrs);
 
-    for (int i = 0; i < ious_val.size(); i++) {
-        std::vector<float> iou;
-        for (int j = 0; j < ious_val[i].size(); j++) {
-            iou.push_back(1 - ious_val[i][j]);
+    for (int i = 0; i < _ious.size(); i++) {
+        std::vector<float> _iou;
+        for (int j = 0; j < _ious[i].size(); j++) {
+            float sim = _ious[i][j];
+            if (fuse_score) {
+                float det_scores = btracks[j].score;
+                sim *= det_scores;
+            }
+            float cost = 1 - sim;
+
+            _iou.push_back(cost);
         }
-        cost_matrix.push_back(iou);
+        cost_matrix.push_back(_iou);
     }
 
     return cost_matrix;
 }
 
-std::vector<std::vector<float>> BYTETracker::iouDistance(std::vector<STrack> & atracks,
-                                                         std::vector<STrack> & btracks) {
+std::vector<std::vector<float>> BYTETracker::iou_distance(std::vector<STrack> & atracks,
+                                                          std::vector<STrack> & btracks) {
     std::vector<std::vector<float>> atlbrs, btlbrs;
     for (int i = 0; i < atracks.size(); i++) {
-        atlbrs.push_back(atracks[i].tlbr_);
+        atlbrs.push_back(atracks[i].tlbr);
     }
     for (int i = 0; i < btracks.size(); i++) {
-        btlbrs.push_back(btracks[i].tlbr_);
+        btlbrs.push_back(btracks[i].tlbr);
     }
 
-    std::vector<std::vector<float>> ious_val = ious(atlbrs, btlbrs);
+    std::vector<std::vector<float>> _ious = ious(atlbrs, btlbrs);
     std::vector<std::vector<float>> cost_matrix;
-    for (int i = 0; i < ious_val.size(); i++) {
-        std::vector<float> iou;
-        for (int j = 0; j < ious_val[i].size(); j++) {
-            iou.push_back(1 - ious_val[i][j]);
+    for (int i = 0; i < _ious.size(); i++) {
+        std::vector<float> _iou;
+        for (int j = 0; j < _ious[i].size(); j++) {
+            _iou.push_back(1 - _ious[i][j]);
         }
-        cost_matrix.push_back(iou);
+        cost_matrix.push_back(_iou);
     }
 
     return cost_matrix;
@@ -255,7 +261,8 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
         n = n_rows;
     } else {
         if (!extend_cost) {
-            APP_WARN("set extend_cost=True");
+            std::cout << "set extend_cost=True" << std::endl;
+            system("pause");
             exit(0);
         }
     }
@@ -321,7 +328,8 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
 
     int ret = lapjv_internal(n, cost_ptr, x_c, y_c);
     if (ret != 0) {
-        APP_ERROR("Calculate Wrong!");
+        std::cout << "Calculate Wrong!" << std::endl;
+        system("pause");
         exit(0);
     }
 
@@ -346,8 +354,7 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
         if (return_cost) {
             for (int i = 0; i < rowsol.size(); i++) {
                 if (rowsol[i] != -1) {
-                    // cout << i << "\t" << rowsol[i] << "\t" << cost_ptr[i][rowsol[i]] <<
-                    // endl;
+                    //std::cout << i << "\t" << rowsol[i] << "\t" << cost_ptr[i][rowsol[i]] << std::endl;
                     opt += cost_ptr[i][rowsol[i]];
                 }
             }
@@ -368,7 +375,18 @@ double BYTETracker::lapjv(const std::vector<std::vector<float>> & cost,
     return opt;
 }
 
+// 按 track 序号取稳定的绘制颜色（20 色循环调色板）。
+// 注意：头文件里声明了 getColor 但上游参考实现没给出定义，这里补上，
+// 否则任何调用点（如 Pipeline::getColor）都会链接失败。
 cv::Scalar BYTETracker::getColor(int idx) {
-    idx += 3;
-    return cv::Scalar(37 * idx % 255, 17 * idx % 255, 29 * idx % 255);
+    static const cv::Scalar colors[] = {
+        cv::Scalar(255, 56, 56),  cv::Scalar(255, 157, 151), cv::Scalar(255, 112, 31),
+        cv::Scalar(255, 178, 29), cv::Scalar(207, 210, 49),  cv::Scalar(72, 249, 10),
+        cv::Scalar(146, 204, 23), cv::Scalar(61, 219, 134),  cv::Scalar(26, 147, 52),
+        cv::Scalar(0, 212, 187),  cv::Scalar(44, 153, 168),  cv::Scalar(0, 194, 255),
+        cv::Scalar(52, 69, 147),  cv::Scalar(100, 115, 255), cv::Scalar(0, 24, 236),
+        cv::Scalar(132, 56, 255), cv::Scalar(82, 0, 133),    cv::Scalar(203, 56, 255),
+        cv::Scalar(255, 56, 203), cv::Scalar(255, 149, 200)
+    };
+    return colors[idx % 20];
 }

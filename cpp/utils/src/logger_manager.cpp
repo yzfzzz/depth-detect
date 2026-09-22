@@ -5,8 +5,10 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
 
 std::string LoggerManager::getDateLogFilePath() {
@@ -112,6 +114,37 @@ LoggerManager::LoggerManager(bool                save_file,
     }
 }
 
+void LoggerManager::saveTrackCsv(
+    const std::string &                                       path,
+    const std::unordered_map<int, std::vector<TrackRecord>> & track_log) {
+    std::ofstream out(path, std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        out.open("track_log.csv", std::ios::out | std::ios::trunc);  // 回退到当前目录
+    }
+    if (!out.is_open()) {
+        APP_WARN("Failed to open track log CSV");
+        return;
+    }
+
+    out << "track_id,frame_id,class_id,x,w,y,h,area,raw_depth\n";
+
+    // unordered_map 无序，按 track_id 排序后输出，保证结果可复现、便于阅读
+    std::vector<int> ids;
+    ids.reserve(track_log.size());
+    for (const auto & kv : track_log) {
+        ids.push_back(kv.first);
+    }
+    std::sort(ids.begin(), ids.end());
+    for (const int id : ids) {
+        for (const auto & r : track_log.at(id)) {
+            out << id << ',' << r.frame_id << ',' << r.class_id << ',' << r.x << ',' << r.w << ','
+                << r.y << ',' << r.h << ',' << r.area << ',' << r.raw_depth << '\n';
+        }
+    }
+    out.close();
+    APP_INFO("Track log saved to {} ({} tracks)", path, ids.size());
+}
+
 void LoggerManager::logConfig(const ConfigManager & config) {
     APP_INFO("========== ConfigManager Settings ==========");
 
@@ -129,6 +162,10 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     }
     APP_INFO("  [yolo] nms_thresh: {}", config.getYoloNmsThresh());
     APP_INFO("  [yolo] conf_thresh: {}", config.getYoloConfThresh());
+    APP_INFO("  [yolo] light_engine: {}",
+             config.getYoloLightEnginePath().empty() ? "<none>" : config.getYoloLightEnginePath());
+    APP_INFO("  [yolo] light_onnx: {}",
+             config.getYoloLightOnnxPath().empty() ? "<none>" : config.getYoloLightOnnxPath());
 
     // depth
     auto depth_models = config.getDepthModelPath();
@@ -136,14 +173,22 @@ void LoggerManager::logConfig(const ConfigManager & config) {
         APP_INFO("  [depth] model_path[{}]: {}", kv.first, kv.second);
     }
     APP_INFO("  [depth] depth_interval: {}", config.getDepthInterval());
+    APP_INFO("  [yolo] detect_interval: {}", config.getYoloDetectInterval());
+    APP_INFO("  [io_manager] save_buffer_gb: {}", config.getSaveBufferGb());
 
-    // motion_state_engine
-    APP_INFO("  [motion_state_engine] velocity_threshold: {}", config.getMotionVelocityThreshold());
-    APP_INFO("  [motion_state_engine] acceleration_threshold: {}",
-             config.getMotionAccelerationThreshold());
-    APP_INFO("  [motion_state_engine] kf_process_noise_cov: {}", config.getKfProcessNoiseCov());
-    APP_INFO("  [motion_state_engine] kf_measurement_noise_cov: {}",
-             config.getKfMeasurementNoiseCov());
+    // motion_state_engine：快速靠近（approach）检测参数（原 TTC/运动状态一路已移除）
+    APP_INFO("  [motion_state_engine.approach] enabled: {}", config.isApproachEnabled());
+    APP_INFO("  [motion_state_engine.approach] filter: {}", config.getApproachFilterMode());
+    APP_INFO("  [motion_state_engine.approach] detect_warmup/recent_w (height): {}/{}",
+             config.getApproachDetectWarmup(), config.getApproachDetectRecentW());
+    APP_INFO("  [motion_state_engine.approach] warmup/recent_w (depth): {}/{}",
+             config.getApproachDepthWarmup(), config.getApproachDepthRecentW());
+    APP_INFO("  [motion_state_engine.approach] thr_depth/thr_height: {}/{}",
+             config.getApproachThrDepth(), config.getApproachThrHeight());
+    APP_INFO("  [motion_state_engine.approach] score_thr/confirm: {}/{}",
+             config.getApproachScoreThr(), config.getApproachConfirm());
+    APP_INFO("  [motion_state_engine.approach] exit_score_thr/exit_confirm: {}/{}",
+             config.getApproachExitScoreThr(), config.getApproachExitConfirm());
 
     // danger_alert
     APP_INFO("  [danger_alert] is_filter_small_objects: {}", config.isFilterSmallObjectsEnabled());
@@ -156,6 +201,11 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     APP_INFO("  [io_manager] send_tcp: {}", config.isSendTcpEnabled());
     APP_INFO("  [io_manager] send_tcp_ip: {}", config.getSendTcpIp());
     APP_INFO("  [io_manager] send_tcp_port: {}", config.getSendTcpPort());
+    APP_INFO("  [io_manager] tcp_reconnect: {} (interval {} s, connect timeout {} s)",
+             config.isTcpReconnectEnabled(), config.getTcpCheckIntervalS(),
+             config.getTcpConnectTimeoutS());
+    APP_INFO("  [io_manager] simulate_delay: {}", config.isSimulateDelayEnabled());
+    APP_INFO("  [io_manager] simulate_fps: {}", config.getSimulateFps());
 
     // logger
     APP_INFO("  [logger] save_file: {}", config.isLogFileSaveEnabled());

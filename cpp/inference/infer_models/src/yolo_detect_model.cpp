@@ -33,9 +33,9 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
     size_t h_output_data_size = 1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT;
     if (backend_->getBackendType() == BackendType::TensorRT) {
         // 计算输出数据总大小
-        size_t output_size       = getOutputByteSize(0);
+        size_t output_size      = getOutputByteSize(0);
         // 定义分配固定主机内存的 lambda 函数
-        auto   alloc_cuda_pinned = [](size_t bytes) {
+        auto   allocCuda_pinned = [](size_t bytes) {
             void * ptr = nullptr;
             CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
             return ptr;
@@ -46,37 +46,28 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
         // 每个 bbox: [x1, y1, x2, y2, conf, class_id, keep_flag]
 
         h_infer_out_pinned_.reset(
-            static_cast<float *>(alloc_cuda_pinned(h_output_data_size * sizeof(float))));
-
-        // 定义分配设备内存的 lambda 函数
-        auto alloc_cuda = [](size_t bytes) {
-            void * ptr = nullptr;
-            CHECK_CUDA(cudaMalloc(&ptr, bytes));
-            return ptr;
-        };
+            static_cast<float *>(allocCuda_pinned(h_output_data_size * sizeof(float))));
 
         // 准备设备输入输出缓冲区
         // d_infer_io_[0]: 输入缓冲区 [1, 3, H, W]
         d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
-        d_infer_io_[0].reset(alloc_cuda(3 * input_h_ * input_w_ * sizeof(float)));
+        d_infer_io_[0].reset(allocCuda(3 * getInputHxW() * sizeof(float)));
 
         // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
-        d_infer_io_[1].reset(alloc_cuda(output_size));
+        d_infer_io_[1].reset(allocCuda(output_size));
 
         // 转置缓冲区（用于后处理）
-        d_transpose_.reset(static_cast<float *>(alloc_cuda(output_size)));
+        d_transpose_.reset(static_cast<float *>(allocCuda(output_size)));
 
         // 解码缓冲区（用于 NMS）
         d_decode_.reset(static_cast<float *>(
-            alloc_cuda((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float))));
+            allocCuda((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float))));
 
         // 源数据缓冲区（原始图像数据）
-        d_src_data_.reset(
-            static_cast<uchar *>(alloc_cuda(sizeof(uchar) * raw_img_h_ * raw_img_w_ * 3)));
+        d_src_data_.reset(static_cast<uchar *>(allocCuda(sizeof(uchar) * getRawImgHxW() * 3)));
 
         // 中间数据缓冲区（预处理后的图像数据）
-        d_mid_data_.reset(
-            static_cast<uchar *>(alloc_cuda(sizeof(uchar) * input_h_ * input_w_ * 3)));
+        d_mid_data_.reset(static_cast<uchar *>(allocCuda(sizeof(uchar) * getInputHxW() * 3)));
 
     } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
         // ONNX Runtime CPU 后端，准备主机输出数据空间

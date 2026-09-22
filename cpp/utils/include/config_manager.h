@@ -3,26 +3,43 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 // 框架读取配置文件类 - 单例模式
 class ConfigManager {
   public:
     ConfigManager(const std::string config_path);
     std::map<std::string, std::string> getYoloModelPath() const;
+    std::string                        getYoloLightEnginePath() const;
+    std::string                        getYoloLightOnnxPath() const;
     std::map<std::string, std::string> getDepthModelPath() const;
     int                                getDepthInterval() const;
+    int                                getYoloDetectInterval() const;
+    bool                               isDepthEnabled() const;
     std::string                        getSaveMode() const;
     std::string                        getOutDir() const;
+    double                             getSaveBufferGb() const;
     bool                               isDisplayEnabled() const;
+    bool                               isControlPanelEnabled() const;
     bool                               isSaveEnabled() const;
-    float                              getMotionVelocityThreshold() const;
-    float                              getMotionAccelerationThreshold() const;
     float                              getYoloNmsThresh() const;
     float                              getYoloConfThresh() const;
-    float                              getKfProcessNoiseCov() const;
-    float                              getKfMeasurementNoiseCov() const;
+    // ---- 快速靠近（approach）检测参数：方案 d 的 C++ 移植，见 approach_detector.h ----
+    bool                               isApproachEnabled() const;
+    std::string                        getApproachFilterMode() const;
+    int                                getApproachDetectWarmup() const;
+    int                                getApproachDepthWarmup() const;
+    float                              getApproachThrDepth() const;
+    float                              getApproachThrHeight() const;
+    int                                getApproachDetectRecentW() const;
+    int                                getApproachDepthRecentW() const;
+    float                              getApproachScoreThr() const;
+    int                                getApproachConfirm() const;
+    float                              getApproachExitScoreThr() const;
+    int                                getApproachExitConfirm() const;
     bool                               isUseGPU() const;
     bool                               isOverlapEnabled() const;
+    bool                               isStaggerInferEnabled() const;
     bool                               isLogFileSaveEnabled() const;
     bool                               isLogConsoleOutputEnabled() const;
     std::string                        getLogLevel() const;
@@ -31,8 +48,23 @@ class ConfigManager {
     std::string                        getSendTcpIp() const;
     int                                getSendTcpPort() const;
     bool                               isSendTcpEnabled() const;
+    bool                               isTcpReconnectEnabled() const;
+    int                                getTcpCheckIntervalS() const;
+    int                                getTcpConnectTimeoutS() const;
+    bool                               isTrackLogEnabled() const;
+    bool                               isSimulateDelayEnabled() const;
+    int                                getSimulateFps() const;
     bool                               isFilterSmallObjectsEnabled() const;
     float                              getMinObjectArea() const;
+    int                                getCameraWidth() const;
+    int                                getCameraHeight() const;
+    int                                getCameraFps() const;
+    std::string                        getDepthModelType() const;
+    int                                getTrackerTrackBuffer() const;
+    float                              getTrackHighThresh() const;
+    float                              getTrackLowThresh() const;
+    float                              getNewTrackThresh() const;
+    float                              getMatchThresh() const;
 
   private:
     YAML::Node config_;
@@ -47,9 +79,37 @@ inline std::map<std::string, std::string> ConfigManager::getYoloModelPath() cons
     std::map<std::string, std::string> model_paths;
     const auto &                       yolo_model_paths = config_["yolo"]["yolo_model_path"];
     for (const auto & model_path : yolo_model_paths) {
-        model_paths[model_path["type"].as<std::string>()] = model_path["path"].as<std::string>();
+        const std::string type = model_path["type"].as<std::string>();
+        // light_engine / light_onnx 是碰撞帧轻量模型的专用条目，不属于主模型：
+        // 主模型初始化会校验 map 内每个文件都存在，混入轻量条目会让主模型被牵连失败
+        if (type == "light_engine" || type == "light_onnx") {
+            continue;
+        }
+        model_paths[type] = model_path["path"].as<std::string>();
     }
     return model_paths;
+}
+
+// 轻量检测引擎路径（yolo_model_path 中 type=light_engine 的条目），
+// 供错峰碰撞帧的重叠推理使用；未配置返回空串
+inline std::string ConfigManager::getYoloLightEnginePath() const {
+    for (const auto & model_path : config_["yolo"]["yolo_model_path"]) {
+        if (model_path["type"].as<std::string>() == "light_engine") {
+            return model_path["path"].as<std::string>();
+        }
+    }
+    return "";
+}
+
+// 轻量检测模型的 ONNX 路径（type=light_onnx）：GPU 不可用或强制 CPU 时，
+// 轻量模型改走 ONNX Runtime 后端；未配置返回空串
+inline std::string ConfigManager::getYoloLightOnnxPath() const {
+    for (const auto & model_path : config_["yolo"]["yolo_model_path"]) {
+        if (model_path["type"].as<std::string>() == "light_onnx") {
+            return model_path["path"].as<std::string>();
+        }
+    }
+    return "";
 }
 
 inline std::map<std::string, std::string> ConfigManager::getDepthModelPath() const {
@@ -65,8 +125,22 @@ inline int ConfigManager::getDepthInterval() const {
     return config_["depth"]["depth_interval"].as<int>(1);
 }
 
+// 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰调度开启时生效）
+inline int ConfigManager::getYoloDetectInterval() const {
+    return config_["yolo"]["detect_interval"].as<int>(1);
+}
+
+inline bool ConfigManager::isDepthEnabled() const {
+    return config_["depth"]["enabled"].as<bool>(true);
+}
+
 inline std::string ConfigManager::getSaveMode() const {
     return config_["io_manager"]["save_mode"].as<std::string>("none");
+}
+
+// 异步落盘缓冲区上限（GB）；IOManager 侧会做下限钳制
+inline double ConfigManager::getSaveBufferGb() const {
+    return config_["io_manager"]["save_buffer_gb"].as<double>(0.5);
 }
 
 inline std::string ConfigManager::getOutDir() const {
@@ -77,16 +151,12 @@ inline bool ConfigManager::isDisplayEnabled() const {
     return config_["display_manager"]["is_display"].as<bool>(false);
 }
 
+inline bool ConfigManager::isControlPanelEnabled() const {
+    return config_["display_manager"]["enable_control_panel"].as<bool>(true);
+}
+
 inline bool ConfigManager::isSaveEnabled() const {
     return config_["io_manager"]["is_save"].as<bool>(false);
-}
-
-inline float ConfigManager::getMotionVelocityThreshold() const {
-    return config_["motion_state_engine"]["velocity_threshold"].as<float>(5.0f);
-}
-
-inline float ConfigManager::getMotionAccelerationThreshold() const {
-    return config_["motion_state_engine"]["acceleration_threshold"].as<float>(1.5f);
 }
 
 inline float ConfigManager::getYoloNmsThresh() const {
@@ -97,12 +167,64 @@ inline float ConfigManager::getYoloConfThresh() const {
     return config_["yolo"]["yolo_conf_thresh"].as<float>(0.25f);
 }
 
-inline float ConfigManager::getKfProcessNoiseCov() const {
-    return config_["motion_state_engine"]["kf_process_noise_cov"].as<float>(2e-2f);
+// --------------------------------------------------------------------------- //
+// 快速靠近（approach）检测参数
+// 默认值 = mini_python/pipeline.py 调好的最优参数：
+//   --approach d --filter one_euro --approach-score-thr 0.45 --approach-confirm 3
+//   --approach-thr-depth 0.15 --approach-thr-height 0.20
+//   --approach-exit-confirm 3 --approach-exit-score-thr 0.2
+// 注：尺度判据已由“框面积变化”改为“框高变化”（thr_height）
+// --------------------------------------------------------------------------- //
+
+inline bool ConfigManager::isApproachEnabled() const {
+    return config_["motion_state_engine"]["approach"]["enabled"].as<bool>(true);
 }
 
-inline float ConfigManager::getKfMeasurementNoiseCov() const {
-    return config_["motion_state_engine"]["kf_measurement_noise_cov"].as<float>(5e-2f);
+inline std::string ConfigManager::getApproachFilterMode() const {
+    return config_["motion_state_engine"]["approach"]["filter"].as<std::string>("one_euro");
+}
+
+inline int ConfigManager::getApproachDetectWarmup() const {
+    return config_["motion_state_engine"]["approach"]["detect_warmup"].as<int>(30);
+}
+
+// 深度通道未配置时回落到框高通道的值，保持与旧版单参数行为一致
+inline int ConfigManager::getApproachDepthWarmup() const {
+    return config_["motion_state_engine"]["approach"]["depth_warmup"].as<int>(
+        getApproachDetectWarmup());
+}
+
+inline float ConfigManager::getApproachThrDepth() const {
+    return config_["motion_state_engine"]["approach"]["thr_depth"].as<float>(0.15f);
+}
+
+inline float ConfigManager::getApproachThrHeight() const {
+    return config_["motion_state_engine"]["approach"]["thr_height"].as<float>(0.30f);
+}
+
+inline int ConfigManager::getApproachDetectRecentW() const {
+    return config_["motion_state_engine"]["approach"]["detect_recent_w"].as<int>(10);
+}
+
+inline int ConfigManager::getApproachDepthRecentW() const {
+    return config_["motion_state_engine"]["approach"]["depth_recent_w"].as<int>(
+        getApproachDetectRecentW());
+}
+
+inline float ConfigManager::getApproachScoreThr() const {
+    return config_["motion_state_engine"]["approach"]["score_thr"].as<float>(0.45f);
+}
+
+inline int ConfigManager::getApproachConfirm() const {
+    return config_["motion_state_engine"]["approach"]["confirm"].as<int>(3);
+}
+
+inline float ConfigManager::getApproachExitScoreThr() const {
+    return config_["motion_state_engine"]["approach"]["exit_score_thr"].as<float>(0.2f);
+}
+
+inline int ConfigManager::getApproachExitConfirm() const {
+    return config_["motion_state_engine"]["approach"]["exit_confirm"].as<int>(3);
 }
 
 inline bool ConfigManager::isLogFileSaveEnabled() const {
@@ -129,6 +251,11 @@ inline bool ConfigManager::isOverlapEnabled() const {
     return config_["prefer"]["overlap"].as<bool>(true);
 }
 
+// 错峰推理：奇数帧只跑检测、偶数帧只跑深度（每帧峰值算力减半；开启后优先于 overlap 走串行错峰路径）
+inline bool ConfigManager::isStaggerInferEnabled() const {
+    return config_["prefer"]["stagger_infer"].as<bool>(false);
+}
+
 inline void ConfigManager::setLogLevel(const std::string & log_level) {
     config_["logger"]["log_level"] = log_level;
 }
@@ -145,10 +272,78 @@ inline bool ConfigManager::isSendTcpEnabled() const {
     return config_["io_manager"]["send_tcp"].as<bool>(false);
 }
 
+// 断联自动重连：关闭则保持旧行为（失败即停发，不重试）
+inline bool ConfigManager::isTcpReconnectEnabled() const {
+    return config_["io_manager"]["tcp_reconnect"].as<bool>(true);
+}
+
+inline int ConfigManager::getTcpCheckIntervalS() const {
+    return config_["io_manager"]["tcp_check_interval_s"].as<int>(5);
+}
+
+inline int ConfigManager::getTcpConnectTimeoutS() const {
+    return config_["io_manager"]["tcp_connect_timeout_s"].as<int>(3);
+}
+
+inline bool ConfigManager::isTrackLogEnabled() const {
+    return config_["io_manager"]["save_track_log"].as<bool>(false);
+}
+
+inline bool ConfigManager::isSimulateDelayEnabled() const {
+    return config_["io_manager"]["simulate_delay"].as<bool>(true);
+}
+
+inline int ConfigManager::getSimulateFps() const {
+    return config_["io_manager"]["simulate_fps"].as<int>(0);
+}
+
 inline bool ConfigManager::isFilterSmallObjectsEnabled() const {
     return config_["danger_alert"]["is_filter_small_objects"].as<bool>(true);
 }
 
 inline float ConfigManager::getMinObjectArea() const {
     return config_["danger_alert"]["min_object_area"].as<float>(20.0f);
+}
+
+inline int ConfigManager::getCameraWidth() const {
+    return config_["camera"]["width"].as<int>(1280);
+}
+
+inline int ConfigManager::getCameraHeight() const {
+    return config_["camera"]["height"].as<int>(720);
+}
+
+inline int ConfigManager::getCameraFps() const {
+    return config_["camera"]["fps"].as<int>(30);
+}
+
+inline std::string ConfigManager::getDepthModelType() const {
+    return config_["depth"]["model_type"].as<std::string>("lite_mono");
+}
+
+// --------------------------------------------------------------------------- //
+// ByteTrack 跟踪器参数（yaml 根节点 "bytetrack"，缺省时用 ByteTrack 官方默认值）
+// 抖动场景参考调参（bytetrack_shaky.yaml）：
+//   track_high_thresh: 0.30  track_low_thresh: 0.05  new_track_thresh: 0.60
+//   track_buffer: 120  match_thresh: 0.90
+// --------------------------------------------------------------------------- //
+
+inline int ConfigManager::getTrackerTrackBuffer() const {
+    return config_["bytetrack"]["track_buffer"].as<int>(90);
+}
+
+inline float ConfigManager::getTrackHighThresh() const {
+    return config_["bytetrack"]["track_high_thresh"].as<float>(0.5f);
+}
+
+inline float ConfigManager::getTrackLowThresh() const {
+    return config_["bytetrack"]["track_low_thresh"].as<float>(0.1f);
+}
+
+inline float ConfigManager::getNewTrackThresh() const {
+    return config_["bytetrack"]["new_track_thresh"].as<float>(0.6f);
+}
+
+inline float ConfigManager::getMatchThresh() const {
+    return config_["bytetrack"]["match_thresh"].as<float>(0.8f);
 }

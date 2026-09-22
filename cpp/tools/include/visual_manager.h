@@ -1,7 +1,7 @@
 #pragma once
 
 #include "config_manager.h"
-#include "danger_alert_handler.h"
+#include "frame.h"
 #include "motion_state_engine.h"
 #include "public.h"
 #include "STrack.h"
@@ -69,6 +69,9 @@ class DisplayManager {
 
     bool isEnabled() const { return enabled_; }
 
+    // 主显示窗口名（控制面板等组件据此把滑动条挂载到本窗口）
+    const std::string & windowName() const { return window_name_; }
+
     // 友元函数：鼠标回调
     friend void onMouse(int event, int x, int y, int flags, void * userdata);
 };
@@ -78,11 +81,11 @@ class DrawingManager {
     // 传入追踪器引用（或者颜色列表）以及类别名称列表，以便画图时获取颜色和名字
     DrawingManager(const std::vector<std::string> & class_names);
 
-    // 核心绘制函数，画框、文字、以及特殊状态的红叉
-    void drawTrackedObject(cv::Mat &            img,
-                           const STrack &       track,
-                           const AlertMessage & alert_msg,
-                           cv::Scalar           color_to_use);
+    // 核心绘制函数：画框、文字，以及“快速靠近”危险目标的红色半透明高亮
+    void drawTrackedObject(cv::Mat &                     img,
+                           const STrack &                track,
+                           const MotionStateInfoRecord & motion,
+                           cv::Scalar                    color_to_use);
 
     // 绘制全局信息（FPS、帧数等）
     void drawGlobalInfo(cv::Mat & img, int num_frames, int show_fps, size_t num_tracks);

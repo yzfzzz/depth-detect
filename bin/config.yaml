@@ -1,46 +1,83 @@
 display_manager:
-  is_display: false    # 是否启用本机的 GUI 交互窗口
+  is_display: true    # 是否启用本机的 GUI 交互窗口
+  enable_control_panel: true   # 是否启用运行时参数控制面板（纯滑动条，拖动实时生效，需 is_display 开启）
 
 prefer:
   use_gpu: true      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
   overlap: true      # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
+  stagger_infer: true # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
 
 yolo:
+  detect_interval: 1   # 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰模式生效）
   yolo_model_path:
     - type: engine
-      path: "../model/engine/yolo26n/yolo26n_640_op11_fp16_trt10.9.engine"
+      path: "../model/engine/yolo26s/yolo26s_640_op11_fp16_trt10.9.engine"   # 主模型（非碰撞帧使用）
     - type: onnx
       path: "../model/onnx/yolo26n/yolo26n_640_op11.onnx"
+    - type: light_engine
+      path: "../model/engine/yolo26n/yolo26n_640_op11_fp16_trt10.9.engine"   # 轻量模型：错峰碰撞帧重叠推理专用；删除则复用主模型
 
-  yolo_nms_thresh: 0.4    # YOLO NMS阈值 (下采样截断遮挡框)
-  yolo_conf_thresh: 0.25
+  yolo_nms_thresh: 0.6    # YOLO NMS阈值 (下采样截断遮挡框)
+  yolo_conf_thresh: 0.4
 
 depth:
-  depth_interval: 1       # 隔帧推理深度间隔，优化算力占用
+  enabled : true
+  depth_interval: 3       # 深度推理间隔：1=每帧，2=隔帧，3=隔2帧（语义同 yolo.detect_interval，错峰模式生效）
+  model_type: "yolo_depth"   # 选项：lite_mono 或 yolo_depth
   depth_model_path:
     - type: engine
-      path: "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
+      path: "../model/engine/yolo26n-depth/yolo26n-depth_640_op11_fp16_trt10.9.engine"
     - type: onnx
       path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
 
-motion_state_engine:      # 目标追踪与状态转换引擎
-  velocity_threshold: 20      # 判断趋近/远离的速度触发线
-  acceleration_threshold: 10   # 加减速缓冲界限
-  kf_process_noise_cov: 0.02  # 卡尔曼过程噪声
-  kf_measurement_noise_cov: 0.05
+motion_state_engine:      # 运动/危险判定引擎：只保留 approach（快速靠近）一路，见 cpp/core/include/motion_state_engine.h
+  approach:
+    enabled: true          # 是否启用快速靠近检测（关闭后不动任何既有行为）
+    filter: "kalman"     # area/raw_depth 因果滤波: none / one_euro(1€) / kalman(一维匀速)
+    detect_warmup: 5      # 框高（检测）通道基线攒帧数
+    detect_recent_w: 10   # 框高通道近期趋势窗口长度（前后半窗各 recent_w/2）
+    depth_warmup: 3       # 深度（模型）通道基线攒帧数
+    depth_recent_w: 6     # 深度通道近期趋势窗口长度
+    thr_depth: 0.15        # 相对基线的深度降幅阈值
+    thr_height: 0.15         # 相对基线的框高增幅阈值
+    score_thr: 0.45        # 进入分数线
+    confirm: 2             # 进入需连续达标帧数
+    exit_score_thr: 0.2    # 退出分数线
+    exit_confirm: 2        # 退出需连续证据帧数
 
 danger_alert:
-  is_filter_small_objects: true   # 是否过滤小目标
-  min_object_area: 20              # 小目标过滤阈值
+  is_filter_small_objects: true   # 是否过滤小目标（快速靠近的目标若面积过小则不上报）
+  min_object_area: 100              # 小目标过滤阈值 
+
+
+camera:
+  width: 1280    # 相机采集宽度（USB 相机索引模式时生效）
+  height: 720    # 相机采集高度
+  fps: 30        # 相机采集帧率
+
 
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
-  save_mode: images        # 保存输出: video / images / both / none
+  save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
+  save_mode: video        # 保存输出: video / images / both / none
+  save_buffer_gb: 1.0     # 异步落盘缓冲区上限（GB）；写满时丢新帧并计数告警（不阻塞主流程），退出时自动排空不丢数据
   send_tcp: true          # 是否发送TCP数据包
-  send_tcp_ip: "192.168.137.225"  # 发送TCP数据包的IP地址
-  send_tcp_port: 3333     # 发送TCP数据包的端口号
+  send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址
+  send_tcp_port: 5005     # 发送TCP数据包的端口号
+  tcp_reconnect: true     # 断联自动重连；false = 保持旧行为（失败即停发，不重试）
+  tcp_check_interval_s: 5 # 看门狗探活/重连周期（秒）
+  tcp_connect_timeout_s: 3 # 单次非阻塞 connect 的超时上限（秒）
+  simulate_delay: true    # 是否按视频自身帧率模拟实时节奏（快了等待、慢了跳帧；仅视频文件源有效，跑满算力压测时改 false）
+  simulate_fps: 12        # 模拟的现场帧率（仅 simulate_delay 开启时生效）；0 = 跟随视频文件自身的 fps
   
 logger:
   save_file: true         # 是否保存日志文件到logs文件夹
   console_output: true    # 是否在终端显示日志
-  log_level: debug         # 日志级别: trace / debug / info / warn / err / critical
+  log_level: info          # 日志级别: trace / debug / info / warn / err / critical
+
+bytetrack:
+  track_high_thresh: 0.50
+  track_low_thresh: 0.1
+  new_track_thresh: 0.60
+  track_buffer: 30
+  match_thresh: 0.80
