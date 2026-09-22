@@ -155,7 +155,7 @@ jobs:
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
           docker run --rm -v "${{ github.workspace }}":/home/work/depth-detect/ -w /home/work/depth-detect/ "$IMAGE" bash -lc "\
-            chmod +x ./start.sh && ./start.sh && \
+            chmod +x ./start.sh && ./start.sh --no-run && \
             mkdir -p build && \
             cd build && \
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
