@@ -155,7 +155,7 @@ jobs:
         run: |
           IMAGE=ghcr.io/${{ github.repository }}:${{ needs.detect_changes.outputs.image_tag }}
           docker run --rm -v "${{ github.workspace }}":/home/work/depth-detect/ -w /home/work/depth-detect/ "$IMAGE" bash -lc "\
-            chmod +x ./start.sh && ./start.sh && \
+            chmod +x ./start.sh && ./start.sh --no-run && \
             mkdir -p build && \
             cd build && \
             cmake -DCMAKE_BUILD_TYPE=Release .. && \
@@ -208,10 +208,10 @@ jobs:
               git config --global --add safe.directory '*' &&
               git submodule update --init --recursive && \
               cd bin && \
-              chmod +x ./test_onnx_pipeline && \
+              chmod +x ./main && \
               export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
-              echo '🚀 Running ./test_onnx_pipeline' && \
-              ./test_onnx_pipeline && \
+              echo '🚀 Running main' && \
+              ./main ../data/dd/test.mp4 config.yaml && \
               echo '🎉 Test successful'
             "
       - name: Upload run logs
