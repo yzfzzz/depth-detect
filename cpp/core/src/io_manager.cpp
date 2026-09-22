@@ -128,9 +128,9 @@ FrameMeta IOManager::Init(const std::string & video_path) {
                     break;
             }
         });
-        tcp_handler_ = std::make_unique<TcpHandler>(send_tcp_ip_, send_tcp_port_,
-                                                    tcp_check_interval_s_, tcp_connect_timeout_s_,
-                                                    tcp_reconnect_);
+        tcp_handler_ =
+            std::make_unique<TcpHandler>(send_tcp_ip_, send_tcp_port_, tcp_check_interval_s_,
+                                         tcp_connect_timeout_s_, tcp_reconnect_);
         tcp_handler_->start();
     } else {
         APP_WARN("TCP sending is disabled.");
