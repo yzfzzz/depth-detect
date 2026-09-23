@@ -88,16 +88,23 @@ bool BaseModel::initInferenceBackend(std::map<std::string, std::string> model_pa
         return true;
     }
 
-    // 检查模型文件是否存在
+    // 检查模型文件是否存在 engine/onnx 是「优选 + 兜底」双臂，实际选哪个由 createBackend
+    // 决定，因此单个文件缺失只警告、不致命，否则缺失的兜底文件会让整个后端初始化失败
+    bool any_readable = false;
     for (auto & item : model_path) {
         const auto &  type = item.first;
         const auto &  path = item.second;
         std::ifstream file(path);
         if (!file.good()) {
-            APP_ERROR("Model file not found: type={}, path: {}", type, path);
-            return false;
+            APP_WARN("Model file not found: type={}, path: {}", type, path);
+            continue;
         }
         file.close();
+        any_readable = true;
+    }
+    if (!any_readable) {
+        APP_ERROR("No readable model file in config, failed to initialize any backend");
+        return false;
     }
 
     // 创建后端
