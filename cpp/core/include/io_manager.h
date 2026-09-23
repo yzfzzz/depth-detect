@@ -98,6 +98,7 @@ class IOManager {
 
     // 生产者（主循环）：saveFrame 内 imencode 成 JPG 字节流后非阻塞入队；
     // 消费者（低优先级线程）：CPU 空闲时逐条写盘。缓冲按字节计账，上限
+    // save_buffer_limit_ = save_buffer_gb * 1024^3，写满时丢新帧并计数告警。
     struct SaveTask {
         bool is_video = false;     // true=视频帧（顺序写 VideoWriter），false=JPG 图片
         std::string        path;   // 图片保存路径（视频帧忽略）
