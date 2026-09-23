@@ -3,9 +3,9 @@ display_manager:
   enable_control_panel: true   # 是否启用运行时参数控制面板（纯滑动条，拖动实时生效，需 is_display 开启）
 
 prefer:
-  use_gpu: true      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
+  use_gpu: false      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
   overlap: true      # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
-  stagger_infer: true # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
+  stagger_infer: false # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
 
 yolo:
   detect_interval: 1   # 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰模式生效）
@@ -58,8 +58,8 @@ camera:
 
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
-  save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
-  save_mode: video        # 保存输出: video / images / both / none
+  save_track_log: false       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
+  save_mode: images        # 保存输出: video / images / both / none
   save_buffer_gb: 1.0     # 异步落盘缓冲区上限（GB）；写满时丢新帧并计数告警（不阻塞主流程），退出时自动排空不丢数据
   send_tcp: true          # 是否发送TCP数据包
   send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址
@@ -67,7 +67,7 @@ io_manager:
   tcp_reconnect: true     # 断联自动重连；false = 保持旧行为（失败即停发，不重试）
   tcp_check_interval_s: 5 # 看门狗探活/重连周期（秒）
   tcp_connect_timeout_s: 3 # 单次非阻塞 connect 的超时上限（秒）
-  simulate_delay: true    # 是否按视频自身帧率模拟实时节奏（快了等待、慢了跳帧；仅视频文件源有效，跑满算力压测时改 false）
+  simulate_delay: false    # 是否按视频自身帧率模拟实时节奏（快了等待、慢了跳帧；仅视频文件源有效，跑满算力压测时改 false）
   simulate_fps: 12        # 模拟的现场帧率（仅 simulate_delay 开启时生效）；0 = 跟随视频文件自身的 fps
   
 logger:

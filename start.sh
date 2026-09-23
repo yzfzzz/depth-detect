@@ -443,7 +443,7 @@ if ! ${RUN_TASK}; then
     echo "  [SKIP] --no-run"
     echo ""
     echo "  Manual run:"
-    echo "    cd bin && ./main ../data/dd/test.mp4 config.yaml"
+    echo "    cd bin && ./main ../data/dd/test.mp4 ci_config.yaml"
 else
     # ---- 选择视频源（纯数字 = USB 相机索引）----
     if [[ -z "$VIDEO" ]]; then
