@@ -40,7 +40,7 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
         const MotionStateInfoRecord & motion =
             (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
-        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("6.Drawing Manager", drawing_manager,
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Draw", drawing_manager,
                                                drawTrackedObject, frame_input_context.raw_img,
                                                track, motion, get_color_func(track.track_id));
 #else
@@ -96,18 +96,11 @@ int run(char * video_path, char * config_path) {
             frame_input_context.raw_img.empty()) {
             break;
         }
-        // 执行推理流水线
+        // 执行推理流水线：调度策略（串行/重叠/错峰）已由 Pipeline 构造期从配置解析，
+        // 调用方只需调唯一入口 process，不再在这里判断 overlap/stagger_infer
         std::string name = "Infer Pipeline";
-        // DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context, infer_output_context);
-        // 错峰推理开启时走 process（内部按间隔调度，检测/深度同帧时转发 processOverlap）；
-        // 错峰关闭且 overlap 开启时走纯重叠路径
-        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
-            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, processOverlap,
-                                                   frame_input_context, infer_output_context);
-        } else {
-            DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
-                                                   infer_output_context);
-        }
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
+                                               infer_output_context);
         total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
 #else
         if (!io_manager.readNextFrame(frame_input_context, simulate_delay) ||
@@ -115,11 +108,8 @@ int run(char * video_path, char * config_path) {
             break;
         }
 
-        if (config_manager.isOverlapEnabled() && !config_manager.isStaggerInferEnabled()) {
-            pipeline.processOverlap(frame_input_context, infer_output_context);
-        } else {
-            pipeline.process(frame_input_context, infer_output_context);
-        }
+        // 调度策略（串行/重叠/错峰）由 Pipeline 构造期从配置解析，这里只调唯一入口
+        pipeline.process(frame_input_context, infer_output_context);
 
 #endif
         num_frames++;

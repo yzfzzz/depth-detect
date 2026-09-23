@@ -124,20 +124,15 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
         }
     }
 
-    if (stagger_infer_ && depth_enabled_) {
-        APP_INFO(
-            "[Pipeline] staggered inference enabled: detect every {} frame(s), depth every {} "
-            "frame(s); frames where both fire use overlapped inference "
-            "(skipped model reuses last result)",
-            detect_interval_, depth_interval_);
-    }
-
     // 是否记录每个 track 的类别/原始深度/面积/帧数等到 CSV
     if (config_manager.isTrackLogEnabled()) {
         track_log_enabled_ = true;
         track_log_path_    = "track_log.csv";
         APP_INFO("Track log enabled: {}", track_log_path_);
     }
+
+    // 调度策略解析放在最后：需要模型的 backend 类型（TensorRT 才支持异步重叠）
+    resolveScheduleMode(config_manager.isOverlapEnabled());
 }
 
 Pipeline::Pipeline(std::string depth_model_path,
@@ -161,6 +156,8 @@ Pipeline::Pipeline(std::string depth_model_path,
         frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu);
 
     use_yolo_depth_ = true;
+    // 调度策略保持默认的 SYNC：本入口没有配置文件，串行即基准
+    // Benchmark 要跑重叠/错峰时用 setScheduleMode 显式指定（或直接调 processOverlap）
 }
 
 Pipeline::~Pipeline() {
@@ -180,52 +177,136 @@ void Pipeline::runDepthInference(FrameInputContext &  frame_input_context,
     }
 }
 
-void Pipeline::process(FrameInputContext &  frame_input_context,
-                       InferOutputContext & infer_output_context) {
-    // 间隔调度（stagger_infer 开启时生效）：frame_id % interval == 0 的帧触发对应模型推理，
-    // interval=1 每帧推、2 隔帧推、3 隔2帧推。被跳过的一路沿用上一帧结果：
-    // 检测帧不更新深度图（depth_raw_infer_out 保持），深度帧不调用 updateTracker
-    const bool stagger      = stagger_infer_ && depth_enabled_;
-    const bool detect_frame = !stagger || (frame_input_context.frame_id % detect_interval_ == 0);
-    const bool depth_frame =
-        depth_enabled_ && (!stagger || (frame_input_context.frame_id % depth_interval_ == 0));
+const char * scheduleModeName(ScheduleMode mode) {
+    switch (mode) {
+        case ScheduleMode::SYNC:
+            return "sync";
+        case ScheduleMode::OVERLAP:
+            return "overlap";
+        case ScheduleMode::STAGGER:
+            return "stagger";
+    }
+    return "unknown";
+}
 
-    // 两路调度到同一帧：走重叠推理（异步并行提交，算力重叠利用）。
-    // 重叠实现仅 yolo_depth 支持（异步双 stream），lite_mono 回落为串行同帧执行
-    if (stagger && detect_frame && depth_frame && use_yolo_depth_) {
-        processOverlap(frame_input_context, infer_output_context);
+// 构造期解析调度策略：优先级 stagger_infer > overlap > 串行。
+// 三个分支本身不读配置，只由 schedule_mode_ 决定谁被调用，
+void Pipeline::resolveScheduleMode(bool overlap_requested) {
+    if (stagger_infer_ && !depth_enabled_) {
+        APP_WARN("[Pipeline] stagger_infer ignored: depth is disabled, nothing to stagger");
+    }
+
+    // 错峰推理：检测/深度各按自己的间隔调度，两路撞到同一帧时走重叠
+    if (stagger_infer_ && depth_enabled_) {
+        schedule_mode_ = ScheduleMode::STAGGER;
+        APP_INFO(
+            "[Pipeline] schedule mode: stagger (detect every {} frame(s), depth every {} frame(s); "
+            "frames where both fire run overlapped inference, the skipped model reuses the last "
+            "result) — stagger_infer takes precedence over overlap",
+            detect_interval_, depth_interval_);
         return;
     }
 
-    const auto t_detect_begin = std::chrono::steady_clock::now();
-    if (detect_frame) {
+    if (!overlap_requested) {
+        schedule_mode_ = ScheduleMode::SYNC;
+        APP_INFO("[Pipeline] schedule mode: sync (overlap disabled by config)");
+        return;
+    }
+
+    // overlap 语义：只在后端为 TensorRT 时才有意义——ONNX Runtime 没有异步接口
+    // （BaseModel::runInferenceAsync 直接返回 false），走重叠路径只会白跑一遍能力检查，
+    // 结果与串行完全一致，因此这里直接落串行并说明原因
+    if (!detector_.isBackendInitialized()) {
+        schedule_mode_ = ScheduleMode::SYNC;
+        APP_WARN("[Pipeline] schedule mode: sync (main detector backend not initialized)");
+    } else if (isAsyncCapable(detector_)) {
+        schedule_mode_ = ScheduleMode::OVERLAP;
+        APP_INFO("[Pipeline] schedule mode: overlap (TensorRT async pipeline)");
+    } else {
+        schedule_mode_ = ScheduleMode::SYNC;
+        APP_INFO(
+            "[Pipeline] schedule mode: sync (overlap requested but backend is {}, which has no "
+            "async API)",
+            detector_.backendTypeName());
+    }
+}
+
+void Pipeline::setScheduleMode(ScheduleMode mode) {
+    if (mode == schedule_mode_) {
+        return;
+    }
+    APP_INFO("[Pipeline] schedule mode changed: {} -> {}", scheduleModeName(schedule_mode_),
+             scheduleModeName(mode));
+    schedule_mode_ = mode;
+}
+
+// 唯一推理入口：按调度策略分发，业务侧不需要知道有几种模式
+void Pipeline::process(FrameInputContext &  frame_input_context,
+                       InferOutputContext & infer_output_context) {
+    switch (schedule_mode_) {
+        case ScheduleMode::SYNC:
+            processSync(frame_input_context, infer_output_context);
+            break;
+        case ScheduleMode::OVERLAP:
+            processOverlap(frame_input_context, infer_output_context);
+            break;
+        case ScheduleMode::STAGGER:
+            processStagger(frame_input_context, infer_output_context);
+            break;
+    }
+}
+
+// 串行分支实际执行体：processSync（两路都跑）与 processStagger 的单路帧共用
+void Pipeline::runBranchesSerially(FrameInputContext &  frame_input_context,
+                                   InferOutputContext & infer_output_context,
+                                   bool                 run_detect,
+                                   bool                 run_depth) {
+    if (run_detect) {
         detector_.runInference(frame_input_context, infer_output_context);
-    }
-
-    double depth_ms = 0.0;
-    if (depth_frame) {
-        const auto t_depth_begin = std::chrono::steady_clock::now();
-        runDepthInference(frame_input_context, infer_output_context);
-        const auto t_depth_end = std::chrono::steady_clock::now();
-    }
-
-    if (detect_frame) {
+        // 跟踪放在深度之前：更新运动状态必须等跟踪结果，而跟踪（CPU）与随后的深度推理
+        // 没有数据依赖，先做跟踪能让它的计算时间盖住深度的等待
         updateTracker(infer_output_context);
+    }
+    if (run_depth) {
+        runDepthInference(frame_input_context, infer_output_context);
     }
     updateMotionStates(frame_input_context, infer_output_context);
 }
 
+// 串行推理：检测完整跑完再提交深度，GPU 上不存在两个模型的并发窗口
+void Pipeline::processSync(FrameInputContext &  frame_input_context,
+                           InferOutputContext & infer_output_context) {
+    runBranchesSerially(frame_input_context, infer_output_context, true, depth_enabled_);
+}
+
+// 错峰推理：检测与深度按各自间隔独立调度，互补的帧只跑一路（另一路不写输出，
+// 下游读到的仍是上一帧结果）；两路撞到同一帧的"碰撞帧"直接复用重叠逻辑
+void Pipeline::processStagger(FrameInputContext &  frame_input_context,
+                              InferOutputContext & infer_output_context) {
+    const bool detect_frame = shouldRunDetect(frame_input_context);
+    const bool depth_frame  = shouldRunDepth(frame_input_context);
+
+    // 碰撞帧：两路同帧 → 走重叠推理（异步并行提交，算力重叠利用）。
+    if (detect_frame && depth_frame) {
+        processOverlap(frame_input_context, infer_output_context);
+        return;
+    }
+
+    // 单路帧/空帧：按需执行，收尾逻辑与串行分支共用
+    runBranchesSerially(frame_input_context, infer_output_context, detect_frame, depth_frame);
+}
+
+// 重叠推理：本帧检测与深度都要跑，异步提交到各自 stream 上重叠执行
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
     // 重叠帧用轻量检测模型（yolo26n），降低与深度模型同帧抢占 GPU 的延迟
     YoloDetectModel & detector = overlapDetector();
 
-    // 异步重叠只有 TensorRT 后端支持（双 stream 并行提交）；ONNX Runtime 没有异步接口
-    // （BaseModel::runInferenceAsync 会直接报错返回 false），该路退回同步执行——
-    // 降级到 onnx 后端时依然能正常出结果，只是失去重叠收益
-    const bool detect_async = (detector.getBackendType() == BackendType::TensorRT);
-    const bool depth_async  = depth_enabled_ && use_yolo_depth_ &&
-                             (yolo_depth_model_.getBackendType() == BackendType::TensorRT);
+    // 异步重叠只有 TensorRT 后端支持（双 stream 并行提交）；其余后端退化为同步执行，
+    // 降级到 onnx/lite_mono 时依然能正常出结果，只是失去重叠收益
+    const bool detect_async = isAsyncCapable(detector);
+    const bool depth_async =
+        depth_enabled_ && use_yolo_depth_ && isAsyncCapable(yolo_depth_model_);
 
     // 先提交深度异步（TRT），让深度在 GPU 上跑的同时 CPU 侧推进检测，最大化重叠窗口
     if (depth_async) {
@@ -239,6 +320,7 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
         detector.runInference(frame_input_context, infer_output_context);
     }
 
+    // 取检测结果 + 跟踪：这段是 CPU 侧工作，正好与仍在 GPU 上跑的深度推理重叠
     if (detect_async) {
         detector.getInferOutputResult(infer_output_context);
     }
