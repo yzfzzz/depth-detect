@@ -210,8 +210,8 @@ jobs:
               cd bin && \
               chmod +x ./main && \
               export LD_LIBRARY_PATH=\$PWD:\$LD_LIBRARY_PATH && \
-              echo '🚀 Running main' && \
-              ./main ../data/dd/test.mp4 config.yaml && \
+              echo '🚀 Running main with ci_config.yaml' && \
+              ./main ../data/dd/test.mp4 ci_config.yaml && \
               echo '🎉 Test successful'
             "
       - name: Upload run logs
