@@ -116,7 +116,7 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_YoloPostprocess)(benchmark::
 // 深度估计各阶段拆解
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
-        pipeline.getDepthModel().cudaPreProcess(ctx);
+        pipeline.getActiveDepthModel().cudaPreProcess(ctx);
         pipeline.getDetector().synchronizeStream();
     });
 }
@@ -126,34 +126,34 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInferenceAsync)
 (benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.getDepthModel().cudaPreProcess(ctx);
-        pipeline.getDepthModel().synchronizeStream();
+        pipeline.getActiveDepthModel().cudaPreProcess(ctx);
+        pipeline.getActiveDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.getDepthModel().runInferenceAsync(ctx);
-        pipeline.getDepthModel().synchronizeStream();
+        pipeline.getActiveDepthModel().runInferenceAsync(ctx);
+        pipeline.getActiveDepthModel().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_TensorRT_DepthInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.getDepthModel().cudaPreProcess(ctx);
-        pipeline.getDepthModel().synchronizeStream();
+        pipeline.getActiveDepthModel().cudaPreProcess(ctx);
+        pipeline.getActiveDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.getDepthModel().runInference(ctx, out);
-        pipeline.getDepthModel().synchronizeStream();
+        pipeline.getActiveDepthModel().runInference(ctx, out);
+        pipeline.getActiveDepthModel().synchronizeStream();
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_CUDA_DepthPostprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & s) {
         s.PauseTiming();
-        pipeline.getDepthModel().cudaPreProcess(ctx);
-        pipeline.getDepthModel().runInferenceAsync(ctx);
-        pipeline.getDepthModel().synchronizeStream();
+        pipeline.getActiveDepthModel().cudaPreProcess(ctx);
+        pipeline.getActiveDepthModel().runInferenceAsync(ctx);
+        pipeline.getActiveDepthModel().synchronizeStream();
         s.ResumeTiming();
-        pipeline.getDepthModel().cudaPostProcess(ctx);
-        pipeline.getDepthModel().getInferOutputResult(out);
+        pipeline.getActiveDepthModel().cudaPostProcess(ctx);
+        pipeline.getActiveDepthModel().getInferOutputResult(out);
     });
 }
 

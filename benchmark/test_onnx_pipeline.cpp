@@ -100,17 +100,17 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_YoloPostprocess)(benchmar
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPreprocess)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
-        pipeline.getDepthModel().cvMatPreProcess(ctx);
+        pipeline.getActiveDepthModel().cvMatPreProcess(ctx);
     });
 }
 
 BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_Onnx_DepthInference)(benchmark::State & state) {
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
-        pipeline.getDepthModel().cvMatPreProcess(ctx);
+        pipeline.getActiveDepthModel().cvMatPreProcess(ctx);
         state.ResumeTiming();
 
-        pipeline.getDepthModel().runInference(ctx, out);
+        pipeline.getActiveDepthModel().runInference(ctx, out);
     });
 }
 
@@ -118,12 +118,12 @@ BENCHMARK_DEFINE_F(PipelineBenchmark, Pipeline_OpenCV2_DepthPostprocess)(benchma
     RunPipelineBench(state, [](auto & ctx, auto & out, auto & state) {
         state.PauseTiming();
 
-        pipeline.getDepthModel().cvMatPreProcess(ctx);
-        pipeline.getDepthModel().runInference(ctx, out);
+        pipeline.getActiveDepthModel().cvMatPreProcess(ctx);
+        pipeline.getActiveDepthModel().runInference(ctx, out);
 
         state.ResumeTiming();
 
-        pipeline.getDepthModel().cvMatPostProcess(out);
+        pipeline.getActiveDepthModel().cvMatPostProcess(out);
     });
 }
 

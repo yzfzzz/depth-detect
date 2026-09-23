@@ -33,7 +33,10 @@ class Pipeline {
 
     YoloDetectModel & getDetector() { return detector_; }
 
-    LiteMonoDepthModel & getDepthModel() { return depth_model_; }
+    BaseModel & getActiveDepthModel() {
+        return use_yolo_depth_ ? static_cast<BaseModel &>(yolo_depth_model_) :
+                                 static_cast<BaseModel &>(depth_model_);
+    }
 
     BYTETracker & getTracker() { return tracker_; }
 
@@ -58,7 +61,7 @@ class Pipeline {
     bool               stagger_infer_   = false;  // 错峰推理
     int                detect_interval_ = 1;      // 检测推理间隔：N = 每 N 帧推 1 次
     int                depth_interval_  = 1;      // 深度推理间隔：N = 每 N 帧推 1 次
-    bool use_yolo_depth_ = false;  // 深度模型类型：true = yolo_depth，false = lite_mono
+    bool use_yolo_depth_ = true;  // 深度模型类型：true = yolo_depth，false = lite_mono
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {

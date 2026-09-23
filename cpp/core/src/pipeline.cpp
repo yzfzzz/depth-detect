@@ -149,16 +149,18 @@ Pipeline::Pipeline(std::string depth_model_path,
     bool        is_normalize = false;
     std::string backend_type = use_gpu ? "engine" : "onnx";
     depth_enabled_           = true;
-    depth_model_.init(
+    yolo_depth_model_.init(
         {
             { backend_type, depth_model_path }
     },
-        frame_meta.img_w, frame_meta.img_h, is_normalize, use_gpu);
+        frame_meta.img_w, frame_meta.img_h, use_gpu);
     detector_.init(
         {
             { backend_type, yolo_model_path }
     },
         frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu);
+
+    use_yolo_depth_ = true;
 }
 
 Pipeline::~Pipeline() {
