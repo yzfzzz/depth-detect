@@ -17,7 +17,7 @@ struct Detection {
 // YOLO 目标检测模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class YoloDetectModel : public BaseModel {
   public:
-    void init(std::map<std::string, std::string> model_path,
+    bool init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
               float                              nms_thresh,

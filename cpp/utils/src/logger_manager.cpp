@@ -154,6 +154,7 @@ void LoggerManager::logConfig(const ConfigManager & config) {
     // prefer
     APP_INFO("  [prefer] use_gpu: {}", config.isUseGPU());
     APP_INFO("  [prefer] overlap: {}", config.isOverlapEnabled());
+    APP_INFO("  [prefer] stagger_infer: {}", config.isStaggerInferEnabled());
 
     // yolo
     auto yolo_models = config.getYoloModelPath();

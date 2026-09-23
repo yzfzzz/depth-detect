@@ -64,9 +64,12 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
                 CHECK_CUDA(cudaStreamCreate(&stream_));
                 APP_INFO("CUDA stream created successfully");
                 return trt_backend;
+            } else {
+                APP_WARN("TensorRT load model failed, falling back to ONNX Runtime");
             }
+        } else {
+            APP_WARN("TensorRT engine path not found, falling back to ONNX Runtime");
         }
-        APP_WARN("TensorRT engine path not found, falling back to ONNX Runtime");
     }
     auto it = model_path.find("onnx");
     if (it != model_path.end()) {

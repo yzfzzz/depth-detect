@@ -16,6 +16,10 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
                               bool                               is_normalize,
                               bool                               use_gpu) {
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
+    if (!isBackendInitialized()) {
+        APP_ERROR("LiteMonoDepthModel init aborted: inference backend not initialized");
+        return false;
+    }
     is_normalize_ = is_normalize;
 
     // 设置归一化参数：不归一化时保持原值 [0,255]，归一化时使用 ImageNet 标准均值/标准差
