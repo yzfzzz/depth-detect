@@ -3,14 +3,15 @@
 #include "frame.h"
 #include "logger_manager.h"
 #include "public.h"
+#include "scope_timer.h"
 
 #include <algorithm>  // std::all_of
 #include <cctype>     // std::isdigit
 #include <cstdio>
 #include <cstdlib>    // For system()
 #include <opencv2/imgcodecs.hpp>
-#include <sstream>  // std::ostringstream（结果视频文件名的时间戳格式化）
-#include <thread>   // std::this_thread::sleep_for（实时节奏模拟）
+#include <sstream>    // std::ostringstream（结果视频文件名的时间戳格式化）
+#include <thread>     // std::this_thread::sleep_for（实时节奏模拟）
 
 #ifdef __linux__
 #    include <pthread.h>
@@ -80,9 +81,10 @@ FrameMeta IOManager::Init(const std::string & video_path) {
     }
     if (save_mode_ != "none") {
         // 注意：缓冲按原始帧字节计账（消费者侧才编码），容量与帧分辨率挂钩
-        APP_INFO("[SaveWorker] async saving enabled: mode={}, buffer limit={:.1f} MB "
-                 "(accounted by raw frame bytes, e.g. 1280x720 BGR ~2.6 MB/frame)",
-                 save_mode_, static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0));
+        APP_INFO(
+            "[SaveWorker] async saving enabled: mode={}, buffer limit={:.1f} MB "
+            "(accounted by raw frame bytes, e.g. 1280x720 BGR ~2.6 MB/frame)",
+            save_mode_, static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0));
     }
     bool flag = openVideoSource(video_path);
     if (!flag) {
@@ -168,7 +170,6 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         return;  // 已进入退出流程，拒绝新任务
     }
 
-
     const size_t frame_bytes = static_cast<size_t>(frame.total()) * frame.elemSize();
 
     if (save_image) {
@@ -193,8 +194,8 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         if (video_writer_.isOpened()) {
             SaveTask task;
             task.is_video = true;
-            task.frame    = frame;  // 与图片任务共享同一块缓冲（引用计数，无额外内存）
-            task.bytes    = frame_bytes;
+            task.frame = frame;  // 与图片任务共享同一块缓冲（引用计数，无额外内存）
+            task.bytes = frame_bytes;
             enqueueTask(std::move(task));
         }
     }
@@ -445,9 +446,16 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
             CHECK_CUDA(cudaMalloc(&ptr, frame_input_context.img_size));
             frame_input_context.d_raw_img_.reset(static_cast<uchar *>(ptr));
         }
-        CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
-                              frame_input_context.raw_img.data, frame_input_context.img_size,
-                              cudaMemcpyHostToDevice));
+        auto h2d_copy = [&]() {
+            CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
+                                  frame_input_context.raw_img.data, frame_input_context.img_size,
+                                  cudaMemcpyHostToDevice));
+        };
+#if defined(ENABLE_TIMER)
+        DEBUG_FUNCTION_RUNNING_TIME("IO H2D Copy", h2d_copy);
+#else
+        h2d_copy();
+#endif
     }
     frame_input_context.timestamp =
         std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();

@@ -99,10 +99,10 @@ class IOManager {
     // 生产者（主循环）：saveFrame 只做 Mat 浅拷贝后非阻塞入队，不做编码；
     // 消费者（低优先级线程）：CPU 空闲时自己编码 + 写盘。
     struct SaveTask {
-        bool is_video = false;     // true=视频帧（顺序写 VideoWriter），false=JPG 图片
-        std::string path;          // 图片保存路径（视频帧忽略）
-        cv::Mat     frame;         // 待落盘帧（两者共用；Mat 引用计数，无深拷贝）
-        size_t      bytes = 0;     // 本任务占用缓冲的字节数（计账用）
+        bool is_video = false;  // true=视频帧（顺序写 VideoWriter），false=JPG 图片
+        std::string path;       // 图片保存路径（视频帧忽略）
+        cv::Mat     frame;      // 待落盘帧（两者共用；Mat 引用计数，无深拷贝）
+        size_t      bytes = 0;  // 本任务占用缓冲的字节数（计账用）
     };
 
     void startSaveWorker();  // 首次 saveFrame 时拉起消费者线程（幂等）

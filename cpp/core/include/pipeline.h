@@ -10,7 +10,7 @@
 
 // 调度策略
 enum class ScheduleMode {
-    SYNC,     // 串行：检测跑完再跑深度（overlap=false，或后端不支持异步时的回落）
+    SYNC,  // 串行：检测跑完再跑深度（overlap=false，或后端不支持异步时的回落）
     OVERLAP,  // 重叠：检测与深度同帧、各自异步提交到独立 stream 重叠（overlap=true 且 TRT 后端）
     STAGGER,  // 错峰：检测/深度按各自间隔独立调度，互补帧只跑一路，同帧碰撞时复用重叠逻辑
 };
@@ -46,7 +46,8 @@ class Pipeline {
                         InferOutputContext & infer_output_context);
 
     ScheduleMode getScheduleMode() const { return schedule_mode_; }
-    void         setScheduleMode(ScheduleMode mode);
+
+    void setScheduleMode(ScheduleMode mode);
 
     void updateMotionStates(FrameInputContext &  frame_input_context,
                             InferOutputContext & infer_output_context);
@@ -78,6 +79,7 @@ class Pipeline {
         return schedule_mode_ != ScheduleMode::STAGGER ||
                (frame_input_context.frame_id % detect_interval_ == 0);
     }
+
     bool shouldRunDepth(const FrameInputContext & frame_input_context) const {
         if (!depth_enabled_) {
             return false;

@@ -40,9 +40,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
         const MotionStateInfoRecord & motion =
             (it != infer_output_context.motion_records.end()) ? it->second : kDefaultMotion;
 #if defined(ENABLE_TIMER)
-        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Draw", drawing_manager,
-                                               drawTrackedObject, frame_input_context.raw_img,
-                                               track, motion, get_color_func(track.track_id));
+        DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Draw", drawing_manager, drawTrackedObject,
+                                               frame_input_context.raw_img, track, motion,
+                                               get_color_func(track.track_id));
 #else
         drawing_manager.drawTrackedObject(frame_input_context.raw_img, track, motion,
                                           get_color_func(track.track_id));

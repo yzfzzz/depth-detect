@@ -305,8 +305,7 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
     // 异步重叠只有 TensorRT 后端支持（双 stream 并行提交）；其余后端退化为同步执行，
     // 降级到 onnx/lite_mono 时依然能正常出结果，只是失去重叠收益
     const bool detect_async = isAsyncCapable(detector);
-    const bool depth_async =
-        depth_enabled_ && use_yolo_depth_ && isAsyncCapable(yolo_depth_model_);
+    const bool depth_async = depth_enabled_ && use_yolo_depth_ && isAsyncCapable(yolo_depth_model_);
 
     // 先提交深度异步（TRT），让深度在 GPU 上跑的同时 CPU 侧推进检测，最大化重叠窗口
     if (depth_async) {

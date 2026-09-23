@@ -9,15 +9,24 @@
 #include <utility>
 #include <vector>
 
+// 计时器实现全部内联在头文件里：
 class ScopedTimer {
   public:
     explicit ScopedTimer(std::string name) :
         name_(std::move(name)),
         start_(std::chrono::steady_clock::now()) {}
 
-    ~ScopedTimer();
+    ~ScopedTimer() {
+        auto   end = std::chrono::steady_clock::now();
+        auto   us  = std::chrono::duration_cast<std::chrono::microseconds>(end - start_).count();
+        auto & timers_table = GetScopedTimers();
+        timers_table[name_].push_back(us);
+    }
 
-    static std::map<std::string, std::vector<double>> & GetScopedTimers();
+    static std::map<std::string, std::vector<double>> & GetScopedTimers() {
+        static std::map<std::string, std::vector<double>> scoped_timers_table;
+        return scoped_timers_table;
+    }
 
   private:
     std::string                           name_;
