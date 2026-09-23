@@ -315,6 +315,7 @@ file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
 add_library(core SHARED ${CORE_SRCS})
 configure_common_includes(core)
 target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
+target_include_directories(core PRIVATE ${PROJECT_CPP_DIR}/tools/include)
 target_link_libraries(core PUBLIC  inference utils one_euro_filter ${OpenCV_LIBS} JsonSender JsonSenderTcp)
 
 # tools
@@ -355,6 +356,20 @@ if(ENABLE_BENCHMARK)
     add_executable(test_trt_quant_latency ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_latency.cpp)
     configure_common_includes(test_trt_quant_latency)
     target_link_libraries(test_trt_quant_latency PRIVATE
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
+
+    # Jetson TX2 资源占用峰值（CPU/GPU/共享内存/温度），见 doc/测试补全清单.md T6
+    add_executable(test_jeston_peak_usage ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_peak_usage.cpp)
+    configure_common_includes(test_jeston_peak_usage)
+    target_link_libraries(test_jeston_peak_usage PRIVATE
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
+
+    # H2D 拷贝耗时微基准：可分页同步 vs 固定内存异步，wall-clock vs CUDA event 交叉验证
+    add_executable(test_h2d_memcpy ${PROJECT_SOURCE_DIR}/benchmark/test_h2d_memcpy.cpp)
+    configure_common_includes(test_h2d_memcpy)
+    target_link_libraries(test_h2d_memcpy PRIVATE
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 else()
