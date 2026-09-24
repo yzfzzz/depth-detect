@@ -213,15 +213,13 @@ void Pipeline::resolveScheduleMode(bool overlap_requested) {
         return;
     }
 
-    // overlap 语义：只在后端为 TensorRT 时才有意义——ONNX Runtime 没有异步接口
-    // （BaseModel::runInferenceAsync 直接返回 false），走重叠路径只会白跑一遍能力检查，
-    // 结果与串行完全一致，因此这里直接落串行并说明原因
     if (!detector_.isBackendInitialized()) {
         schedule_mode_ = ScheduleMode::SYNC;
         APP_WARN("[Pipeline] schedule mode: sync (main detector backend not initialized)");
     } else if (isAsyncCapable(detector_)) {
         schedule_mode_ = ScheduleMode::OVERLAP;
-        APP_INFO("[Pipeline] schedule mode: overlap (TensorRT async pipeline)");
+        APP_INFO("[Pipeline] schedule mode: overlap (async-capable backend: {})",
+                 detector_.backendTypeName());
     } else {
         schedule_mode_ = ScheduleMode::SYNC;
         APP_INFO(
@@ -302,8 +300,8 @@ void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
     // 重叠帧用轻量检测模型（yolo26n），降低与深度模型同帧抢占 GPU 的延迟
     YoloDetectModel & detector = overlapDetector();
 
-    // 异步重叠只有 TensorRT 后端支持（双 stream 并行提交）；其余后端退化为同步执行，
-    // 降级到 onnx/lite_mono 时依然能正常出结果，只是失去重叠收益
+    // 异步重叠只有支持真异步的后端才行（当前是 TensorRT，双 stream 并行提交）；其余后端退化为
+    // 同步执行，降级到 onnx/lite_mono 时依然能正常出结果，只是失去重叠收益
     const bool detect_async = isAsyncCapable(detector);
     const bool depth_async = depth_enabled_ && use_yolo_depth_ && isAsyncCapable(yolo_depth_model_);
 

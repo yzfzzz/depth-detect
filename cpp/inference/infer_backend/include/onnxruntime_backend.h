@@ -17,12 +17,21 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     // InferenceBackend 接口实现
     bool loadModel(const std::string & model_path) override;
-    bool runInference(void * input_data, void * output_data) override;
-    bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
+
+    // 单输出的便捷重载由基类提供
+    using InferenceBackend::runInference;
+    using InferenceBackend::runInferenceAsync;
+
     bool runInference(void * input_data, std::vector<void *> output_data) override;
     bool runInferenceAsync(void *              input_data,
                            std::vector<void *> output_data,
                            cudaStream_t        stream) override;
+
+    std::string asyncUnsupportedReason() const override {
+        return "ONNX Runtime (CPU) exposes only the blocking Ort::Session::Run(), "
+               "there is no non-blocking submit interface";
+    }
+
     std::vector<int>     getInputDims() const override;
     std::vector<int64_t> getOutputDims(int output_index = 0) const override;
     size_t               getInputByteSize() const override;

@@ -96,9 +96,9 @@ class Pipeline {
                              bool                 run_detect,
                              bool                 run_depth);
 
-    // TensorRT 后端支持异步提交（双 stream 重叠）；ONNX Runtime 无异步接口，
+    // 异步能力只认后端的 capability 查询（TensorRT 支持；ONNX Runtime 没有异步接口，
     static bool isAsyncCapable(const BaseModel & model) {
-        return model.getBackendType() == BackendType::TensorRT;
+        return model.isAsyncInferenceSupported();
     }
 
     // 重叠帧使用的检测模型：优先轻量模型，未加载则回落主模型。

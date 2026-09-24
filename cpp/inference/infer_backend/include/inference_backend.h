@@ -21,15 +21,25 @@ class InferenceBackend {
     // 加载模型
     virtual bool loadModel(const std::string & model_path) = 0;
 
-    // 执行推理
-    virtual bool runInference(void * input_data, void * output_data)              = 0;
+    // 同步：返回时输出已就绪
     virtual bool runInference(void * input_data, std::vector<void *> output_data) = 0;
 
-    // 执行异步推理
-    virtual bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) = 0;
+    // 异步：把工作提交到 stream 后立即返回，输出的就绪顺序由 stream 保证
     virtual bool runInferenceAsync(void *              input_data,
                                    std::vector<void *> output_data,
-                                   cudaStream_t        stream)                                        = 0;
+                                   cudaStream_t        stream) = 0;
+
+    virtual std::string asyncUnsupportedReason() const = 0;
+
+    bool isAsyncInferenceSupported() const { return asyncUnsupportedReason().empty(); }
+
+    bool runInference(void * input_data, void * output_data) {
+        return runInference(input_data, std::vector<void *>{ output_data });
+    }
+
+    bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) {
+        return runInferenceAsync(input_data, std::vector<void *>{ output_data }, stream);
+    }
 
     // 获取输入维度
     virtual std::vector<int> getInputDims() const = 0;
@@ -57,6 +67,9 @@ class InferenceBackend {
     virtual size_t getOutputIndexFromName(const std::string & name) const = 0;
 
   protected:
+    // 异步降级策略（「查能力 → 记录查询结果与原因 → 回落同步」）的唯一实现点，
+    bool degradeToSyncInference(void * input_data, std::vector<void *> output_data);
+
     struct OutputTensorInfo {
         std::string          name;
         std::vector<int64_t> dims;
