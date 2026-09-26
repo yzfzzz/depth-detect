@@ -359,17 +359,10 @@ if(ENABLE_BENCHMARK)
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 
-    # Jetson TX2 资源占用峰值（CPU/GPU/共享内存/温度），见 doc/测试补全清单.md T6
-    add_executable(test_jeston_peak_usage ${PROJECT_SOURCE_DIR}/benchmark/test_jeston_peak_usage.cpp)
-    configure_common_includes(test_jeston_peak_usage)
-    target_link_libraries(test_jeston_peak_usage PRIVATE
-        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
-    )
 
-    # H2D 拷贝耗时微基准：可分页同步 vs 固定内存异步，wall-clock vs CUDA event 交叉验证
-    add_executable(test_h2d_memcpy ${PROJECT_SOURCE_DIR}/benchmark/test_h2d_memcpy.cpp)
-    configure_common_includes(test_h2d_memcpy)
-    target_link_libraries(test_h2d_memcpy PRIVATE
+    add_executable(test_schedule_strategy ${PROJECT_SOURCE_DIR}/benchmark/test_schedule_strategy.cpp)
+    configure_common_includes(test_schedule_strategy)
+    target_link_libraries(test_schedule_strategy PRIVATE
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 else()
