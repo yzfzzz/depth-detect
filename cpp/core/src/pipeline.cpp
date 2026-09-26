@@ -6,7 +6,6 @@
 #include "frame.h"
 #include "logger_manager.h"
 #include "motion_state_engine.h"
-#include "public.h"
 #include "STrack.h"
 
 #include <algorithm>
@@ -236,6 +235,21 @@ void Pipeline::setScheduleMode(ScheduleMode mode) {
     APP_INFO("[Pipeline] schedule mode changed: {} -> {}", scheduleModeName(schedule_mode_),
              scheduleModeName(mode));
     schedule_mode_ = mode;
+}
+
+// 运行时覆盖错峰间隔：与构造期解析同一套钳制规则（≥1），不改变当前调度策略
+void Pipeline::setStaggerIntervals(int detect_interval, int depth_interval) {
+    const int new_detect_interval = std::max(1, detect_interval);
+    const int new_depth_interval  = std::max(1, depth_interval);
+    if (new_detect_interval == detect_interval_ && new_depth_interval == depth_interval_) {
+        return;
+    }
+    APP_INFO(
+        "[Pipeline] stagger intervals changed: detect every {} frame(s) -> {}, depth every {} "
+        "frame(s) -> {}",
+        detect_interval_, new_detect_interval, depth_interval_, new_depth_interval);
+    detect_interval_ = new_detect_interval;
+    depth_interval_  = new_depth_interval;
 }
 
 // 唯一推理入口：按调度策略分发，业务侧不需要知道有几种模式

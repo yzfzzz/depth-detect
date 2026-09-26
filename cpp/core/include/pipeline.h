@@ -49,6 +49,8 @@ class Pipeline {
 
     void setScheduleMode(ScheduleMode mode);
 
+    void setStaggerIntervals(int detect_interval, int depth_interval);
+
     void updateMotionStates(FrameInputContext &  frame_input_context,
                             InferOutputContext & infer_output_context);
 
