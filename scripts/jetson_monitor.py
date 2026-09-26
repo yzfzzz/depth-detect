@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Jetson(TX2) 资源监视器（精简版）：两种模式，只出 PNG。
+"""Jetson(TX2) 资源监视器：采内存 / 功耗 / 温度，一直采到目标进程退出。
 
-  # 1) 附着到已在运行的进程(PID 或进程名)，采到它退出
+目标进程两种来源、输出三档，可任意组合：
+
+  # 1) 附着：监视已在运行的进程（PID，或唯一匹配的进程名），采到它退出
   python3 scripts/jetson_monitor.py --pid 12345 --plot runs/mem_temp.png
   python3 scripts/jetson_monitor.py --pid main  --plot runs/mem_temp.png
 
-  # 2) 拉起子进程，采集窗口与它的生命周期严格对齐
+  # 2) 拉起：自行 fork 被测程序，采集窗口与它的生命周期严格对齐
   python3 scripts/jetson_monitor.py --plot runs/mem_temp.png \\
       --exec "cd bin && ./main ../data/dd/905-3-1.mp4 config.yaml"
 
-  # 3) 只要原始数据、不画图（给 pandas / gnuplot / Excel 二次加工）
+  # 3) 仅需原始数据、不画图（供 pandas / gnuplot / Excel 二次加工）
   python3 scripts/jetson_monitor.py --json runs/906-2-1.json --exec "..."
 
-结束时在终端打印各指标的 均值 / 峰值 / 峰现时刻 / 最小值；--plot 出 PNG --json 落原始序列。
+输出：终端统计（各指标均值 / 峰值 / 峰现时刻 / 最小值）始终打印；--plot 写 PNG，
+--json 写原始序列；两者都不传时仅输出终端统计。
 """
 import argparse
 import difflib
@@ -31,28 +34,31 @@ from collections import OrderedDict
 
 VERSION = "1.0"
 PALETTE = ("#d62728", "#ff7f0e", "#1f77b4", "#9467bd", "#2ca02c", "#8c564b")
-SHELL_NAMES = ("sh", "dash", "bash", "ash", "zsh", "ksh", "busybox")  # 只当 wrapper，不算负载
-POWER_GLOBS = (  # 便宜：单层通配，先跑这些，命中就收工
+SHELL_NAMES = ("sh", "dash", "bash", "ash", "zsh", "ksh", "busybox")  # 仅作 wrapper，不计入负载
+POWER_GLOBS = (  # 开销低：单层通配优先，命中即返回
     "/sys/bus/i2c/devices/*-004*/iio_device/in_power*_input",
     "/sys/bus/i2c/devices/*-004*/iio:device*/in_power*_input",
 )
-POWER_GLOBS_DEEP = (  # 兜底：`**` 会遍历整个 sysfs（Jetson 上几秒起步），只在上面全落空时才走
+POWER_GLOBS_DEEP = (  # 兜底：`**` 会遍历整个 sysfs（Jetson 上需数秒），以上均未命中时才用
     "/sys/devices/**/i2c-*/*-004*/iio*/in_power*_input",
 )
 TEMP_MIN_MC = -200000  # 低于此值视为该温区无效
-# preflight 体检：这些后缀的参数当「文件路径」查存在性
+
+# 仅对扩展名在白名单内的参数做存在性体检：无法识别的一律按普通参数处理
 ARG_FILE_EXTS = (".yaml", ".yml", ".json", ".mp4", ".avi", ".mkv", ".mov", ".jpg", ".jpeg",
                  ".png", ".engine", ".onnx", ".plan", ".bin", ".cfg", ".ini", ".list", ".txt")
-# 命令首词是这些的话，静态查不了（要 shell 才能展开），直接放行
+
+# 解析 --exec 时遇到这些词即放弃静态判断：其后多为 shell 展开结果，无法检查
 SHELL_WORDS = ("cd", "exec", "eval", "env", "nohup", "setsid", "time", "nice", "ionice",
                "sudo", "taskset", "stdbuf", "watch", "xargs", "sh", "bash", "python",
                "python3", "tee")
 STOP = False   # 收到信号置位，采集循环据此收尾
-_MONITOR = None  # 当前 Monitor，供信号处理器在强制退出前把工作负载一并送走
+_MONITOR = None  # 当前 Monitor，供信号处理器在强制退出前一并结束工作负载
 
 
 # ------------------------------------------------------------------ 基础读取
 def slurp(path):
+    """读文本节点；读取失败（不存在 / 无权限）统一返回 None。"""
     try:
         with open(path) as fh:
             return fh.read().strip()
@@ -67,7 +73,7 @@ def slurp_int(path):
 
 
 def kv_int(path, keys=None):
-    """'Key: 1234 kB' 形式的文件 -> {key: 1234}"""
+    """把 'Key: 1234 kB' 形式的文件解析成 {key: 1234}；keys 非空时仅收白名单内的键。"""
     out = {}
     for line in (slurp(path) or "").splitlines():
         key, sep, rest = line.partition(":")
@@ -82,7 +88,7 @@ def kv_int(path, keys=None):
 
 
 def _collect_rails(root, pats):
-    """按模式收集 INA3221 通道 -> {导轨名: 节点路径}。"""
+    """按给定通配模式收集 INA3221 通道 -> {导轨名: 节点路径}。"""
     found = {}
     for pat in pats:
         for path in sorted(glob.glob(root + pat, recursive=True)):
@@ -90,7 +96,7 @@ def _collect_rails(root, pats):
             parent = os.path.dirname(path)
             name = slurp(os.path.join(parent,
                                       base.replace("in_power", "rail_name").replace("_input", "")))
-            if not name:  # 没 rail_name 就退化成「芯片_通道」，免得不同芯片的同名通道互相覆盖
+            if not name:  # 无 rail_name 时命名为「芯片_通道」，避免不同芯片的同名通道互相覆盖
                 name = "%s_%s" % (os.path.basename(os.path.dirname(parent)), base)
             found.setdefault(name, path)
     return found
@@ -99,15 +105,13 @@ def _collect_rails(root, pats):
 def power_rails(root, warn=None):
     """INA3221 通道 -> [(导轨名, 节点路径)]，节点单位 µW。
 
-    先用单层通配（毫秒级）；只有全落空才递归扫 /sys/devices —— 那个 `**` 会把整个 sysfs
-    走一遍，Jetson 上几秒起步。旧版无条件把两条递归模式也跑了一遍，启动阶段静默卡住，
-    看着就像「脚本挂了」，实测就是这个坑。
+    单层通配优先，未命中再递归扫 /sys/devices：`**` 会遍历整个 sysfs，Jetson 上需数秒。
     """
     found = _collect_rails(root, POWER_GLOBS)
     if found:
         return sorted(found.items())
     if warn:
-        warn("[INFO] 单层通配没找到功耗节点，兜底递归扫 /sys/devices（可能要几秒）...\n")
+        warn("[INFO] 单层通配未命中功耗节点，改为递归扫 /sys/devices（可能需数秒）...\n")
     return sorted(_collect_rails(root, POWER_GLOBS_DEEP).items())
 
 
@@ -118,7 +122,10 @@ def thermal_zones(root):
 
 
 def find_pid(root, name):
-    """在 /proc 里按名字找进程：匹配 comm、argv[0] 的 basename 或 cmdline 子串。"""
+    """在 /proc 中按名字查进程，返回全部命中的 pid（去重由调用方负责）。
+
+    三个匹配口径依次放宽：comm、argv[0] 的 basename、cmdline 任意子串。
+    """
     me, hits = os.getpid(), []
     for ent in sorted(os.listdir(root + "/proc")):
         if not ent.isdigit() or int(ent) == me:
@@ -132,8 +139,10 @@ def find_pid(root, name):
 
 
 def proc_stat(root, pid):
-    """一次读 /proc/<pid>/stat -> (状态, ppid, 进程组, utime + stime 滴答)；进程不在返回 None。
-    comm 可能含空格和括号，必须从最后一个 ')' 之后切分才安全。"""
+    """一次读 /proc/<pid>/stat -> (状态, ppid, 进程组, utime + stime 滴答)；进程不存在时返回 None。
+
+    comm 可能含空格与括号，必须从最后一个 ')' 之后切分。
+    """
     txt = slurp("%s/proc/%d/stat" % (root, pid))
     if not txt:
         return None
@@ -145,17 +154,17 @@ def proc_stat(root, pid):
 
 
 def proc_state(root, pid):
+    """只取状态字符（R/S/D/Z...），读取失败返回 None。"""
     st = proc_stat(root, pid)
     return st[0] if st else None
 
 
 def alive(root, pid):
-    """进程还活着吗 —— 僵尸（Z：已退出但父进程没回收，/proc/<pid> 仍存在）算已退出。"""
     return proc_state(root, pid) not in (None, "Z")
 
 
 def group_members(root, pgid, skip=()):
-    """同一进程组里仍存活（非僵尸）的 (pid, comm)，按 pid 升序；skip 里的 pid 跳过。"""
+    """同一进程组里仍存活（非僵尸）的 (pid, comm)，按 pid 升序；skip 中的 pid 跳过。"""
     if not os.path.isdir(root + "/proc"):
         return []
     out = []
@@ -173,6 +182,7 @@ def group_members(root, pgid, skip=()):
 
 
 def clk_tck():
+    """每秒的时钟滴答数（SC_CLK_TCK），取不到时用 Linux 默认值 100。"""
     try:
         return float(os.sysconf("SC_CLK_TCK"))
     except (AttributeError, ValueError, OSError):
@@ -181,13 +191,13 @@ def clk_tck():
 
 # ------------------------------------------------------------------ JSON 落盘
 def iso_time(wall):
-    """本地时间的 ISO8601，能取到时区偏移就带上。"""
+    """本地时间的 ISO8601，能取到时区偏移则一并输出。"""
     lt = time.localtime(wall)
     return time.strftime("%Y-%m-%dT%H:%M:%S", lt) + time.strftime("%z", lt)
 
 
 def json_array(vals, indent=0, per_line=16):
-    """数组按每行 per_line 个折行：单行太长没法看，一个数一行又是几千行。"""
+    """数组每行 per_line 个折行：单行过长不便阅读，逐值一行又会产生数千行。"""
     if not vals:
         return "[]"
     pad = " " * indent
@@ -197,12 +207,6 @@ def json_array(vals, indent=0, per_line=16):
 
 
 def json_dump(obj, indent=0):
-    """够读又不臃肿的 JSON 序列化。
-
-    标准库 indent=N 会把每个数摊成一行（几千行），separators 全压又是超长单行；
-    这里折中：dict 一行一个键，数组交给 json_array 折行 —— pandas/gnuplot 能直接读，
-    人也能扫两眼。
-    """
     if isinstance(obj, dict):
         if not obj:
             return "{}"
@@ -218,12 +222,11 @@ def json_dump(obj, indent=0):
 def split_command(cmd, base=None):
     """拆 --exec 命令 -> (词元, 程序起始下标, 生效工作目录)。
 
-    识别开头的 `cd DIR && ...` / `cd DIR; ...`：被监控程序在哪个目录下跑，
-    直接决定它那些相对路径能不能找到，所以要把这个目录算出来。
+    识别开头的 `cd DIR && ...` / `cd DIR; ...`：程序在哪个目录下执行，决定其相对路径能否找到。
     """
     try:
         toks = shlex.split(cmd)
-    except ValueError:  # 引号没闭合之类，退回朴素拆分，体检尽量别把用户挡在门外
+    except ValueError:  # 引号未闭合等异常输入退回简单拆分，静态体检不阻断执行
         toks = cmd.split()
     base = os.path.abspath(base or os.getcwd())
     idx = 0
@@ -236,7 +239,7 @@ def split_command(cmd, base=None):
 
 
 def suggest_missing_space(tok, base):
-    """「./main../data/dd/x.mp4」这种少写空格的粘连：在 `..` 处切开，前半段若是真实文件就提示。"""
+    """「./main../data/dd/x.mp4」这类缺少空格的粘连：在 `..` 处切分，前半段为真实文件时给出提示。"""
     for i in range(2, len(tok) - 1):
         if tok[i:i + 2] != "..":
             continue
@@ -247,15 +250,13 @@ def suggest_missing_space(tok, base):
 
 
 def preflight(cmd, base=None):
-    """跑之前静态体检 --exec 命令 -> (问题列表, 程序是否解析成功)。
+    """启动前静态体检 --exec 命令 -> (问题列表, 程序是否解析成功)。
 
-    --exec 交给 sh 执行，相对路径全按 monitor 的当前目录算：程序名少个空格、配置名错一个
-    字母，main 都会秒退（采样窗口只剩零点几秒），现象就是「程序根本没起来」。这里把能静态
-    发现的都提前说清楚，并给出最接近的真实文件名。
+    相对路径按 monitor 当前目录解析，写错会使目标立即退出、采样窗口近乎为空，故提前拦截并给出相近文件名。
     """
     issues = []
     toks, idx, cwd = split_command(cmd, base)
-    if not os.path.isdir(cwd):  # 常见于「已经站在 bin/ 里还写 cd bin」或目录名写错
+    if not os.path.isdir(cwd):  # 常见于已在 bin/ 下仍写 cd bin，或目录名拼写错误
         return ["cd 的目标目录不存在：%s" % cwd], False
     prog, args = None, []
     while idx < len(toks):
@@ -267,28 +268,28 @@ def preflight(cmd, base=None):
             idx += 1
             continue
         if tok in SHELL_WORDS or not os.path.basename(tok):
-            return [], True  # 交给 shell 展开的东西，静态查不了就别瞎报
+            return [], True  # 交由 shell 展开的部分无法静态检查，直接放行
         prog, args = tok, toks[idx + 1:]
         break
     if prog is None:
-        return ["--exec 里没解析出任何命令"], False
+        return ["--exec 未解析出任何命令"], False
 
-    if "/" in prog:  # 带路径：一律相对 cwd 解析（sh 就是这么算的）
+    if "/" in prog:  # 带路径：一律相对 cwd 解析（与 sh 行为一致）
         path = os.path.normpath(os.path.join(cwd, os.path.expanduser(prog)))
         if not os.path.exists(path):
             issues.append("程序 %s 不存在（按工作目录 %s 解析为 %s）" % (prog, cwd, path))
             fix = suggest_missing_space(prog, cwd)
             if fix:
-                issues.append("看着像少了个空格：写成 \"%s\" 试试" % fix)
+                issues.append("疑似缺少空格：改为 \"%s\"" % fix)
             return issues, False
         if not os.access(path, os.X_OK):
-            issues.append("程序 %s 没有执行权限：chmod +x %s" % (prog, path))
+            issues.append("程序 %s 无执行权限：chmod +x %s" % (prog, path))
             return issues, False
     elif not shutil.which(prog):
-        issues.append("命令 %s 不在 PATH 里，也不是当前目录下的文件" % prog)
+        issues.append("命令 %s 不在 PATH 中，也不是当前目录下的文件" % prog)
         return issues, False
 
-    for a in args:  # 参数里像路径的，顺手查一下在不在（配置名拼错是最常见的一种）
+    for a in args:  # 参数中形似路径的一并检查是否存在（配置文件名拼写错误最常见）
         if a.startswith("-") or os.path.splitext(a)[1].lower() not in ARG_FILE_EXTS:
             continue
         t = os.path.normpath(os.path.join(cwd, os.path.expanduser(a)))
@@ -297,7 +298,7 @@ def preflight(cmd, base=None):
         near = difflib.get_close_matches(os.path.basename(a), os.listdir(
             os.path.dirname(t) if os.path.isdir(os.path.dirname(t)) else cwd), n=1, cutoff=0.5)
         issues.append("参数文件 %s 不存在（按 %s 解析）%s"
-                      % (a, cwd, "；是不是要用 %s ？" % near[0] if near else ""))
+                      % (a, cwd, "；是否要用 %s ？" % near[0] if near else ""))
     return issues, True
 
 
@@ -311,8 +312,11 @@ class Stats(object):
         self.unit, self.t, self.v = unit, [], []
 
     def add(self, t, value):
+        """追加一个采样点：t 是采样起始后的秒数，value 一律存 float。"""
         self.t.append(t)
         self.v.append(float(value))
+
+    # 统计量按需现算（一条序列仅数千点，无需维护增量状态）
 
     @property
     def mean(self):
@@ -332,20 +336,23 @@ class Stats(object):
 
 
 class Monitor(object):
+    """采集循环：探测硬件节点 -> 解析目标进程 -> 按节拍采样 -> 收尾 -> 输出报告与产物。"""
+
     def __init__(self, args):
+        """只做参数落地；真正的节点探测与进程解析都在 run() 里。"""
         self.a = args
         self.root = args.root or ""
-        self.stats = {}          # key -> Stats，按 key 排序输出
+        self.stats = {}          # key -> Stats，统计与落盘都按 key 排序，输出稳定
         self.rails = []
         self.zones = []
-        self.pid = None          # 被监视的目标进程（拉起模式下是真正的负载，不是 wrapper）
+        self.pid = None          # 被监视的目标进程（拉起模式下为真正的负载，非 wrapper）
         self.child = None        # 拉起模式的 wrapper（shell=True 时是 sh）
-        self.child_pgid = None   # wrapper 的进程组：setsid 之后 == child.pid，收尾/存活判定用
-        self.members = None      # 进程组成员缓存（扫 /proc 不便宜，1s 才刷一次）
+        self.child_pgid = None   # wrapper 的进程组：setsid 后 == child.pid，供收尾与存活判定使用
+        self.members = None      # 进程组成员缓存（扫 /proc 开销不低，每 1s 刷新一次）
         self.members_at = 0.0
-        self.seen_member = False  # 是否在组里见过负载：没见过就别拿「组空」当退出依据
-        self.reason = None       # 收尾原因
-        self.killed_by_us = False  # 工作负载是被我们自己送走的（此时不该报「秒退」）
+        self.seen_member = False  # 是否在组中见过负载：未见过时不可用「组空」作为退出依据
+        self.reason = None       # 收尾原因，进终端报告与 JSON
+        self.killed_by_us = False  # 工作负载由本程序主动结束（此时不应报「秒退」）
         self.json_path = args.json  # --json 的落盘路径（None = 不落盘）
         self.start_wall = self.end_wall = time.time()
         self.live = bool(args.live if args.live is not None else sys.stdout.isatty())
@@ -355,10 +362,12 @@ class Monitor(object):
     # --- 单次采样 ---
 
     def add(self, key, unit, value, t):
+        """记账入口：value 为 None 表示本次未采到，直接丢弃不留空位。"""
         if value is not None:
             self.stats.setdefault(key, Stats(unit)).add(t, value)
 
     def sample(self, t):
+        """一次采样：内存 / 功耗 / 温度 / 目标进程 RSS+CPU，再叠加 --extras 与实时状态行。"""
         mi = kv_int(self.root + "/proc/meminfo")
         total, avail = mi.get("MemTotal"), mi.get("MemAvailable", mi.get("MemFree"))
         if total and avail is not None:
@@ -370,7 +379,7 @@ class Monitor(object):
             if uw is not None:
                 rails[name] = uw / 1000.0
                 self.add("power_" + name, "mW", uw / 1000.0, t)
-        if rails:  # 有 VDD_IN 这类总输入通道就只取它，否则才退化成三路求和
+        if rails:  # 存在 VDD_IN 这类总输入通道时只取它，否则退化为三路求和
             main = [v for n, v in rails.items() if n.upper() in ("VDD_IN", "VIN", "VDD_IN_SYS")]
             self.add("power_total_mw", "mW", main[0] if main else sum(rails.values()), t)
 
@@ -388,7 +397,7 @@ class Monitor(object):
             ticks = proc_stat(self.root, self.pid)
             ticks = ticks[3] if ticks else None
             if ticks is not None:
-                if self.prev_ticks is not None:
+                if self.prev_ticks is not None:  # CPU 占用只能靠两次 ticks 差分
                     dt = t - self.prev_ticks[0]
                     if dt > 0:
                         self.add("proc_cpu_pct", "%",
@@ -419,6 +428,7 @@ class Monitor(object):
             self.add("gpu_pct", "%", gpu / 10.0 if gpu > 100 else float(gpu), t)
 
     def status_line(self, t):
+        """原地刷新一行实时状态（RAM / 功耗 / 最热温区 / RSS），仅在终端下启用。"""
         mem = self.stats.get("mem_used_mb")
         power = self.stats.get("power_total_mw")
         rss = self.stats.get("proc_rss_mb")
@@ -439,21 +449,22 @@ class Monitor(object):
     # --- 主循环 ---
 
     def run(self):
+        """全流程：探测节点 -> 启动/解析目标进程 -> 按节拍采样 -> 收尾。"""
         sys.stderr.write("[INFO] jetson_monitor %s | 工作目录: %s | 采样间隔 %.2fs\n"
                          % (VERSION, os.getcwd(), self.a.interval))
         self.rails = power_rails(self.root, sys.stderr.write)
         self.zones = thermal_zones(self.root)
         for got, hint in (
-                (self.rails, "未发现 INA3221 功耗节点（部分 L4T 上仅 root 可读），试 sudo 重跑"),
+                (self.rails, "未发现 INA3221 功耗节点（部分 L4T 上仅 root 可读），请尝试 sudo 重跑"),
                 (self.zones, "未发现 thermal_zone*，温度项缺失"),
-                (slurp(self.root + "/proc/meminfo"), "读不到 /proc/meminfo")):
+                (slurp(self.root + "/proc/meminfo"), "无法读取 /proc/meminfo")):
             if not got:
                 sys.stderr.write("[WARN] %s\n" % hint)
         sys.stderr.write("[INFO] 功耗通道: %s | 温区: %s\n"
                          % (", ".join(n for n, _ in self.rails) or "none",
                             ", ".join(n for n, _ in self.zones) or "none"))
 
-        if STOP:  # 探测阶段被 Ctrl+C 打断：别再硬着头皮把工作负载拉起来
+        if STOP:  # 探测阶段被 Ctrl+C 打断：不再拉起工作负载
             sys.stderr.write("[INFO] 已收到停止信号，跳过拉起工作负载\n")
             self.start_wall = self.end_wall = time.time()
             return
@@ -464,12 +475,11 @@ class Monitor(object):
             for msg in issues:
                 sys.stderr.write("[WARN] %s\n" % msg)
             if issues and not ok and not a.no_check:
-                raise SystemExit("[ERROR] --exec 体检不通过，已中止；确认要照跑就加 --no-check\n"
+                raise SystemExit("[ERROR] --exec 体检不通过，已中止；确认仍要执行请加 --no-check\n"
                                  "        当前目录: %s\n        命令: %s"
                                  % (os.getcwd(), a.exec_cmd))
             sys.stderr.write("[INFO] 拉起工作负载: %s\n" % a.exec_cmd)
-            # 新会话：被测程序自成进程组，好处是终端 Ctrl+C 不会半路把它打死，
-            # 代价是收尾得由我们整组送走（见 stop_workload）
+            # 独立会话：终端 Ctrl+C 无法送达，代价是收尾需整组处理（见 stop_workload）
             self.child = subprocess.Popen(a.exec_cmd, shell=True, start_new_session=True)
             self.pid = self.child.pid
             if os.name == "posix":
@@ -484,7 +494,7 @@ class Monitor(object):
         self.start_wall = time.time()
         t0 = time.monotonic()
         next_tick = t0
-        while not STOP:
+        while not STOP:  # 绝对时刻定时，避免单次采样超时导致后续采样持续偏移
             t = time.monotonic() - t0
             self.sample(t)
             if self.finished(t) or STOP:
@@ -492,9 +502,9 @@ class Monitor(object):
             next_tick += a.interval
             delay = next_tick - time.monotonic()
             if delay > 0:
-                self.pause(delay)  # 内部阻塞受 interval 限制，信号后最多再等一个间隔
+                self.pause(delay)  # 内部阻塞以 interval 为上限，收到信号后最多再等一个间隔
             else:
-                next_tick = time.monotonic()  # 采样比 interval 还慢：重置节拍，别忙等
+                next_tick = time.monotonic()  # 采样慢于 interval：重置定时基准，避免忙等
         self.end_wall = time.time()
         if self.live:
             sys.stdout.write("\n")
@@ -502,32 +512,29 @@ class Monitor(object):
         self.hint_if_dead_on_arrival()
 
     def hint_if_dead_on_arrival(self):
-        """目标没跑起来就退了：说清是「命令/路径写错」还是「程序自己报了错」。
+        """目标未正常运行即退出：区分「命令/路径错误」与「程序自身报错」。
 
-        判据用采样帧数 + 窗口时长双保险 —— pick_workload 最多等 1s、功耗节点兜底扫描可能要
-        几秒，只拿 end-start 比会把真正的秒退漏掉（旧版就是那样漏的）；纯看帧数又会在超大
-        --interval 下误判，两个都卡上才稳。
+        探测阶段最长数秒，判据必须同时卡帧数与时长，只看任一项都会误判。
         """
         if self.killed_by_us or self.child is None or not self.child.returncode:
             return
         window = self.end_wall - self.start_wall
-        if self.samples > 3 or window > 5.0:  # 采够多/够久，说明它确实跑起来过
+        if self.samples > 3 or window > 5.0:  # 采样量或时长足够，说明它确实正常运行过
             return
         code = self.child.returncode
         if code in (126, 127):
-            tip = "shell 连命令都没找到（%s）" % {126: "无执行权限", 127: "路径不存在"}[code]
+            tip = "shell 未能找到命令（%s）" % {126: "无执行权限", 127: "路径不存在"}[code]
         else:
-            tip = "程序自己退的，往上翻它的报错（模型/配置/视频路径最常见）"
+            tip = "程序自身退出，请查看其报错（模型/配置/视频路径最常见）"
         sys.stderr.write(
             "[WARN] 目标 %.1fs 内只采到 %d 帧就以 code %s 退出：%s\n"
-            "[WARN]   相对路径按 monitor 当前目录 %s 算；先手工跑一遍这条命令最省事\n"
+            "[WARN]   相对路径按 monitor 当前目录 %s 解析；建议先手工执行一次该命令\n"
             % (window, self.samples, code, tip, os.getcwd()))
 
     def pause(self, delay):
-        """把采样间隔睡满；拉起模式下顺带等 wrapper，它一退就提前醒。
+        """睡满采样间隔；拉起模式下同时等待 wrapper，其退出即提前唤醒。
 
-        附着模式没有 child 可等，只能老实 sleep —— 旧版在这里无条件调 self.child.wait()，
-        附着模式直接 AttributeError，而且那个分支不 sleep，退化成 100% CPU 忙等。
+        仅拉起模式有 child 可等；附着模式必须走 sleep 分支，否则退化为忙等。
         """
         if self.child is None:
             time.sleep(delay)
@@ -537,10 +544,10 @@ class Monitor(object):
         except subprocess.TimeoutExpired:
             pass
 
-    # --- 拉起模式：认负载、判存活、收尾 ---
+    # --- 拉起模式：识别负载、判定存活、收尾 ---
 
     def group_scan(self, force=False):
-        """wrapper 所在进程组里活着的成员（不含 wrapper 与自己），1s 缓存一次。"""
+        """wrapper 所在进程组中存活的成员（不含 wrapper 与自身），1s 缓存一次。"""
         if self.child_pgid is None:
             return []
         now = time.monotonic()
@@ -553,11 +560,9 @@ class Monitor(object):
         return self.members
 
     def pick_workload(self):
-        """把采样对象从 wrapper shell 换成真正的负载进程。
+        """把采样对象从 wrapper shell 切换为真正的负载进程。
 
-        `--exec "cd bin && ./main ..."` 交给 sh 的是复合命令，sh 只是守着 main 的 wrapper，
-        盯着它采样的话 VmRSS/CPU 全是 sh 的数据。main 要 fork 出来才看得见，所以这里最多等 1s；
-        等不到（比如 sh 直接 exec 掉了 main，组里压根没有别的成员）就退回盯 wrapper。
+        sh 只是守着复合命令的 wrapper，对其采样的 VmRSS/CPU 均取自 sh；最多等 1s，超时则回退。
         """
         deadline = time.monotonic() + 1.0
         while True:
@@ -570,15 +575,18 @@ class Monitor(object):
             time.sleep(0.05)
 
     def set_pid(self, pid, comm=""):
+        """切换采样对象；更换进程必须清除 CPU 差分的历史点，否则首个采样值偏高。"""
         if pid == self.pid:
             return
         self.pid = pid
-        self.prev_ticks = None  # 换了进程，CPU 差分重新起算，免得算出一个假峰值
+        self.prev_ticks = None  # CPU 差分重新起算
         sys.stderr.write("[INFO] 采样对象切到 pid=%d%s\n" % (pid, " (%s)" % comm if comm else ""))
 
     def stop_workload(self):
-        """收尾：别把工作负载丢在后台跑。它在自己的会话里，终端信号打不到它，
-        只能我们按进程组送走（先 SIGTERM，2s 不走再 SIGKILL）。"""
+        """收尾时确保工作负载一同退出：它在独立会话中，终端信号无法送达，只能整组处理。
+
+        先 SIGTERM 等待 2s，未退出再 SIGKILL。
+        """
         if self.child is None or self.child.poll() is not None:
             return
         self.killed_by_us = True
@@ -597,8 +605,7 @@ class Monitor(object):
     def kill_now(self):
         """强制退出（第二次 Ctrl+C）专用：立刻 SIGKILL 整组。
 
-        工作负载在独立会话里，monitor 一死就没人管它了 —— 不补这一下，main 会变成孤儿
-        在后台继续吃 GPU，还得手动 pkill。
+        工作负载在独立会话中，monitor 退出后它无人接管，若不处理会留下继续占用 GPU 的孤儿进程。
         """
         if self.child is None or self.child.poll() is not None:
             return
@@ -606,7 +613,7 @@ class Monitor(object):
         self.signal_group(hard=True)
 
     def signal_group(self, hard=False):
-        """优先整组发信号（wrapper 的子孙一起走）；拿不到进程组就退化成只打 wrapper。"""
+        """优先整组发信号（wrapper 的子孙一并处理）；取不到进程组时退化为仅对 wrapper 发信号。"""
         if self.child_pgid is not None:
             try:
                 os.killpg(self.child_pgid, signal.SIGKILL if hard else signal.SIGTERM)
@@ -622,7 +629,7 @@ class Monitor(object):
             pass
 
     def resolve(self, target):
-        """附着模式：把 --pid 的 'PID 或进程名' 解析成真实 pid。"""
+        """附着模式：将 --pid 的 'PID 或进程名' 解析为唯一真实 pid，歧义或不存在时直接报错退出。"""
         if target.isdigit():
             if not os.path.isdir("%s/proc/%s" % (self.root, target)):
                 raise SystemExit("[ERROR] pid %s 不存在或已退出" % target)
@@ -637,25 +644,24 @@ class Monitor(object):
         return hits[0]
 
     def finished(self, t):
-        """收尾判定：到时长上限 / 附着的目标没了 / 拉起的工作负载结束了。"""
+        """收尾判定：达到时长上限 / 附着目标消失 / 拉起的工作负载结束。"""
         if self.a.duration and t >= self.a.duration:
             self.reason = "达到 --duration %.1fs" % self.a.duration
             return True
-        if self.child is None:  # 模式1 附着
+        if self.child is None:  # 附着模式
             if alive(self.root, self.pid):
                 return False
-            state = proc_state(self.root, self.pid)  # 已经没了：再读一次区分「消失」与「僵尸」
+            state = proc_state(self.root, self.pid)  # 已消失：再读一次区分「消失」与「僵尸」
             self.reason = "目标进程 pid %d 已退出%s" % (
-                self.pid, "（僵尸态，父进程没回收）" if state == "Z" else "")
+                self.pid, "（僵尸态，父进程未回收）" if state == "Z" else "")
             return True
-        code = self.child.poll()  # 模式2 拉起：wrapper 自己退了
+        code = self.child.poll()  # 拉起模式：wrapper 自身已退出
         if code is not None:
             self.reason = "子进程退出（code %s）" % code
             return True
         if self.seen_member and not self.group_scan():
-            # wrapper 还挂着，但它下面已经没有任何活着的负载了：真该收尾了。
-            # 没有这一条，只要 wrapper 不退出（复合命令 fork 出中间层、或残留了后台子孙），
-            # 就会一直采下去 —— 表现就是「main 跑完了脚本还不退」。
+            # wrapper 仍存活但负载已全部退出：复合命令 fork 出中间层或残留后台子孙时 wrapper
+            # 不会退出，缺少这一条会一直采样下去。
             self.reason = "工作负载已退出（wrapper 仍在，已一并收尾）"
             return True
         return False
@@ -664,13 +670,16 @@ class Monitor(object):
 
     @property
     def samples(self):
+        """已采帧数：以内存序列长度为准（每个采样点必写它）。"""
         return len(self.stats["mem_used_mb"].v) if "mem_used_mb" in self.stats else 0
 
     def board(self):
+        """开发板型号（device-tree model），读不到时返回 'unknown board'。"""
         return (slurp(self.root + "/proc/device-tree/model") or "").replace("\x00", " ").strip() \
             or "unknown board"
 
     def report(self):
+        """终端统计表：每个指标一行（均值/峰值/峰现时刻/最小）+ 功耗/内存/最热温区小结。"""
         window = self.end_wall - self.start_wall
         digits = {"mW": 1, "C": 1, "%": 1, "MB": 1}
         out = ["", "=" * 74,
@@ -702,12 +711,13 @@ class Monitor(object):
     # --- 画图：内存 + 温度两块面板，只出 PNG ---
 
     def draw(self, path):
+        """出内存 + 温度两块面板的 PNG；图内文字全英文，不依赖 CJK 字体。"""
         try:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
         except ImportError:
-            sys.stderr.write('[WARN] 没装 matplotlib，跳过出图。装法：'
+            sys.stderr.write('[WARN] 未安装 matplotlib，跳过出图。安装方式：'
                              'pip3 install "matplotlib==3.3.4"（Python 3.6）\n')
             return
         groups = []
@@ -719,7 +729,7 @@ class Monitor(object):
         if temps:
             groups.append(("Temperature (\u00b0C)", temps))
         if not groups:
-            sys.stderr.write("[WARN] 没有内存/温度样本，跳过出图\n")
+            sys.stderr.write("[WARN] 无内存/温度样本，跳过出图\n")
             return
 
         fonts = ["DejaVu Sans", "Liberation Sans", "Arial"]  # 图内文字全英文，不依赖 CJK 字体
@@ -737,10 +747,10 @@ class Monitor(object):
                 drawn.append((color, s))
             ax.set_ylabel(ylabel)
             ax.grid(alpha=0.3)
-            # 图例放面板外，省得和曲线/峰值标注抢地方
+            # 图例置于面板外，避免与曲线、峰值标注重叠
             ax.legend(loc="lower left", bbox_to_anchor=(0.0, 1.01), ncol=min(len(items), 3),
                       fontsize=9, frameon=False, borderaxespad=0.0)
-            # 峰值标注：贴近右边界就翻到点左侧，贴近顶部就挪到点下方，免得被裁掉或压线
+            # 峰值标注：贴近右边界时翻到左侧，贴近顶部时移到下方，避免被裁剪或压线
             x_lo, x_hi = ax.get_xlim()
             y_lo, y_hi = ax.get_ylim()
             for color, s in drawn:
@@ -753,6 +763,7 @@ class Monitor(object):
         axes[-1][0].set_xlabel("Time (s since sampling start)")
         fig.suptitle("Jetson Resource Monitor: Memory & Temperature (dotted = mean)",
                      fontsize=11)
+        # 图上保留一行元信息：板子/时间窗/采样参数/目标进程，图单独分发时也可自证来源
         meta = ("%s | %s -> %s (%.1fs, %d samples, interval %.2fs)"
                 % (self.board(),
                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.start_wall)),
@@ -774,9 +785,7 @@ class Monitor(object):
     def dump_json(self, path):
         """把原始采样序列写成 JSON（--json 用，不依赖 matplotlib）。
 
-        每个指标一条 {"unit":.., "t":[..], "v":[..]}，t 是采样起始后的秒数 —— 只有原始序列，
-        不预先算统计，方便你自己换口径重算。另外附带板子型号、目标进程、时间窗与收尾原因，
-        以及一份 summary（均/峰/峰现时刻/最小），够脱离终端复现报告里的每个结论。
+        每指标一条 {"unit","t","v"}（t = 采样起始后秒数），仅存原始值不预算统计，另附板子 / 目标 / 窗口 / reason / summary。
         """
         metrics, summary = OrderedDict(), OrderedDict()
         for key in sorted(self.stats):
@@ -807,13 +816,13 @@ class Monitor(object):
         with open(path, "w") as fh:
             fh.write(json_dump(doc) + "\n")
         if not metrics:
-            sys.stderr.write("[WARN] 一条指标都没采到（采样窗口是空的），JSON 里只有元信息\n")
+            sys.stderr.write("[WARN] 未采到任何指标（采样窗口为空），JSON 中仅有元信息\n")
         sys.stderr.write("[INFO] 原始数据已写入 %s（%.1f KB：%d samples × %d 指标）\n"
                          % (os.path.abspath(path), os.path.getsize(path) / 1024.0,
                             self.samples, len(metrics)))
 
     def flush_json(self):
-        """把已采到的数据立刻落盘 —— 收尾/强制退出/异常路径都调它，别白采。"""
+        """立即落盘已采数据：收尾 / 强制退出 / 异常三条路径均调用它。"""
         if not self.json_path:
             return
         try:
@@ -824,7 +833,7 @@ class Monitor(object):
 
 # ------------------------------------------------------------------ 入口
 def prepare_out(path, ext):
-    """统一输出路径：补扩展名 + 自动建父目录（runs/ 不存在时不用先 mkdir）。"""
+    """统一输出路径：补扩展名 + 自动建父目录（runs/ 不存在时无需先 mkdir）。"""
     if not path:
         return None
     base, old = os.path.splitext(path)
@@ -837,39 +846,40 @@ def prepare_out(path, ext):
 
 
 def parse_args(argv=None):
+    """定义命令行接口，并把 --plot/--json 的路径补全成「带扩展名 + 父目录已建好」。"""
     ap = argparse.ArgumentParser(
         description="Jetson(TX2) 资源监视器：采内存/功耗/温度到目标进程退出，出终端统计 + PNG/JSON",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="示例（在仓库根目录跑）:\n"
+        epilog="示例（在仓库根目录执行）:\n"
                "  %(prog)s --exec \"cd bin && ./main ../data/dd/906-2-1.mp4 config_jetson.yaml\" "
                "--plot runs/906-2-1.png\n"
                "  %(prog)s --pid main --plot runs/attach.png\n"
-               "  %(prog)s --json runs/906-2-1.json --exec \"...\"   # 不画图，只落原始数据\n"
-               "已经在 bin/ 里就不用再 cd：--exec \"./main ../data/dd/906-2-1.mp4 "
+               "  %(prog)s --json runs/906-2-1.json --exec \"...\"   # 不画图，仅落原始数据\n"
+               "已在 bin/ 下则无需再 cd：--exec \"./main ../data/dd/906-2-1.mp4 "
                "config_jetson.yaml\"\n"
-               "运行时 Ctrl+C 软收尾（打完统计、出完图才退），再按一次强制退出并送走工作负载\n")
+               "运行时 Ctrl+C 软收尾（输出统计与图像后退出），再按一次强制退出并结束工作负载\n")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--pid", metavar="PID|NAME",
-                      help="模式1 附着：已运行进程的 pid，或进程名（如 main，需唯一匹配）")
+                      help="附着模式：已运行进程的 pid，或进程名（如 main，需唯一匹配）")
     mode.add_argument("--exec", dest="exec_cmd", metavar="CMD",
-                      help="模式2 拉起：把被测程序当子进程跑（shell 语法）。相对路径按 monitor "
-                           "的当前目录算，要换目录就写 cd DIR && ...；开跑前会做一次静态体检")
+                      help="拉起模式：将被测程序作为子进程运行（shell 语法）。相对路径按 monitor "
+                           "当前目录解析，需换目录则写 cd DIR && ...；启动前会做一次静态体检")
     ap.add_argument("--no-check", dest="no_check", action="store_true",
-                    help="跳过 --exec 的静态体检（程序/配置文件路径查不到也照跑）")
+                    help="跳过 --exec 的静态体检（程序/配置文件路径查不到也照常执行）")
     ap.add_argument("--plot", metavar="PATH", default=None,
-                    help="结束时把内存/温度曲线写成 PNG（扩展名非 .png 会自动改成 .png）")
+                    help="结束时把内存/温度曲线写成 PNG（扩展名非 .png 时自动改为 .png）")
     ap.add_argument("--json", metavar="PATH", default=None,
-                    help="不画图，把原始采样序列写成 JSON（含 window/reason/summary，"
-                         "可喂 pandas/gnuplot；扩展名非 .json 会自动改成 .json）")
+                    help="不画图，将原始采样序列写成 JSON（含 window/reason/summary，"
+                         "可供 pandas/gnuplot 使用；扩展名非 .json 时自动改为 .json）")
     ap.add_argument("--interval", type=float, default=0.2, help="采样间隔秒，默认 0.2（下限 0.02）")
     ap.add_argument("--duration", type=float, default=0.0,
-                    help="采样时长上限秒，默认 0 = 一直采到目标退出")
+                    help="采样时长上限秒，默认 0 = 持续采集至目标退出")
     ap.add_argument("--extras", action="store_true", help="额外采集 CPU 总占用与 GPU 占用")
     ap.add_argument("--live", dest="live", action="store_true", default=None,
-                    help="强制打开实时状态行（默认：stdout 是终端时打开）")
-    ap.add_argument("--quiet", dest="live", action="store_false", help="关掉实时状态行")
+                    help="强制开启实时状态行（默认：stdout 为终端时开启）")
+    ap.add_argument("--quiet", dest="live", action="store_false", help="关闭实时状态行")
     ap.add_argument("--root", default=None, metavar="DIR",
-                    help="把 /proc、/sys 挂到该前缀下读取（自测用，实机不要传）")
+                    help="将 /proc、/sys 挂到该前缀下读取（自测用，实机请勿传入）")
     ap.add_argument("--version", action="version", version="jetson_monitor.py %s" % VERSION)
     args = ap.parse_args(argv)
     args.interval = max(0.02, args.interval)
@@ -879,19 +889,16 @@ def parse_args(argv=None):
 
 
 def install_signals():
-    """Ctrl+C / SIGTERM 只置标志位，交给主循环收尾。
+    """Ctrl+C / SIGTERM 只置标志位，交给主循环收尾；再按一次才 SIGKILL 工作负载后强退。
 
-    这里绝不能「再给自己发一次同样的信号」—— 信号处理器会被反复重入，日志刷屏，
-    主线程永远回不到采样循环，按 Ctrl+C 就成了「只弹日志、不中断」。
-    主循环里所有阻塞点都以 --interval 为上限（默认 0.2s），所以置位后最迟一个间隔就收尾；
-    真想立刻走人就再按一次，那时先 SIGKILL 掉工作负载再恢复默认动作退出，不留孤儿。
+    处理器内自我重发会被反复重入、主线程无法回到采样循环；阻塞点均以 --interval 为上限。
     """
     def on_signal(signum, _frame):
         global STOP
         if STOP:
-            sys.stderr.write("\n[INFO] 再次收到信号 %d，强制退出（先送走工作负载）\n" % signum)
+            sys.stderr.write("\n[INFO] 再次收到信号 %d，强制退出（先结束工作负载）\n" % signum)
             if _MONITOR is not None:
-                _MONITOR.flush_json()  # 已经采到的数据先落盘，别白采
+                _MONITOR.flush_json()  # 已采数据先行落盘
                 _MONITOR.kill_now()
             signal.signal(signum, signal.SIG_DFL)
             os.kill(os.getpid(), signum)
@@ -907,19 +914,20 @@ def install_signals():
 
 
 def main(argv=None):
+    """入口：解析参数 -> 安装信号处理器 -> 执行采集 -> 输出报告与产物（PNG / JSON）。"""
     global _MONITOR
     args = parse_args(argv)
     install_signals()
     mon = Monitor(args)
-    _MONITOR = mon  # 记下来，强制退出时信号处理器才能把工作负载一并送走
+    _MONITOR = mon  # 记录引用，强制退出时信号处理器才能一并结束工作负载
     try:
         mon.run()
-    except KeyboardInterrupt:  # 装了信号处理器后一般不会走到这，留着兜底
+    except KeyboardInterrupt:  # 安装信号处理器后一般不会进入此分支，保留作兜底
         mon.stop_workload()
         mon.flush_json()
     except BaseException:
-        mon.stop_workload()  # 半路出错也别把工作负载丢在后台
-        mon.flush_json()     # 采到的数据也别丢
+        mon.stop_workload()  # 中途出错也不遗留后台工作负载
+        mon.flush_json()     # 已采数据不丢弃
         raise
     print(mon.report())
     if args.plot:
@@ -927,11 +935,10 @@ def main(argv=None):
     if args.json:
         mon.flush_json()
     if not args.plot and not args.json:
-        sys.stderr.write("[INFO] 未指定 --plot / --json，本次只出终端统计（不画图、不落盘）\n")
+        sys.stderr.write("[INFO] 未指定 --plot / --json，本次仅输出终端统计（不画图、不落盘）\n")
     elif args.json and not args.plot:
-        sys.stderr.write("[INFO] 未指定 --plot，本次不画图，只落 JSON 原始数据\n")
+        sys.stderr.write("[INFO] 未指定 --plot，本次不画图，仅落 JSON 原始数据\n")
     return 0
-
 
 
 if __name__ == "__main__":
