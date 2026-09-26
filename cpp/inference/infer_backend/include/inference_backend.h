@@ -64,7 +64,7 @@ class InferenceBackend {
     virtual size_t getNumOutputs() const { return num_outputs_; }
 
     // 根据输出名获取输出索引
-    virtual size_t getOutputIndexFromName(const std::string & name) const = 0;
+    virtual int getOutputIndexFromName(const std::string & name) const = 0;
 
   protected:
     // 异步降级策略（「查能力 → 记录查询结果与原因 → 回落同步」）的唯一实现点，

@@ -43,13 +43,13 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     bool isAvailable() const override;
 
-    virtual size_t getOutputIndexFromName(const std::string & name) const override {
-        for (size_t i = 0; i < output_tensor_.size(); ++i) {
+    virtual int getOutputIndexFromName(const std::string & name) const override {
+        for (int i = 0; i < output_tensor_.size(); ++i) {
             if (output_tensor_[i].name == name) {
                 return i;
             }
         }
-        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
+        return -1;  // 返回 -1 表示未找到
     }
 
   private:

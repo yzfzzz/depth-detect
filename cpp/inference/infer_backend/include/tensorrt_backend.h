@@ -45,13 +45,13 @@ class TensorRTBackend : public InferenceBackend {
     // TensorRT 特有方法
     nvinfer1::IExecutionContext * getContext() const { return context_.get(); }
 
-    virtual size_t getOutputIndexFromName(const std::string & name) const override {
-        for (size_t i = 0; i < output_tensor_.size(); ++i) {
+    virtual int getOutputIndexFromName(const std::string & name) const override {
+        for (int i = 0; i < output_tensor_.size(); ++i) {
             if (output_tensor_[i].name == name) {
                 return i + 1;
             }
         }
-        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
+        return -1;  // 返回 -1 表示未找到
     }
 
   private:
