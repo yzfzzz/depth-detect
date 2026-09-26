@@ -315,6 +315,7 @@ file(GLOB_RECURSE CORE_SRCS ${PROJECT_CPP_DIR}/core/src/*.cpp)
 add_library(core SHARED ${CORE_SRCS})
 configure_common_includes(core)
 target_include_directories(core PUBLIC ${PROJECT_CPP_DIR}/core/include ${PROJECT_CPP_DIR}/bytetrack/include)
+target_include_directories(core PRIVATE ${PROJECT_CPP_DIR}/tools/include)
 target_link_libraries(core PUBLIC  inference utils one_euro_filter ${OpenCV_LIBS} JsonSender JsonSenderTcp)
 
 # tools
@@ -355,6 +356,13 @@ if(ENABLE_BENCHMARK)
     add_executable(test_trt_quant_latency ${PROJECT_SOURCE_DIR}/benchmark/test_trt_quant_latency.cpp)
     configure_common_includes(test_trt_quant_latency)
     target_link_libraries(test_trt_quant_latency PRIVATE
+        core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
+    )
+
+
+    add_executable(test_schedule_strategy ${PROJECT_SOURCE_DIR}/benchmark/test_schedule_strategy.cpp)
+    configure_common_includes(test_schedule_strategy)
+    target_link_libraries(test_schedule_strategy PRIVATE
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 else()

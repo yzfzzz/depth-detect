@@ -64,9 +64,12 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
                 CHECK_CUDA(cudaStreamCreate(&stream_));
                 APP_INFO("CUDA stream created successfully");
                 return trt_backend;
+            } else {
+                APP_WARN("TensorRT load model failed, falling back to ONNX Runtime");
             }
+        } else {
+            APP_WARN("TensorRT engine path not found, falling back to ONNX Runtime");
         }
-        APP_WARN("TensorRT engine path not found, falling back to ONNX Runtime");
     }
     auto it = model_path.find("onnx");
     if (it != model_path.end()) {
@@ -125,24 +128,23 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
         APP_ERROR("Model not initialized");
         return false;
     }
-    if (backend_->getBackendType() == BackendType::OnnxRuntime) {
-        APP_ERROR(
-            "Asynchronous inference not supported for ONNX Runtime backend, use runInference "
-            "instead");
+    // 按后端的 capability 查询决定
+    const std::string async_reason = backend_->asyncUnsupportedReason();
+    if (!async_reason.empty()) {
+        APP_ERROR("Async inference unavailable: backend [{}], reason: {}; use runInference instead",
+                  backendTypeName(), async_reason);
         return false;
-    } else if (backend_->getBackendType() == BackendType::TensorRT) {
-        // TensorRT 异步路径：预处理→推理→后处理全在 GPU Stream 上排队，CPU 不等待
-        cudaPreProcess(frame_input_context);
-        std::vector<void *> output_buffers;
-        output_buffers.reserve(d_infer_io_.size() - 1);
-        std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(),
-                       std::back_inserter(output_buffers), [](auto & ptr) { return ptr.get(); });
-        backend_->runInferenceAsync(d_infer_io_[0].get(), output_buffers, stream_);
-        // 异步后处理
-        cudaPostProcess(frame_input_context);
-        return true;
     }
-    return false;
+    // 真异步路径（当前只有 TensorRT）：预处理→推理→后处理全在 GPU Stream 上排队，CPU 不等待
+    cudaPreProcess(frame_input_context);
+    std::vector<void *> output_buffers;
+    output_buffers.reserve(d_infer_io_.size() - 1);
+    std::transform(d_infer_io_.begin() + 1, d_infer_io_.end(), std::back_inserter(output_buffers),
+                   [](auto & ptr) { return ptr.get(); });
+    backend_->runInferenceAsync(d_infer_io_[0].get(), output_buffers, stream_);
+    // 异步后处理
+    cudaPostProcess(frame_input_context);
+    return true;
 }
 
 // 执行同步推理（供子类调用）

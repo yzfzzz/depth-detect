@@ -1,12 +1,12 @@
-video_path: "../data/1shu_east_0514.mp4"
+video_path: "../data/dd/905-3-1.mp4"
 
 # 单独锚点 — 每个模型路径一个
-_yolo_int8:  &yolo_int8  "../model/engine/yolov8n/yolov8n_640_op11_int8_trt10.9.engine"
-_yolo_fp16:  &yolo_fp16  "../model/engine/yolov8n/yolov8n_640_op11_fp16_trt10.9.engine"
-_yolo_fp32:  &yolo_fp32  "../model/engine/yolov8n/yolov8n_640_op11_fp32_trt10.9.engine"
-_depth_int8: &depth_int8 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_int8_trt10.9.engine"
-_depth_fp16: &depth_fp16 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp16_trt10.9.engine"
-_depth_fp32: &depth_fp32 "../model/engine/lite-mono-tiny/lite-mono-tiny_192x640_op11_fp32_trt10.9.engine"
+_yolo_int8:  &yolo_int8  "../model/engine/yolo26s/yolo26s_640_op11_int8_trt10.9.engine"
+_yolo_fp16:  &yolo_fp16  "../model/engine/yolo26s/yolo26s_640_op11_fp16_trt10.9.engine"
+_yolo_fp32:  &yolo_fp32  "../model/engine/yolo26s/yolo26s_640_op11_fp32_trt10.9.engine"
+_depth_int8: &depth_int8 "../model/engine/yolo26n-depth/yolo26n-depth_640_op11_int8_trt10.9.engine"
+_depth_fp16: &depth_fp16 "../model/engine/yolo26n-depth/yolo26n-depth_640_op11_fp16_trt10.9.engine"
+_depth_fp32: &depth_fp32 "../model/engine/yolo26n-depth/yolo26n-depth_640_op11_fp32_trt10.9.engine"
 
 task:
   test_trt_pipeline:
@@ -14,8 +14,8 @@ task:
     depth_model_path: *depth_fp16
 
   test_onnx_pipeline:
-    yolo_model_path:  "../model/onnx/yolov8n/yolov8n_640_op11.onnx"
-    depth_model_path: "../model/onnx/lite-mono-tiny/lite-mono-tiny_192x640_op11.onnx"
+    yolo_model_path:  "../model/onnx/yolo26s/yolo26s_640_op11.onnx"
+    depth_model_path: "../model/onnx/yolo26n-depth/yolo26n-depth_640_op11.onnx"
 
   test_quant_error:
     yolo_int8_path:  *yolo_int8

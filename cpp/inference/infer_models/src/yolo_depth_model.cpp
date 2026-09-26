@@ -48,6 +48,7 @@ bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
                           bool                               use_gpu) {
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
     if (!isBackendInitialized()) {
+        APP_ERROR("YoloDepthModel init aborted: inference backend not initialized");
         return false;
     }
 

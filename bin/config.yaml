@@ -16,6 +16,8 @@ yolo:
       path: "../model/onnx/yolo26n/yolo26n_640_op11.onnx"
     - type: light_engine
       path: "../model/engine/yolo26n/yolo26n_640_op11_fp16_trt10.9.engine"   # 轻量模型：错峰碰撞帧重叠推理专用；删除则复用主模型
+    - type: light_onnx
+      path: "../model/onnx/yolo26n/yolo26n_640_op11.onnx"   # 轻量模型：错峰碰撞帧重叠推理专用；删除则复用主模型
 
   yolo_nms_thresh: 0.6    # YOLO NMS阈值 (下采样截断遮挡框)
   yolo_conf_thresh: 0.4
@@ -59,7 +61,7 @@ camera:
 io_manager:
   out_dir: "out_dir"      # 落盘文件夹名称
   save_track_log: true       # 是否保存每个 track 的类别/原始深度/面积/帧数等到 CSV
-  save_mode: video        # 保存输出: video / images / both / none
+  save_mode: images        # 保存输出: video / images / both / none
   save_buffer_gb: 1.0     # 异步落盘缓冲区上限（GB）；写满时丢新帧并计数告警（不阻塞主流程），退出时自动排空不丢数据
   send_tcp: true          # 是否发送TCP数据包
   send_tcp_ip: "192.168.43.1"  # 发送TCP数据包的IP地址

@@ -96,15 +96,13 @@ class IOManager {
     int                         camera_height_         = 720;   // 相机采集高度
     int                         camera_fps_            = 30;    // 相机采集帧率
 
-    // 生产者（主循环）：saveFrame 内 imencode 成 JPG 字节流后非阻塞入队；
-    // 消费者（低优先级线程）：CPU 空闲时逐条写盘。缓冲按字节计账，上限
-    // save_buffer_limit_ = save_buffer_gb * 1024^3，写满时丢新帧并计数告警。
+    // 生产者（主循环）：saveFrame 只做 Mat 浅拷贝后非阻塞入队，不做编码；
+    // 消费者（低优先级线程）：CPU 空闲时自己编码 + 写盘。
     struct SaveTask {
-        bool is_video = false;     // true=视频帧（顺序写 VideoWriter），false=JPG 图片
-        std::string        path;   // 图片保存路径（视频帧忽略）
-        cv::Mat            frame;  // 视频模式：原始帧（Mat 引用计数，无深拷贝）
-        std::vector<uchar> encoded;    // 图片模式：JPG 编码字节流
-        size_t             bytes = 0;  // 本任务占用缓冲的字节数（计账用）
+        bool is_video = false;  // true=视频帧（顺序写 VideoWriter），false=JPG 图片
+        std::string path;       // 图片保存路径（视频帧忽略）
+        cv::Mat     frame;      // 待落盘帧（两者共用；Mat 引用计数，无深拷贝）
+        size_t      bytes = 0;  // 本任务占用缓冲的字节数（计账用）
     };
 
     void startSaveWorker();  // 首次 saveFrame 时拉起消费者线程（幂等）

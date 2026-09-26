@@ -29,6 +29,13 @@ class BaseModel {
     // 检查模型是否已初始化
     bool isBackendInitialized() const { return initialized_; }
 
+    // 异步推理能力：透传后端的 capability 查询（后端未创建时视为不支持）。
+    // 上层（Pipeline 的调度决策、runInferenceAsync 的前置检查）只认这个查询，
+    // 不在这里重复「哪种后端支持异步」的知识
+    bool isAsyncInferenceSupported() const {
+        return backend_ != nullptr && backend_->isAsyncInferenceSupported();
+    }
+
     // 获取输入维度
     std::vector<int> getInputDims() const {
         return backend_ ? backend_->getInputDims() : std::vector<int>{};
@@ -60,7 +67,7 @@ class BaseModel {
     int getNumOutputs() const { return backend_ ? static_cast<int>(backend_->getNumOutputs()) : 0; }
 
     std::string backendTypeName() const {
-        return backend_ ? backend_->getBackendTypeName().c_str() : "Unkown";
+        return backend_ ? backend_->getBackendTypeName() : std::string("Unkown");
     }
 
   protected:

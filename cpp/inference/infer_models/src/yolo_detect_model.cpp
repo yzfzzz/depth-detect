@@ -10,7 +10,7 @@
 #include <opencv2/dnn.hpp>
 #include <unordered_set>
 
-void YoloDetectModel::init(std::map<std::string, std::string> model_path,
+bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            int                                raw_img_w,
                            int                                raw_img_h,
                            float                              nms_thresh,
@@ -22,6 +22,10 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
         "conf_thresh: {}, num_class: {}, use_gpu: {}",
         raw_img_w, raw_img_h, nms_thresh, conf_thresh, num_class, use_gpu);
     BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
+    if (!isBackendInitialized()) {
+        APP_ERROR("YoloDetectModel init aborted: inference backend not initialized");
+        return false;
+    }
     nms_thresh_  = nms_thresh;
     conf_thresh_ = conf_thresh;
     num_class_   = num_class;
@@ -80,6 +84,7 @@ void YoloDetectModel::init(std::map<std::string, std::string> model_path,
     }
 
     APP_INFO("YOLO model initialized successfully");
+    return true;
 }
 
 void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {

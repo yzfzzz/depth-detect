@@ -17,12 +17,21 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     // InferenceBackend 接口实现
     bool loadModel(const std::string & model_path) override;
-    bool runInference(void * input_data, void * output_data) override;
-    bool runInferenceAsync(void * input_data, void * output_data, cudaStream_t stream) override;
+
+    // 单输出的便捷重载由基类提供
+    using InferenceBackend::runInference;
+    using InferenceBackend::runInferenceAsync;
+
     bool runInference(void * input_data, std::vector<void *> output_data) override;
     bool runInferenceAsync(void *              input_data,
                            std::vector<void *> output_data,
                            cudaStream_t        stream) override;
+
+    std::string asyncUnsupportedReason() const override {
+        return "ONNX Runtime (CPU) exposes only the blocking Ort::Session::Run(), "
+               "there is no non-blocking submit interface";
+    }
+
     std::vector<int>     getInputDims() const override;
     std::vector<int64_t> getOutputDims(int output_index = 0) const override;
     size_t               getInputByteSize() const override;
@@ -34,13 +43,13 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     bool isAvailable() const override;
 
-    virtual size_t getOutputIndexFromName(const std::string & name) const override {
-        for (size_t i = 0; i < output_tensor_.size(); ++i) {
+    virtual int getOutputIndexFromName(const std::string & name) const override {
+        for (int i = 0; i < output_tensor_.size(); ++i) {
             if (output_tensor_[i].name == name) {
                 return i;
             }
         }
-        return static_cast<size_t>(-1);  // 返回 -1 表示未找到
+        return -1;  // 返回 -1 表示未找到
     }
 
   private:

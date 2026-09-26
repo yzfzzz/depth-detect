@@ -159,10 +159,6 @@ void TensorRTBackend::setupInputOutputDims() {
 #endif
 }
 
-bool TensorRTBackend::runInference(void * input_data, void * output_data) {
-    return runInference(input_data, std::vector<void *>{ output_data });
-}
-
 bool TensorRTBackend::runInference(void * input_data, std::vector<void *> output_data) {
     if (!context_) {
         APP_ERROR("TensorRT context not initialized");
@@ -186,12 +182,8 @@ bool TensorRTBackend::runInference(void * input_data, std::vector<void *> output
     return true;
 }
 
-bool TensorRTBackend::runInferenceAsync(void *       input_data,
-                                        void *       output_data,
-                                        cudaStream_t stream) {
-    return runInferenceAsync(input_data, std::vector<void *>{ output_data }, stream);
-}
-
+// 真异步：TRT 10.x 用 enqueueV3、TRT 8.x 用 enqueueV2，都是提交即返回，
+// 输出就绪顺序由 stream 保证，因此这里不做降级（能力查询 asyncUnsupportedReason() 返回 nullptr）。
 bool TensorRTBackend::runInferenceAsync(void *              input_data,
                                         std::vector<void *> output_data,
                                         cudaStream_t        stream) {

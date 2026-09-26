@@ -8,6 +8,16 @@
 #include "yolo_depth_model.h"
 #include "yolo_detect_model.h"
 
+// 调度策略
+enum class ScheduleMode {
+    SYNC,  // 串行：检测跑完再跑深度（overlap=false，或后端不支持异步时的回落）
+    OVERLAP,  // 重叠：检测与深度同帧、各自异步提交到独立 stream 重叠（overlap=true 且 TRT 后端）
+    STAGGER,  // 错峰：检测/深度按各自间隔独立调度，互补帧只跑一路，同帧碰撞时复用重叠逻辑
+};
+
+// 供日志输出使用的策略名
+const char * scheduleModeName(ScheduleMode mode);
+
 class Pipeline {
   public:
     Pipeline(ConfigManager & config_manager, FrameMeta frame_meta);
@@ -20,11 +30,26 @@ class Pipeline {
     ~Pipeline();
     void init();
 
-    // 核心推理接口，供正常业务和 Benchmark 调用
+    // 唯一推理入口：内部按 schedule_mode_ 分发到下面三个分支，业务侧只调这一个。
     void process(FrameInputContext &  frame_input_context,
                  InferOutputContext & infer_output_context);
+
+    // 串行：检测 → 跟踪 → 深度 → 运动状态，GPU 上不会出现两模型并发
+    void processSync(FrameInputContext &  frame_input_context,
+                     InferOutputContext & infer_output_context);
+    // 重叠：本帧检测与深度都跑，异步并行提交；非 TensorRT 后端自动降级为同步
     void processOverlap(FrameInputContext &  frame_input_context,
                         InferOutputContext & infer_output_context);
+    // 错峰：按各自间隔调度检测/深度，互补帧只跑一路（另一路沿用上帧结果），
+    // 两路撞到同一帧时转发 processOverlap
+    void processStagger(FrameInputContext &  frame_input_context,
+                        InferOutputContext & infer_output_context);
+
+    ScheduleMode getScheduleMode() const { return schedule_mode_; }
+
+    void setScheduleMode(ScheduleMode mode);
+
+    void setStaggerIntervals(int detect_interval, int depth_interval);
 
     void updateMotionStates(FrameInputContext &  frame_input_context,
                             InferOutputContext & infer_output_context);
@@ -33,7 +58,10 @@ class Pipeline {
 
     YoloDetectModel & getDetector() { return detector_; }
 
-    LiteMonoDepthModel & getDepthModel() { return depth_model_; }
+    BaseModel & getActiveDepthModel() {
+        return use_yolo_depth_ ? static_cast<BaseModel &>(yolo_depth_model_) :
+                                 static_cast<BaseModel &>(depth_model_);
+    }
 
     BYTETracker & getTracker() { return tracker_; }
 
@@ -44,9 +72,40 @@ class Pipeline {
     void runDepthInference(FrameInputContext &  frame_input_context,
                            InferOutputContext & infer_output_context);
 
-    // 重叠帧使用的检测模型：优先轻量模型，未加载则回落主模型
+    // 构造期解析调度策略写入 schedule_mode_
+    void resolveScheduleMode(bool overlap_requested);
+
+    // 错峰下的间隔调度：frame_id % interval == 0 的帧才触发对应模型推理。
+    // 只在 STAGGER 策略下生效，串行/重叠策略每帧两路都跑
+    bool shouldRunDetect(const FrameInputContext & frame_input_context) const {
+        return schedule_mode_ != ScheduleMode::STAGGER ||
+               (frame_input_context.frame_id % detect_interval_ == 0);
+    }
+
+    bool shouldRunDepth(const FrameInputContext & frame_input_context) const {
+        if (!depth_enabled_) {
+            return false;
+        }
+        return schedule_mode_ != ScheduleMode::STAGGER ||
+               (frame_input_context.frame_id % depth_interval_ == 0);
+    }
+
+    // 串行分支共用的执行与收尾：processSync（两路都跑）与 processStagger 的单路帧共用。
+    // 收尾顺序与 processOverlap 保持一致：检测 → 跟踪 → 深度 → 运动状态；
+    // 跟踪放在深度前是为了让 CPU 侧的跟踪计算能与深度推理的等待重叠
+    void runBranchesSerially(FrameInputContext &  frame_input_context,
+                             InferOutputContext & infer_output_context,
+                             bool                 run_detect,
+                             bool                 run_depth);
+
+    // 异步能力只认后端的 capability 查询（TensorRT 支持；ONNX Runtime 没有异步接口，
+    static bool isAsyncCapable(const BaseModel & model) {
+        return model.isAsyncInferenceSupported();
+    }
+
+    // 重叠帧使用的检测模型：优先轻量模型，未加载则回落主模型。
     YoloDetectModel & overlapDetector() {
-        return has_light_detector_ ? detector_light_ : detector_;
+        return (has_light_detector_ && use_yolo_depth_) ? detector_light_ : detector_;
     }
 
     YoloDetectModel detector_;        // 主检测模型（yaml 配置，如 yolo26s）
@@ -55,10 +114,12 @@ class Pipeline {
     LiteMonoDepthModel depth_model_;
     YoloDepthModel     yolo_depth_model_;
     bool               depth_enabled_   = false;  // 由 config 的 depth.enabled 控制
-    bool               stagger_infer_   = false;  // 错峰推理
+    bool               stagger_infer_   = false;  // 错峰推理总开关
     int                detect_interval_ = 1;      // 检测推理间隔：N = 每 N 帧推 1 次
     int                depth_interval_  = 1;      // 深度推理间隔：N = 每 N 帧推 1 次
-    bool use_yolo_depth_ = false;  // 深度模型类型：true = yolo_depth，false = lite_mono
+    bool use_yolo_depth_ = true;  // 深度模型类型：true = yolo_depth，false = lite_mono
+    // 本次运行的调度策略，构造期由 resolveScheduleMode 按配置解析（默认串行）
+    ScheduleMode schedule_mode_ = ScheduleMode::SYNC;
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {
@@ -72,10 +133,6 @@ class Pipeline {
     BYTETracker       tracker_;
     MotionStateEngine motion_state_engine_;
 
-    // 跨帧缓存状态
-    bool                                              has_cached_depth_ = false;
-    cv::Mat                                           cached_depth_;
-    cv::Mat                                           cached_depth_vis_;
     // 累积每个 track 的逐帧记录，运行结束时由 LoggerManager 统一写入 CSV
     bool                                              track_log_enabled_ = false;
     std::string                                       track_log_path_;

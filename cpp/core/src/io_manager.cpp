@@ -3,14 +3,15 @@
 #include "frame.h"
 #include "logger_manager.h"
 #include "public.h"
+#include "scope_timer.h"
 
 #include <algorithm>  // std::all_of
 #include <cctype>     // std::isdigit
 #include <cstdio>
 #include <cstdlib>    // For system()
-#include <fstream>
 #include <opencv2/imgcodecs.hpp>
-#include <thread>  // std::this_thread::sleep_for（实时节奏模拟）
+#include <sstream>    // std::ostringstream（结果视频文件名的时间戳格式化）
+#include <thread>     // std::this_thread::sleep_for（实时节奏模拟）
 
 #ifdef __linux__
 #    include <pthread.h>
@@ -79,8 +80,11 @@ FrameMeta IOManager::Init(const std::string & video_path) {
         makeDir(out_dir_);
     }
     if (save_mode_ != "none") {
-        APP_INFO("[SaveWorker] async saving enabled: mode={}, buffer limit={:.1f} MB", save_mode_,
-                 static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0));
+        // 注意：缓冲按原始帧字节计账（消费者侧才编码），容量与帧分辨率挂钩
+        APP_INFO(
+            "[SaveWorker] async saving enabled: mode={}, buffer limit={:.1f} MB "
+            "(accounted by raw frame bytes, e.g. 1280x720 BGR ~2.6 MB/frame)",
+            save_mode_, static_cast<double>(save_buffer_limit_) / (1024.0 * 1024.0));
     }
     bool flag = openVideoSource(video_path);
     if (!flag) {
@@ -166,16 +170,13 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         return;  // 已进入退出流程，拒绝新任务
     }
 
-    // 生产者侧完成 JPG 编码：队列里只放压缩字节流（一帧约 0.2~0.5 MB），
-    // 计账可控；imencode 与 imwrite 默认质量一致（95）
+    const size_t frame_bytes = static_cast<size_t>(frame.total()) * frame.elemSize();
+
     if (save_image) {
         SaveTask task;
-        task.path = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
-        std::vector<int> encode_params;
-        encode_params.push_back(cv::IMWRITE_JPEG_QUALITY);
-        encode_params.push_back(75);
-        cv::imencode(".jpg", frame, task.encoded, encode_params);
-        task.bytes = task.encoded.size();
+        task.path  = out_dir_ + "/frame_" + std::to_string(num_frames) + ".jpg";
+        task.frame = frame;
+        task.bytes = frame_bytes;
         enqueueTask(std::move(task));
     }
 
@@ -193,8 +194,8 @@ void IOManager::saveFrame(const cv::Mat & frame, int num_frames) {
         if (video_writer_.isOpened()) {
             SaveTask task;
             task.is_video = true;
-            task.frame    = frame;  // Mat 浅拷贝（引用计数），队列入队 O(1)
-            task.bytes    = static_cast<size_t>(frame.total()) * frame.elemSize();
+            task.frame = frame;  // 与图片任务共享同一块缓冲（引用计数，无额外内存）
+            task.bytes = frame_bytes;
             enqueueTask(std::move(task));
         }
     }
@@ -239,21 +240,15 @@ void IOManager::saveWorkerLoop() {
             save_buffer_bytes_ -= task.bytes;
         }
 
-        // 写盘在锁外执行：fwrite/VideoWriter 耗时不占用生产者的入队路径
+        // 编码 + 写盘在锁外执行：JPEG 压缩与 fwrite 耗时不占用生产者的入队路径
         bool ok = true;
         if (task.is_video) {
             if (video_writer_.isOpened()) {
                 video_writer_.write(task.frame);
             }
         } else {
-            std::ofstream out(task.path.c_str(), std::ios::binary);
-            if (out.is_open()) {
-                out.write(reinterpret_cast<const char *>(task.encoded.data()),
-                          static_cast<std::streamsize>(task.encoded.size()));
-                ok = out.good();
-            } else {
-                ok = false;
-            }
+            static const std::vector<int> kEncodeParams{ cv::IMWRITE_JPEG_QUALITY, 75 };
+            ok = cv::imwrite(task.path, task.frame, kEncodeParams);
         }
         save_written_ += 1;
         if (!ok) {
@@ -451,9 +446,16 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
             CHECK_CUDA(cudaMalloc(&ptr, frame_input_context.img_size));
             frame_input_context.d_raw_img_.reset(static_cast<uchar *>(ptr));
         }
-        CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
-                              frame_input_context.raw_img.data, frame_input_context.img_size,
-                              cudaMemcpyHostToDevice));
+        auto h2d_copy = [&]() {
+            CHECK_CUDA(cudaMemcpy(frame_input_context.d_raw_img_.get(),
+                                  frame_input_context.raw_img.data, frame_input_context.img_size,
+                                  cudaMemcpyHostToDevice));
+        };
+#if defined(ENABLE_TIMER)
+        DEBUG_FUNCTION_RUNNING_TIME("IO H2D Copy", h2d_copy);
+#else
+        h2d_copy();
+#endif
     }
     frame_input_context.timestamp =
         std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();

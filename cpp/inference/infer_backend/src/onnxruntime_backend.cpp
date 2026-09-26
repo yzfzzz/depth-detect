@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <fstream>
+#include <utility>
 
 OnnxRuntimeBackend::OnnxRuntimeBackend() : session_(nullptr), input_byte_size_(0) {}
 
@@ -161,28 +162,13 @@ bool OnnxRuntimeBackend::runInference(void * input_data, std::vector<void *> out
     }
 }
 
-bool OnnxRuntimeBackend::runInference(void * input_data, void * output_data) {
-    return runInference(input_data, std::vector<void *>{ output_data });
-}
-
-bool OnnxRuntimeBackend::runInferenceAsync(void * input_data,
-                                           void * output_data,
-                                           cudaStream_t /*stream*/) {
-    // ONNX Runtime CPU 后端不支持异步推理，回退到同步推理
-    APP_WARN(
-        "ONNX Runtime CPU backend does not support async inference, falling back to sync "
-        "inference");
-    return runInference(input_data, output_data);
-}
-
+// 「异步」是假实现：ONNX Runtime 只有阻塞式 Run()，无法把工作提交到 stream 后立即返回。
+// 因此每次调用都先做一次能力查询，判定不支持就按默认策略降级到同步路径
+// （查询结果、不可用原因与降级动作由 degradeToSyncInference 统一记录）。
 bool OnnxRuntimeBackend::runInferenceAsync(void *              input_data,
                                            std::vector<void *> output_data,
                                            cudaStream_t /*stream*/) {
-    // ONNX Runtime CPU 后端不支持异步推理，回退到同步推理
-    APP_WARN(
-        "ONNX Runtime CPU backend does not support async inference, falling back to sync "
-        "inference");
-    return runInference(input_data, output_data);
+    return degradeToSyncInference(input_data, std::move(output_data));
 }
 
 std::vector<int> OnnxRuntimeBackend::getInputDims() const {
