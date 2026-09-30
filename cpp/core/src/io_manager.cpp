@@ -341,6 +341,7 @@ bool IOManager::openVideoSource(const std::string & video_path) {
             video_capture_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
             video_capture_.set(cv::CAP_PROP_FRAME_WIDTH, camera_width_);
             video_capture_.set(cv::CAP_PROP_FRAME_HEIGHT, camera_height_);
+            video_capture_.set(cv::CAP_PROP_BUFFERSIZE, 1);
             if (camera_fps_ > 0) {
                 video_capture_.set(cv::CAP_PROP_FPS, camera_fps_);
             }
