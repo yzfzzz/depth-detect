@@ -59,6 +59,7 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
             auto trt_backend = std::make_unique<TensorRTBackend>(0);
             if (trt_backend->loadModel(it->second)) {
                 APP_INFO("TensorRT backend initialized successfully");
+                trt_backend->getCudaDeviceInfo();
                 // 创建 CUDA 流
                 CHECK_CUDA(cudaSetDevice(0));
                 CHECK_CUDA(cudaStreamCreate(&stream_));

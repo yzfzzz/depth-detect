@@ -54,6 +54,8 @@ class TensorRTBackend : public InferenceBackend {
         return -1;  // 返回 -1 表示未找到
     }
 
+    void getCudaDeviceInfo();
+
   private:
     bool loadEngine(const std::string & engine_path);
     void setupInputOutputDims();

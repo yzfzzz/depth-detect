@@ -242,3 +242,31 @@ size_t TensorRTBackend::getOutputByteSize(int output_index) const {
     }
     return output_tensor_[output_index].byte_size;
 }
+
+void TensorRTBackend::getCudaDeviceInfo() {
+    int         device_count = 0;
+    cudaError_t error        = cudaGetDeviceCount(&device_count);
+    if (error != cudaSuccess || device_count <= 0) {
+        APP_ERROR("No CUDA-capable devices found");
+        return;
+    }
+
+    if (gpu_id_ < 0 || gpu_id_ >= device_count) {
+        APP_ERROR("Invalid GPU ID: {}. Available devices: 0 to {}", gpu_id_, device_count - 1);
+        return;
+    }
+
+    cudaDeviceProp device_prop;
+    error = cudaGetDeviceProperties(&device_prop, gpu_id_);
+    if (error != cudaSuccess) {
+        APP_ERROR("Failed to get properties for GPU ID {}: {}", gpu_id_, cudaGetErrorString(error));
+        return;
+    }
+
+    APP_INFO(
+        "Using GPU ID {}: {}, Compute Capability: {}.{}, {} SMs, {} threads per SM, {} threads per "
+        "block, {} registers per SM",
+        gpu_id_, device_prop.name, device_prop.major, device_prop.minor,
+        device_prop.multiProcessorCount, device_prop.maxThreadsPerMultiProcessor,
+        device_prop.maxThreadsPerBlock, device_prop.regsPerMultiprocessor);
+}
