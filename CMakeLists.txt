@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(depth_detection VERSION 1.0.0 LANGUAGES CXX CUDA)
+project(depth_detection VERSION 1.0.0 LANGUAGES CXX)
 
 # ==================== Build Type ====================
 if(NOT CMAKE_BUILD_TYPE)
@@ -10,10 +10,6 @@ endif()
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-
-set(CMAKE_CUDA_STANDARD 14)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_EXTENSIONS OFF)
 
 # ==================== Global Flags ====================
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -38,6 +34,80 @@ endif()
 
 option(ENABLE_BENCHMARK "Build benchmark tests" ON)
 option(ENABLE_PYBIND "Build python pybind module" ON)
+
+# ==================== CUDA Detection ====================
+# nvcc + cudart + 头文件三者齐备才启用 CUDA 语言与相关 target；
+# 缺 CUDA 的环境自动退化为 CPU-only 构建，不编译
+# op_kernel / TensorRT 后端。FORCE_NO_CUDA=ON 可在有 CUDA 的机器上强制关闭
+option(FORCE_NO_CUDA "Force CPU-only build even if CUDA toolkit exists" OFF)
+set(HAS_CUDA OFF)
+if(NOT FORCE_NO_CUDA)
+    file(GLOB _cuda_roots LIST_DIRECTORIES true
+        /usr/local/cuda
+        /usr/local/cuda-[0-9]*
+        $ENV{CUDA_PATH}
+    )
+    find_program(CUDA_NVCC_EXECUTABLE
+        NAMES nvcc
+        HINTS ${_cuda_roots}
+        PATH_SUFFIXES bin
+    )
+    find_path(CUDA_RUNTIME_INCLUDE_DIR
+        NAMES cuda_runtime.h
+        HINTS ${_cuda_roots}
+        PATH_SUFFIXES include
+    )
+    find_library(CUDA_CUDART_LIBRARY
+        NAMES cudart
+        HINTS ${_cuda_roots}
+        PATH_SUFFIXES lib lib64
+    )
+    if(CUDA_NVCC_EXECUTABLE AND CUDA_RUNTIME_INCLUDE_DIR AND CUDA_CUDART_LIBRARY)
+        set(HAS_CUDA ON)
+        enable_language(CUDA)
+        set(CMAKE_CUDA_STANDARD 14)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        set(CMAKE_CUDA_EXTENSIONS OFF)
+        # 全工程可见的编译期开关：源码据此裁剪 CUDA 相关代码路径
+        add_definitions(-DHAS_CUDA)
+        message(STATUS "CUDA toolkit found: nvcc=${CUDA_NVCC_EXECUTABLE}, "
+                       "include=${CUDA_RUNTIME_INCLUDE_DIR}")
+    else()
+        message(STATUS "CUDA toolkit not found (nvcc/cudart/headers) — "
+                       "building CPU-only: op_kernel and TensorRT backend are skipped")
+    endif()
+    unset(_cuda_roots)
+else()
+    message(STATUS "FORCE_NO_CUDA=ON — building CPU-only: op_kernel and TensorRT backend are skipped")
+endif()
+
+# ==================== Backend Options ====================
+# SDK 级依赖只进入对应后端的编译单元；关掉开关即可在缺 SDK 的机器上构建
+option(USE_TENSORRT "Build TensorRT backend" ON)
+option(USE_ONNXRUNTIME "Build ONNX Runtime backend" ON)
+# QNN 后端为预留扩展点：落地 qnn_backend.h/.cpp 前开启无效（见 backend_factory.cpp）
+option(USE_QNN "Build QNN backend (not implemented yet, reserved)" OFF)
+
+# TensorRT 依赖 CUDA：无 CUDA 环境自动关闭而不是配置失败
+if(USE_TENSORRT AND NOT HAS_CUDA)
+    message(STATUS "USE_TENSORRT=ON but CUDA not found — TensorRT backend disabled")
+    set(USE_TENSORRT OFF)
+endif()
+if(USE_TENSORRT)
+    add_definitions(-DUSE_TENSORRT)
+endif()
+if(USE_ONNXRUNTIME)
+    add_definitions(-DUSE_ONNXRUNTIME)
+endif()
+if(USE_QNN)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/cpp/inference/infer_backend/include/qnn_backend.h")
+        add_definitions(-DENABLE_QNN)
+        # TODO(qnn): QNN SDK include/lib 检测与后端 target 链接在此补充
+    else()
+        message(WARNING
+            "USE_QNN=ON but qnn_backend.h not found — QNN backend not implemented yet, ignoring")
+    endif()
+endif()
 
 # ==================== Platform Detection ====================
 set(TARGET_PLATFORM "AUTO" CACHE STRING "Build target platform")
@@ -82,40 +152,42 @@ message(STATUS "TARGET_PLATFORM = ${TARGET_PLATFORM}")
 message(STATUS "IS_JETSON = ${IS_JETSON}")
 
 # ==================== CUDA Architecture ====================
-if(TARGET_CUDA_ARCHS STREQUAL "")
-    if(TARGET_PLATFORM STREQUAL "NANO2GB")
-        set(TARGET_CUDA_ARCHS 53)
-    elseif(TARGET_PLATFORM STREQUAL "TX2")
-        set(TARGET_CUDA_ARCHS 62)
-    else()
-        execute_process(
-            COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
-            OUTPUT_VARIABLE GPU_CC
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
-            RESULT_VARIABLE NVSMI_RESULT
-        )
-        if(NVSMI_RESULT EQUAL 0 AND GPU_CC)
-            # Extract only first GPU (handle multi-GPU systems)
-            string(REGEX MATCH "[0-9]+\\.[0-9]+" GPU_CC_FIRST "${GPU_CC}")
-            string(REPLACE "." "" TARGET_CUDA_ARCHS "${GPU_CC_FIRST}")
-            message(STATUS "Auto-detected GPU compute capability: sm_${TARGET_CUDA_ARCHS}")
+if(HAS_CUDA)
+    if(TARGET_CUDA_ARCHS STREQUAL "")
+        if(TARGET_PLATFORM STREQUAL "NANO2GB")
+            set(TARGET_CUDA_ARCHS 53)
+        elseif(TARGET_PLATFORM STREQUAL "TX2")
+            set(TARGET_CUDA_ARCHS 62)
         else()
-            message(WARNING "nvidia-smi not available, defaulting to compute_90 (H100)")
-            set(TARGET_CUDA_ARCHS 90)
+            execute_process(
+                COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader
+                OUTPUT_VARIABLE GPU_CC
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+                RESULT_VARIABLE NVSMI_RESULT
+            )
+            if(NVSMI_RESULT EQUAL 0 AND GPU_CC)
+                # Extract only first GPU (handle multi-GPU systems)
+                string(REGEX MATCH "[0-9]+\\.[0-9]+" GPU_CC_FIRST "${GPU_CC}")
+                string(REPLACE "." "" TARGET_CUDA_ARCHS "${GPU_CC_FIRST}")
+                message(STATUS "Auto-detected GPU compute capability: sm_${TARGET_CUDA_ARCHS}")
+            else()
+                message(WARNING "nvidia-smi not available, defaulting to compute_90 (H100)")
+                set(TARGET_CUDA_ARCHS 90)
+            endif()
         endif()
     endif()
+
+    # 设置 CMake 标准的 CUDA 架构变量（消除 CMP0104 警告）
+    set(CMAKE_CUDA_ARCHITECTURES ${TARGET_CUDA_ARCHS})
+
+    # 同时维护手工 CUDA flags（兼容旧写法）
+    set(CUDA_ARCH_FLAGS "")
+    foreach(ARCH ${TARGET_CUDA_ARCHS})
+        list(APPEND CUDA_ARCH_FLAGS "-gencode=arch=compute_${ARCH},code=sm_${ARCH}")
+    endforeach()
+    message(STATUS "CUDA_ARCH_FLAGS = ${CUDA_ARCH_FLAGS}")
 endif()
-
-# 设置 CMake 标准的 CUDA 架构变量（消除 CMP0104 警告）
-set(CMAKE_CUDA_ARCHITECTURES ${TARGET_CUDA_ARCHS})
-
-# 同时维护手工 CUDA flags（兼容旧写法）
-set(CUDA_ARCH_FLAGS "")
-foreach(ARCH ${TARGET_CUDA_ARCHS})
-    list(APPEND CUDA_ARCH_FLAGS "-gencode=arch=compute_${ARCH},code=sm_${ARCH}")
-endforeach()
-message(STATUS "CUDA_ARCH_FLAGS = ${CUDA_ARCH_FLAGS}")
 
 # ==================== Compiler Options ====================
 if(IS_JETSON)
@@ -133,34 +205,37 @@ else()
     )
 endif()
 
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_ARCH_FLAGS} --use_fast_math")
+if(HAS_CUDA)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_ARCH_FLAGS} --use_fast_math")
+endif()
 
 # ==================== Dependencies ====================
 find_package(OpenCV REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-# TensorRT
-set(TENSORRT_HINT_DIRS 
-    /usr/local/TensorRT 
-    /usr/lib/aarch64-linux-gnu 
-    /usr/lib/x86_64-linux-gnu 
+# TensorRT（仅 USE_TENSORRT=ON 时必需；头文件/库只注入 TensorRT 后端编译单元）
+set(TENSORRT_HINT_DIRS
+    /usr/local/TensorRT
+    /usr/lib/aarch64-linux-gnu
+    /usr/lib/x86_64-linux-gnu
     /usr/lib
 )
-find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES include)
-find_library(TENSORRT_NVINFER_LIBRARY NAMES nvinfer HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
-find_library(TENSORRT_NVONNXPARSER_LIBRARY NAMES nvonnxparser HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
+if(USE_TENSORRT)
+    # 缓存变量存在时跳过重复探测
+    if(NOT TENSORRT_INCLUDE_DIR)
+        find_path(TENSORRT_INCLUDE_DIR NvInfer.h HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES include)
+    endif()
+    if(NOT TENSORRT_NVINFER_LIBRARY)
+        find_library(TENSORRT_NVINFER_LIBRARY NAMES nvinfer HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
+    endif()
+    if(NOT TENSORRT_NVONNXPARSER_LIBRARY)
+        find_library(TENSORRT_NVONNXPARSER_LIBRARY NAMES nvonnxparser HINTS ${TENSORRT_HINT_DIRS} PATH_SUFFIXES lib lib64)
+    endif()
 
-find_library(CUDA_CUDART_LIBRARY NAMES cudart 
-    HINTS ${CUDA_TOOLKIT_ROOT_DIR} 
-    /usr/local/cuda
-    PATH_SUFFIXES lib lib64
-)
-if(NOT CUDA_CUDART_LIBRARY)
-    message(FATAL_ERROR "libcudart not found! Ensure CUDA is installed and CUDA_TOOLKIT_ROOT_DIR is set.")
-endif()
-
-if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_NVINFER_LIBRARY OR NOT TENSORRT_NVONNXPARSER_LIBRARY)
-    message(FATAL_ERROR "TensorRT not found. Please check your TensorRT installation or TENSORRT_HINT_DIRS.")
+    if(NOT TENSORRT_INCLUDE_DIR OR NOT TENSORRT_NVINFER_LIBRARY OR NOT TENSORRT_NVONNXPARSER_LIBRARY)
+        message(FATAL_ERROR "TensorRT not found. Please check your TensorRT installation, "
+                            "TENSORRT_HINT_DIRS, or build with -DUSE_TENSORRT=OFF.")
+    endif()
 endif()
 
 # yaml-cpp target compatibility
@@ -244,16 +319,22 @@ endif()
 
 
 function(configure_common_includes target)
-    target_include_directories(${target} PRIVATE 
-        ${PROJECT_CPP_DIR}/include 
-        ${OpenCV_INCLUDE_DIRS} 
-        ${TENSORRT_INCLUDE_DIR}
+    # 公共 include 只含 OpenCV 等应用级依赖 + 接口层头目录；
+    # SDK 级头目录（TensorRT/ONNX Runtime/QNN）只注入各自后端的编译单元，
+    # 防止 SDK 头文件经公共路径扩散到模型层与上层代码
+    target_include_directories(${target} PRIVATE
+        ${PROJECT_CPP_DIR}/include
+        ${PROJECT_CPP_DIR}/inference/infer_backend/include
+        ${OpenCV_INCLUDE_DIRS}
         ${EIGEN3_INCLUDE_DIR}
-        ${CUDA_INCLUDE_DIRS}
-        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
         ${NVTX3_INCLUDE_DIR}
-        ${ONNXRUNTIME_ROOT}/include
     )
+    if(HAS_CUDA)
+        target_include_directories(${target} PRIVATE
+            ${CUDA_RUNTIME_INCLUDE_DIR}
+            ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+        )
+    endif()
 endfunction()
 
 # ==================== Libraries ====================
@@ -262,7 +343,6 @@ add_library(utils SHARED ${UTILS_SRCS})
 configure_common_includes(utils)
 target_include_directories(utils PUBLIC ${PROJECT_CPP_DIR}/utils/include)
 target_link_libraries(utils PUBLIC spdlog::spdlog ${YAML_CPP_TARGET})
-target_link_libraries(utils PRIVATE ${TENSORRT_NVINFER_LIBRARY})
 
 # bytetrack
 file(GLOB_RECURSE BYTETRACK_SRCS ${PROJECT_CPP_DIR}/bytetrack/src/*.cpp)
@@ -271,43 +351,85 @@ configure_common_includes(bytetrack)
 target_include_directories(bytetrack PUBLIC ${PROJECT_CPP_DIR}/bytetrack/include)
 target_link_libraries(bytetrack PRIVATE utils ${OpenCV_LIBS})
 
-# op_kernel
-file(GLOB_RECURSE OP_KERNEL_SRCS ${PROJECT_CPP_DIR}/op_kernel/src/*.cu)
-add_library(op_kernel SHARED ${OP_KERNEL_SRCS})
-configure_common_includes(op_kernel)
-target_include_directories(op_kernel PUBLIC ${PROJECT_CPP_DIR}/op_kernel/include)
-set_target_properties(op_kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-if(IS_JETSON)
-    target_compile_definitions(op_kernel PRIVATE ENABLE_FP16=1)
+# op_kernel（CUDA kernel 库，仅 HAS_CUDA 构建参与编译）
+if(HAS_CUDA)
+    file(GLOB_RECURSE OP_KERNEL_SRCS ${PROJECT_CPP_DIR}/op_kernel/src/*.cu)
+    add_library(op_kernel SHARED ${OP_KERNEL_SRCS})
+    configure_common_includes(op_kernel)
+    target_include_directories(op_kernel PUBLIC ${PROJECT_CPP_DIR}/op_kernel/include)
+    set_target_properties(op_kernel PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    if(IS_JETSON)
+        target_compile_definitions(op_kernel PRIVATE ENABLE_FP16=1)
+    endif()
+    target_link_libraries(op_kernel PRIVATE
+        ${CUDA_CUDART_LIBRARY}
+        ${OpenCV_LIBS}
+    )
 endif()
-target_link_libraries(op_kernel PRIVATE 
-    ${CUDA_CUDART_LIBRARY}   
-    ${TENSORRT_NVINFER_LIBRARY} 
-    ${TENSORRT_NVONNXPARSER_LIBRARY} 
-    ${OpenCV_LIBS}
-)
 
-# inference model
+# ==================== Inference Backends ====================
+# 依赖方向：infer_models -> infer_backend_core(接口+工厂) -> 各后端(可选)。
+# SDK 头目录与库只出现在对应后端 target 上
 link_directories(${ONNXRUNTIME_ROOT}/lib)
-file(GLOB_RECURSE INFERENCE_SRCS 
-    ${PROJECT_CPP_DIR}/inference/infer_models/src/*.cpp 
-    ${PROJECT_CPP_DIR}/inference/infer_backend/src/*.cpp 
-)
-add_library(inference SHARED ${INFERENCE_SRCS})
+
+# 接口层（无任何 SDK 依赖；logger_manager.h/config_manager.h 来自 utils 头文件）
+add_library(infer_backend_core STATIC ${PROJECT_CPP_DIR}/inference/infer_backend/src/inference_backend.cpp)
+configure_common_includes(infer_backend_core)
+target_include_directories(infer_backend_core PUBLIC ${PROJECT_CPP_DIR}/inference/infer_backend/include)
+target_include_directories(infer_backend_core PRIVATE ${PROJECT_CPP_DIR}/utils/include)
+target_link_libraries(infer_backend_core PUBLIC spdlog::spdlog ${YAML_CPP_TARGET})
+
+# TensorRT 后端（可选；USE_TENSORRT 已在检测阶段与 HAS_CUDA 联动）
+if(USE_TENSORRT)
+    add_library(backend_tensorrt STATIC
+        ${PROJECT_CPP_DIR}/inference/infer_backend/src/tensorrt/tensorrt_backend.cpp)
+    configure_common_includes(backend_tensorrt)
+    target_include_directories(backend_tensorrt PRIVATE ${TENSORRT_INCLUDE_DIR} ${PROJECT_CPP_DIR}/utils/include)
+    target_link_libraries(backend_tensorrt PUBLIC infer_backend_core
+        ${TENSORRT_NVINFER_LIBRARY} ${CUDA_CUDART_LIBRARY})
+endif()
+
+# ONNX Runtime 后端（可选）
+if(USE_ONNXRUNTIME)
+    add_library(backend_onnxruntime STATIC
+        ${PROJECT_CPP_DIR}/inference/infer_backend/src/onnx/onnxruntime_backend.cpp)
+    configure_common_includes(backend_onnxruntime)
+    target_include_directories(backend_onnxruntime PRIVATE ${ONNXRUNTIME_ROOT}/include ${PROJECT_CPP_DIR}/utils/include)
+    target_link_libraries(backend_onnxruntime PUBLIC infer_backend_core onnxruntime)
+endif()
+
+# 后端工厂
+add_library(backend_factory STATIC ${PROJECT_CPP_DIR}/inference/infer_backend/src/backend_factory.cpp)
+configure_common_includes(backend_factory)
+target_include_directories(backend_factory PRIVATE ${PROJECT_CPP_DIR}/utils/include ${ONNXRUNTIME_ROOT}/include)
+target_link_libraries(backend_factory PUBLIC infer_backend_core)
+if(USE_TENSORRT)
+    target_include_directories(backend_factory PRIVATE ${TENSORRT_INCLUDE_DIR})
+    target_link_libraries(backend_factory PRIVATE backend_tensorrt)
+endif()
+if(USE_ONNXRUNTIME)
+    target_link_libraries(backend_factory PRIVATE backend_onnxruntime)
+endif()
+
+# 模型层
+file(GLOB_RECURSE INFERENCE_MODEL_SRCS ${PROJECT_CPP_DIR}/inference/infer_models/src/*.cpp)
+add_library(inference SHARED ${INFERENCE_MODEL_SRCS})
 configure_common_includes(inference)
-target_include_directories(inference PUBLIC 
-    ${PROJECT_CPP_DIR}/inference/infer_models/include 
+target_include_directories(inference PUBLIC
+    ${PROJECT_CPP_DIR}/inference/infer_models/include
     ${PROJECT_CPP_DIR}/inference/infer_backend/include
 )
 set_target_properties(inference PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(inference PRIVATE 
-    op_kernel 
+set(INFERENCE_LINK_LIBS
+    backend_factory
+    infer_backend_core
     utils
-    ${CUDA_CUDART_LIBRARY}   
-    ${TENSORRT_NVINFER_LIBRARY} 
     ${OpenCV_LIBS}
-    onnxruntime
 )
+if(HAS_CUDA)
+    list(APPEND INFERENCE_LINK_LIBS op_kernel ${CUDA_CUDART_LIBRARY})
+endif()
+target_link_libraries(inference PRIVATE ${INFERENCE_LINK_LIBS})
 
 # core
 add_subdirectory(third_party/JsonSenderTest)
@@ -328,10 +450,15 @@ target_link_libraries(tools PRIVATE utils ${OpenCV_LIBS} core)
 # ==================== Main Executable ====================
 add_executable(main ${PROJECT_CPP_DIR}/main.cpp)
 configure_common_includes(main)
-target_link_libraries(main PRIVATE core bytetrack tools utils ${CUDA_CUDART_LIBRARY})
+set(MAIN_LINK_LIBS core bytetrack tools utils)
+if(HAS_CUDA)
+    list(APPEND MAIN_LINK_LIBS ${CUDA_CUDART_LIBRARY})
+endif()
+target_link_libraries(main PRIVATE ${MAIN_LINK_LIBS})
 
 # ==================== Google Benchmark ====================
-if(ENABLE_BENCHMARK)
+# 基准测试全部依赖 CUDA/TensorRT 流水线，CPU-only 构建不参与
+if(ENABLE_BENCHMARK AND HAS_CUDA)
     message(STATUS "Building benchmark tests")
     find_package(benchmark REQUIRED)
     
@@ -366,5 +493,5 @@ if(ENABLE_BENCHMARK)
         core bytetrack tools utils ${CUDA_CUDART_LIBRARY} benchmark::benchmark
     )
 else()
-    message(STATUS "ENABLE_BENCHMARK=OFF")
+    message(STATUS "Benchmarks disabled (ENABLE_BENCHMARK=OFF or no CUDA)")
 endif()

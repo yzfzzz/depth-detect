@@ -38,6 +38,7 @@ class ConfigManager {
     float                              getApproachExitScoreThr() const;
     int                                getApproachExitConfirm() const;
     bool                               isUseGPU() const;
+    std::string                        getPreferredBackend() const;
     bool                               isOverlapEnabled() const;
     bool                               isStaggerInferEnabled() const;
     bool                               isLogFileSaveEnabled() const;
@@ -241,6 +242,12 @@ inline std::string ConfigManager::getLogLevel() const {
 
 inline bool ConfigManager::isUseGPU() const {
     return config_["prefer"]["use_gpu"].as<bool>(false);
+}
+
+// 后端选择偏好："auto"（默认，历史回退链）或显式类型（"tensorrt"/"onnxruntime"/未来 "qnn"）。
+// 显式指定时只创建该后端，加载失败直接报错，不做静默回退
+inline std::string ConfigManager::getPreferredBackend() const {
+    return config_["prefer"]["backend"].as<std::string>("auto");
 }
 
 inline void ConfigManager::setUseGPU(bool use_gpu) {

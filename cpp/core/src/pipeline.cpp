@@ -69,10 +69,12 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     if (config_manager.isDepthEnabled()) {
         if (config_manager.getDepthModelType() == "lite_mono") {
             depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
-                              frame_meta.img_h, is_normalize, config_manager.isUseGPU());
+                              frame_meta.img_h, is_normalize, config_manager.isUseGPU(),
+                              config_manager.getPreferredBackend());
         } else if (use_yolo_depth_) {
             yolo_depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
-                                   frame_meta.img_h, config_manager.isUseGPU());
+                                   frame_meta.img_h, config_manager.isUseGPU(),
+                                   config_manager.getPreferredBackend());
         } else {
             APP_ERROR("Unsupported depth model type: {}", config_manager.getDepthModelType());
         }
@@ -81,7 +83,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     std::map<std::string, std::string> yolo_model_paths = config_manager.getYoloModelPath();
     detector_.init(yolo_model_paths, frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
-                   config_manager.isUseGPU());
+                   config_manager.isUseGPU(), config_manager.getPreferredBackend());
 
     // 错峰调度下碰撞帧（检测与深度同帧）走重叠推理，主模型与深度模型同帧抢占 GPU
     // 延迟过大 → 加载 yaml 配置的轻量模型（yolo26n）专用于碰撞帧；
@@ -103,7 +105,8 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
         if (!light_paths.empty()) {
             detector_light_.init(light_paths, frame_meta.img_w, frame_meta.img_h,
                                  config_manager.getYoloNmsThresh(),
-                                 config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU());
+                                 config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU(),
+                                 config_manager.getPreferredBackend());
             has_light_detector_ = detector_light_.isBackendInitialized();
             if (has_light_detector_) {
                 APP_INFO(

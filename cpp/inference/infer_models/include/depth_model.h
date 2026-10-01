@@ -1,8 +1,8 @@
 #pragma once
 
 #include "base_model.h"
+#include "device_memory.h"
 #include "frame.h"
-#include "memory.h"
 
 #include <opencv2/core/hal/interface.h>
 
@@ -17,7 +17,8 @@ class LiteMonoDepthModel : public BaseModel {
               int                                raw_img_w,
               int                                raw_img_h,
               bool                               is_normalize,
-              bool                               use_gpu = true);
+              bool                               use_gpu           = true,
+              const std::string &                preferred_backend = "auto");
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 
@@ -35,19 +36,19 @@ class LiteMonoDepthModel : public BaseModel {
     // ── CUDA 资源（仅 TensorRT 后端使用）──
 
     // 后处理中间 buffer：归一化 depth + colormap（模型分辨率）
-    unique_ptr_cuda<uchar>  d_buffer_norm_depth_;
-    unique_ptr_cuda<uchar3> d_buffer_norm_colormap_;
+    unique_ptr_device<uchar>  d_buffer_norm_depth_;
+    unique_ptr_device<uchar3> d_buffer_norm_colormap_;
 
     // 预处理参数：mean[3] + std[3] 合并存储
-    unique_ptr_cuda<float> d_normalize_params_;  // float[6]
+    unique_ptr_device<float> d_normalize_params_;  // float[6]
 
     // 后处理输出（原始分辨率）
-    unique_ptr_cuda<uchar>  d_buffer_dst_depth_;
-    unique_ptr_cuda<uchar3> d_buffer_dst_colormap_;
+    unique_ptr_device<uchar>  d_buffer_dst_depth_;
+    unique_ptr_device<uchar3> d_buffer_dst_colormap_;
 
     // 主机端 pinned memory（D2H 异步拷贝目标）
-    unique_ptr_pinned_cuda<uchar>  host_pinned_depth_output_data_;
-    unique_ptr_pinned_cuda<uchar3> host_pinned_depth_colormap_data_;
+    unique_ptr_pinned_host<uchar>  host_pinned_depth_output_data_;
+    unique_ptr_pinned_host<uchar3> host_pinned_depth_colormap_data_;
 
     // CPU 端资源
     cv::Mat colormap_table_;
