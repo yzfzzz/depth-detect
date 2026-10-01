@@ -1,9 +1,12 @@
 #include "yolo_detect_model.h"
 
 #include "logger_manager.h"
-#include "postprocess.h"
-#include "preprocess.h"
-#include "public.h"
+
+#ifdef HAS_CUDA
+#    include "postprocess.h"
+#    include "preprocess.h"
+#    include "tensorrt/cuda_utils.h"
+#endif
 
 #include <cstddef>
 #include <cstring>
@@ -16,12 +19,13 @@ bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            float                              nms_thresh,
                            float                              conf_thresh,
                            int                                num_class,
-                           bool                               use_gpu) {
+                           bool                               use_gpu,
+                           const std::string &                preferred_backend) {
     APP_INFO(
         "YOLO model init: raw_img_w: {}, raw_img_h: {}, nms_thresh: {}, "
         "conf_thresh: {}, num_class: {}, use_gpu: {}",
         raw_img_w, raw_img_h, nms_thresh, conf_thresh, num_class, use_gpu);
-    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend);
     if (!isBackendInitialized()) {
         APP_ERROR("YoloDetectModel init aborted: inference backend not initialized");
         return false;
@@ -34,47 +38,43 @@ bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
     output_candidates_ = getOutputDims()[2];
 
     APP_INFO("YOLO model output candidates: {}", output_candidates_);
+#ifdef HAS_CUDA
     size_t h_output_data_size = 1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT;
-    if (backend_->getBackendType() == BackendType::TensorRT) {
+    if (backend_->getTensorLocation() == TensorLocation::CudaDevice) {
         // 计算输出数据总大小
-        size_t output_size      = getOutputByteSize(0);
-        // 定义分配固定主机内存的 lambda 函数
-        auto   allocCuda_pinned = [](size_t bytes) {
-            void * ptr = nullptr;
-            CHECK_CUDA(cudaHostAlloc(&ptr, bytes, cudaHostAllocDefault));
-            return ptr;
-        };
+        size_t output_size = getOutputByteSize(0);
 
         // 准备主机输出数据空间
         // 格式: [count, bbox1, bbox2, ...]
         // 每个 bbox: [x1, y1, x2, y2, conf, class_id, keep_flag]
 
         h_infer_out_pinned_.reset(
-            static_cast<float *>(allocCuda_pinned(h_output_data_size * sizeof(float))));
+            static_cast<float *>(allocPinnedHost(h_output_data_size * sizeof(float))));
 
         // 准备设备输入输出缓冲区
         // d_infer_io_[0]: 输入缓冲区 [1, 3, H, W]
         d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
-        d_infer_io_[0].reset(allocCuda(3 * getInputHxW() * sizeof(float)));
+        d_infer_io_[0].reset(allocDevice(3 * getInputHxW() * sizeof(float)));
 
         // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
-        d_infer_io_[1].reset(allocCuda(output_size));
+        d_infer_io_[1].reset(allocDevice(output_size));
 
         // 转置缓冲区（用于后处理）
-        d_transpose_.reset(static_cast<float *>(allocCuda(output_size)));
+        d_transpose_.reset(static_cast<float *>(allocDevice(output_size)));
 
         // 解码缓冲区（用于 NMS）
         d_decode_.reset(static_cast<float *>(
-            allocCuda((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float))));
+            allocDevice((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float))));
 
         // 源数据缓冲区（原始图像数据）
-        d_src_data_.reset(static_cast<uchar *>(allocCuda(sizeof(uchar) * getRawImgHxW() * 3)));
+        d_src_data_.reset(static_cast<uchar *>(allocDevice(sizeof(uchar) * getRawImgHxW() * 3)));
 
         // 中间数据缓冲区（预处理后的图像数据）
-        d_mid_data_.reset(static_cast<uchar *>(allocCuda(sizeof(uchar) * getInputHxW() * 3)));
+        d_mid_data_.reset(static_cast<uchar *>(allocDevice(sizeof(uchar) * getInputHxW() * 3)));
 
-    } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
-        // ONNX Runtime CPU 后端，准备主机输出数据空间
+    } else
+#endif  // HAS_CUDA
+    {   // Host 路径：ONNX Runtime CPU 后端，准备主机输出数据空间
         int output_num = getNumOutputs();
         h_infer_out_.resize(output_num);
         for (int i = 0; i < output_num; ++i) {
@@ -88,17 +88,22 @@ bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
 }
 
 void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+#ifdef HAS_CUDA
     if (frame_input_context.d_raw_img_ == nullptr) {
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
     }
     preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
                   d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+#else
+    APP_ERROR("CUDA pre-process unavailable: built without CUDA");
+#endif
 }
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
+#ifdef HAS_CUDA
     // YOLO GPU 后处理流水线：转置 → 解码（提取类别/置信度） → NMS → 异步拷贝回主机
-    transpose(static_cast<float *>(d_infer_io_[getOutputIndexFromName("output0")].get()),
+    transpose(static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()),
               d_transpose_.get(), output_candidates_, num_class_ + 4, stream_);
 
     decode(d_transpose_.get(), d_decode_.get(), output_candidates_, num_class_, conf_thresh_,
@@ -110,9 +115,13 @@ void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
     CHECK_CUDA(cudaMemcpyAsync(h_infer_out_pinned_.get(), d_decode_.get(),
                                (1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float),
                                cudaMemcpyDeviceToHost, stream_));
+#else
+    APP_ERROR("CUDA post-process unavailable: built without CUDA");
+#endif
 }
 
 void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+#ifdef HAS_CUDA
     synchronizeStream();
     std::vector<Detection> vDetections;
     int count = std::min(static_cast<int>(h_infer_out_pinned_.get()[0]), MAX_NUM_OUTPUT_BBOX);
@@ -142,6 +151,9 @@ void YoloDetectModel::getInferOutputResult(InferOutputContext & infer_output_con
     }
 
     infer_output_context.detections = vDetections;
+#else
+    APP_ERROR("getInferOutputResult unavailable: built without CUDA");
+#endif
 }
 
 std::vector<float> YoloDetectModel::cvMatPreProcess(FrameInputContext & frame_input_context) {

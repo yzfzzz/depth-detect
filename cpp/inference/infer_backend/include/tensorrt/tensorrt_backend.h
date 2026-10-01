@@ -1,10 +1,11 @@
 #pragma once
 
+#include "cuda_utils.h"
 #include "inference_backend.h"
 #include "logger_manager.h"
-#include "memory.h"
+#include "trt_logger.h"
+#include "trt_memory.h"
 
-#include <cuda_runtime_api.h>
 #include <NvInfer.h>
 
 #include <string>
@@ -26,7 +27,7 @@ class TensorRTBackend : public InferenceBackend {
     bool runInference(void * input_data, std::vector<void *> output_data) override;
     bool runInferenceAsync(void *              input_data,
                            std::vector<void *> output_data,
-                           cudaStream_t        stream) override;
+                           void *              stream_handle) override;
 
     // 异步能力查询：返回空串表示支持真异步（enqueueV2/enqueueV3 提交即返回）
     std::string asyncUnsupportedReason() const override { return {}; }
@@ -40,15 +41,18 @@ class TensorRTBackend : public InferenceBackend {
 
     std::string getBackendTypeName() const override { return "TensorRT"; }
 
+    TensorLocation getTensorLocation() const override { return TensorLocation::CudaDevice; }
+
     bool isAvailable() const override;
 
     // TensorRT 特有方法
     nvinfer1::IExecutionContext * getContext() const { return context_.get(); }
 
-    virtual int getOutputIndexFromName(const std::string & name) const override {
-        for (int i = 0; i < output_tensor_.size(); ++i) {
+    // 统一语义：0-based 输出序号（binding 序号 = 输出序号 + 1，输入占 binding 0）
+    int getOutputIndexFromName(const std::string & name) const override {
+        for (size_t i = 0; i < output_tensor_.size(); ++i) {
             if (output_tensor_[i].name == name) {
-                return i + 1;
+                return static_cast<int>(i);
             }
         }
         return -1;  // 返回 -1 表示未找到

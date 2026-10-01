@@ -1,5 +1,6 @@
 #pragma once
-#include <memory.h>
+#include "device_memory.h"
+
 #include <opencv2/core/hal/interface.h>
 
 #include <cstddef>
@@ -59,10 +60,10 @@ struct FrameInputContext {
 
     void setFrameID(int id) { frame_id = id; }
 
-    int                    frame_id;
-    FrameMeta              meta;
-    double                 timestamp;
-    unique_ptr_cuda<uchar> d_raw_img_;
-    cv::Mat                raw_img;
-    size_t                 img_size;
+    int                      frame_id;
+    FrameMeta                meta;
+    double                   timestamp;
+    unique_ptr_device<uchar> d_raw_img_;
+    cv::Mat                  raw_img;
+    size_t                   img_size;
 };

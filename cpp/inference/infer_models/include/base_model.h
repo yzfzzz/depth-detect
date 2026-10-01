@@ -1,12 +1,13 @@
 #pragma once
 
+#include "device_memory.h"
 #include "frame.h"
 #include "inference_backend.h"
 #include "logger_manager.h"
-#include "memory.h"
-#include "public.h"
 
-#include <cuda_runtime_api.h>
+#ifdef HAS_CUDA
+#    include "tensorrt/cuda_utils.h"
+#endif
 
 #include <memory>
 #include <opencv2/opencv.hpp>
@@ -19,11 +20,13 @@ class BaseModel {
     virtual ~BaseModel();
 
     // 初始化模型
-    virtual bool initInferenceBackend(std::map<std::string, std::string> model_path, bool use_gpu);
+    virtual bool initInferenceBackend(std::map<std::string, std::string> model_path,
+                                      bool                               use_gpu,
+                                      const std::string & preferred_backend = "auto");
 
     // 获取后端类型
     BackendType getBackendType() const {
-        return backend_ ? backend_->getBackendType() : BackendType::Unkown;
+        return backend_ ? backend_->getBackendType() : BackendType::Unknown;
     }
 
     // 检查模型是否已初始化
@@ -54,7 +57,8 @@ class BaseModel {
         return backend_ ? backend_->getOutputByteSize(output_index) : 0;
     }
 
-    // 获取 CUDA 流
+    // 获取 CUDA 流（仅 HAS_CUDA 构建提供，配合 CUDA 前后处理 kernel 使用）
+#ifdef HAS_CUDA
     cudaStream_t getStream() const { return stream_; }
 
     // 同步流
@@ -63,11 +67,12 @@ class BaseModel {
             CHECK_CUDA(cudaStreamSynchronize(stream_));
         }
     }
+#endif
 
     int getNumOutputs() const { return backend_ ? static_cast<int>(backend_->getNumOutputs()) : 0; }
 
     std::string backendTypeName() const {
-        return backend_ ? backend_->getBackendTypeName() : std::string("Unkown");
+        return backend_ ? backend_->getBackendTypeName() : std::string("Unknown");
     }
 
   protected:
@@ -76,15 +81,13 @@ class BaseModel {
         std::map<std::string, std::string> model_path,
         bool                               use_gpu);
 
-    // 检查 GPU 是否可用
-    static bool isGPUAvailable();
-
     // 子类必须实现的部分
   public:
     void init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
-              bool                               use_gpu = true);
+              bool                               use_gpu           = true,
+              const std::string &                preferred_backend = "auto");
 
     virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 
@@ -131,12 +134,16 @@ class BaseModel {
     int raw_img_h_;
 
     // 模型输入分辨率
-    int                                input_h_;
-    int                                input_w_;
-    bool                               initialized_ = false;
+    int                                  input_h_;
+    int                                  input_w_;
+    bool                                 initialized_ = false;
     // 模型输入输出缓冲区: d_infer_io_[0] -> input, d_infer_io_[1] -> output
-    std::vector<unique_ptr_cuda<void>> d_infer_io_;
-    std::unique_ptr<InferenceBackend>  backend_;
-    cudaStream_t                       stream_ = 0;
-    std::vector<std::vector<float>>    h_infer_out_;
+    std::vector<unique_ptr_device<void>> d_infer_io_;
+    std::unique_ptr<InferenceBackend>    backend_;
+    // 后端选择偏好
+    std::string                          preferred_backend_ = "auto";
+#ifdef HAS_CUDA
+    cudaStream_t stream_ = 0;
+#endif
+    std::vector<std::vector<float>> h_infer_out_;
 };
