@@ -219,22 +219,21 @@ fi
 
 # =============================================================================
 # 3. 读取 bin/config.yaml，预检 + 推导待导出模型清单
-#    （解析逻辑在 scripts/read_config.py，退出码 3 = PyYAML 不可用需降级）
+#    （解析逻辑在 scripts/config_tool.py read，退出码 3 = PyYAML 不可用需降级）
 # =============================================================================
 step "Reading config and running preflight checks"
 CONFIG_ABS="$(native_path "$CONFIG_ABS")"
 SCRIPT_DIR_NATIVE="$(native_path "$SCRIPT_DIR")"
-PY_READ_CONFIG="$(native_path "${SCRIPT_DIR}/scripts/read_config.py")"
-PY_UPDATE_CONFIG="$(native_path "${SCRIPT_DIR}/scripts/update_config.py")"
+PY_CONFIG_TOOL="$(native_path "${SCRIPT_DIR}/scripts/config_tool.py")"
 
 CFG_RC=0
-CFG_DUMP="$("${PY}" "${PY_READ_CONFIG}" --config "${CONFIG_ABS}" \
+CFG_DUMP="$("${PY}" "${PY_CONFIG_TOOL}" read --config "${CONFIG_ABS}" \
             --project-root "${SCRIPT_DIR_NATIVE}")" || CFG_RC=$?
 
 CFG_YAML_OK=true
 EXPORT_LIST=""
 if [[ "${CFG_RC}" == "3" ]]; then
-    # read_config.py 对这种情况保持静默（由调用方给出提示）
+    # config_tool.py read 对这种情况保持静默（由调用方给出提示）
     echo "  [WARN] PyYAML is not available, skipping config preflight and engine export"
     echo "         -> at runtime the type=onnx models (CPU backend) will be used"
     CFG_YAML_OK=false
@@ -245,7 +244,7 @@ if [[ "${CFG_RC}" == "3" ]]; then
     CFG_SEND_TCP=false
     CFG_TCP_TARGET="-"
 elif [[ "${CFG_RC}" != "0" ]]; then
-    echo "  [FAIL] read_config.py exited with code ${CFG_RC}" >&2
+    echo "  [FAIL] config_tool.py read exited with code ${CFG_RC}" >&2
     exit 1
 else
     eval "$(printf '%s\n' "$CFG_DUMP" | grep '^CFG_')"
@@ -366,12 +365,12 @@ else
 fi
 
 # =============================================================================
-# 5. 刷新 config.yaml 中的 engine / onnx 路径
+# 5. 刷新 config.yaml 中的 engine / onnx 路径（scripts/config_tool.py refresh）
 # =============================================================================
 step "Refreshing model paths in config"
-if ! "${PY}" "${PY_UPDATE_CONFIG}" \
+if ! "${PY}" "${PY_CONFIG_TOOL}" refresh \
         --config "${CONFIG_ABS}" --project-root "${SCRIPT_DIR_NATIVE}"; then
-    echo "  [FAIL] update_config.py failed" >&2
+    echo "  [FAIL] config_tool.py refresh failed" >&2
     exit 1
 fi
 
@@ -434,7 +433,7 @@ fi
 # =============================================================================
 # 生成 headless 配置副本（is_display: false），只改这一行，保留缩进与行尾注释
 write_headless_config() {
-    "${PY}" "${PY_READ_CONFIG}" --config "${CONFIG_ABS}" \
+    "${PY}" "${PY_CONFIG_TOOL}" read --config "${CONFIG_ABS}" \
         --write-headless "$(native_path "${SCRIPT_DIR}/bin/.config.headless.yaml")" >/dev/null
 }
 
