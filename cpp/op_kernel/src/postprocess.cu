@@ -2,121 +2,89 @@
 
 #include <cstdio>
 
-// transpose kernel - 将检测输出从 [numBboxes, numElements] 转置为 [numElements, numBboxes]
-__global__ void transpose_kernel(float * src,
-                                 float * dst,
-                                 int     numBboxes,
-                                 int     numElements,
-                                 int     edge) {
+// decode kernel: 解析检测框坐标、类别置信度和标签，过滤低置信度结果。
+// 融合了原独立 transpose 算子：直接读取 YOLOv8 channel-first 输出 [4+num_classes, num_bboxes]，
+// warp 内相邻线程读相邻地址，每条 load 指令天然合并访存，无需 shared memory 转置搬运
+//（省去一次输出规模两倍的显存往返和一次 kernel 启动，也不再存在 bank conflict 问题）。
+__global__ void decode_kernel(const float * __restrict__ src,
+                              float * __restrict__ dst,
+                              int   num_bboxes,
+                              int   num_classes,
+                              float conf_thresh,
+                              int   max_objects,
+                              int   num_box_element) {
     int position = blockDim.x * blockIdx.x + threadIdx.x;
-    if (position >= edge) {
+    if (position >= num_bboxes) {
         return;
     }
 
-    dst[position] = src[(position % numElements) * numBboxes + position / numElements];
-}
+    // channel-first 布局：第 c 个通道的第 position 个候选位于 src[c * num_bboxes + position]
+    const float * base = src + position;
+    const float   cx   = base[0];
+    const float   cy   = base[num_bboxes];
+    const float   w    = base[num_bboxes * 2];
+    const float   h    = base[num_bboxes * 3];
 
-void transpose(float * src, float * dst, int numBboxes, int numElements, cudaStream_t stream) {
-    int edge      = numBboxes * numElements;
-    int blockSize = 256;
-    int gridSize  = (edge + blockSize - 1) / blockSize;
-    transpose_kernel<<<gridSize, blockSize, 0, stream>>>(src, dst, numBboxes, numElements, edge);
-}
-
-// decode kernel - 解析检测框坐标、类别置信度和标签，过滤低置信度结果
-__global__ void decode_kernel(float * src,
-                              float * dst,
-                              int     numBboxes,
-                              int     numClasses,
-                              float   confThresh,
-                              int     maxObjects,
-                              int     numBoxElement) {
-    int position = blockDim.x * blockIdx.x + threadIdx.x;
-    if (position >= numBboxes) {
-        return;
-    }
-
-    float * pitem      = src + (4 + numClasses) * position;
-    float * classConf  = pitem + 4;
-    float   confidence = 0;
-    int     label      = 0;
-    for (int i = 0; i < numClasses; i++) {
-        if (classConf[i] > confidence) {
-            confidence = classConf[i];
+    // 类别 argmax：分支会被编译器谓词化，不产生线程束分化；4 路展开提升取数流水效率
+    const float * cls        = base + num_bboxes * 4;
+    float         confidence = 0.0f;
+    int           label      = 0;
+#pragma unroll 4
+    for (int i = 0; i < num_classes; i++) {
+        const float score = cls[i * num_bboxes];
+        if (score > confidence) {
+            confidence = score;
             label      = i;
         }
     }
 
-    if (confidence < confThresh) {
+    if (confidence < conf_thresh) {
         return;
     }
 
     // atomicAdd 保证多线程并发写入时不冲突：返回写入前的旧值作为当前框的写入位置
     int index = (int) atomicAdd(dst, 1);
-    if (index >= maxObjects) {
+    if (index >= max_objects) {
         return;
     }
 
-    float cx     = pitem[0];
-    float cy     = pitem[1];
-    float width  = pitem[2];
-    float height = pitem[3];
-
-    float left   = cx - width * 0.5f;
-    float top    = cy - height * 0.5f;
-    float right  = cx + width * 0.5f;
-    float bottom = cy + height * 0.5f;
-
-    float * pout_item = dst + 1 + index * numBoxElement;
-    pout_item[0]      = left;
-    pout_item[1]      = top;
-    pout_item[2]      = right;
-    pout_item[3]      = bottom;
+    float * pout_item = dst + 1 + index * num_box_element;
+    pout_item[0]      = cx - w * 0.5f;
+    pout_item[1]      = cy - h * 0.5f;
+    pout_item[2]      = cx + w * 0.5f;
+    pout_item[3]      = cy + h * 0.5f;
     pout_item[4]      = confidence;
     pout_item[5]      = label;
     pout_item[6]      = 1;  // 1 = keep, 0 = ignore
 }
 
-void decode(float *      src,
-            float *      dst,
-            int          numBboxes,
-            int          numClasses,
-            float        confThresh,
-            int          maxObjects,
-            int          numBoxElement,
-            cudaStream_t stream) {
+void decode(const float * src,
+            float *       dst,
+            int           num_bboxes,
+            int           num_classes,
+            float         conf_thresh,
+            int           max_objects,
+            int           num_box_element,
+            cudaStream_t  stream) {
     cudaMemsetAsync(dst, 0, sizeof(int), stream);
-    int blockSize = 256;
-    int gridSize  = (numBboxes + blockSize - 1) / blockSize;
-    decode_kernel<<<gridSize, blockSize, 0, stream>>>(src, dst, numBboxes, numClasses, confThresh,
-                                                      maxObjects, numBoxElement);
+    int block_size = 256;
+    int grid_size  = (num_bboxes + block_size - 1) / block_size;
+    decode_kernel<<<grid_size, block_size, 0, stream>>>(src, dst, num_bboxes, num_classes,
+                                                        conf_thresh, max_objects, num_box_element);
 }
 
-// NMS - 交并比计算，用于非极大值抑制的框重叠度评估
-__device__ float box_iou(float aleft,
-                         float atop,
-                         float aright,
-                         float abottom,
-                         float bleft,
-                         float btop,
-                         float bright,
-                         float bbottom) {
-    float cleft   = max(aleft, bleft);
-    float ctop    = max(atop, btop);
-    float cright  = min(aright, bright);
-    float cbottom = min(abottom, bbottom);
-
-    float c_area = max(cright - cleft, 0.0f) * max(cbottom - ctop, 0.0f);
-    if (c_area == 0.0f) {
-        return 0.0f;
-    }
-
-    float a_area = max(0.0f, aright - aleft) * max(0.0f, abottom - atop);
-    float b_area = max(0.0f, bright - bleft) * max(0.0f, bbottom - btop);
-    return c_area / (a_area + b_area - c_area);
-}
-
-__global__ void nms_kernel(float * data, float kNmsThresh, int maxObjects, int numBoxElement) {
+// NMS kernel：每个线程负责一个框，与全部同类且置信度更高的框计算 IoU，被抑制则置 keepflag=0。
+// 优化点：
+//   1. 当前框一次性载入寄存器——data 单指针存在潜在别名（pcurrent 与 pitem 同源），
+//      编译器无法自动提升，否则循环每轮都会重复发起 6 次全局加载；
+//   2. 当前框面积在循环外只算一次（原 box_iou 每次调用都重复计算）；
+//   3. 单轴快速排除：任一轴投影不重叠则 IoU 必为 0，跳过完整的 min/max 与乘法；
+//   4. 候选框经 __ldg 走只读缓存加载，不受 keepflag 写入干扰；
+//   5. 内层循环 4 路展开（早退改为标志 + break，保证展开合法）。
+__global__ void nms_kernel(float * __restrict__ data,
+                           float kNmsThresh,
+                           int   maxObjects,
+                           int   num_box_element) {
     int position = blockDim.x * blockIdx.x + threadIdx.x;
     int count    = min((int) data[0], maxObjects);
     if (position >= count) {
@@ -124,29 +92,60 @@ __global__ void nms_kernel(float * data, float kNmsThresh, int maxObjects, int n
     }
 
     // left, top, right, bottom, confidence, class, keepflag
-    float * pcurrent = data + 1 + position * numBoxElement;
-    float * pitem;
+    float *     pcurrent = data + 1 + position * num_box_element;
+    const float c_left   = __ldg(pcurrent);
+    const float c_top    = __ldg(pcurrent + 1);
+    const float c_right  = __ldg(pcurrent + 2);
+    const float c_bottom = __ldg(pcurrent + 3);
+    const float c_conf   = __ldg(pcurrent + 4);
+    const float c_label  = __ldg(pcurrent + 5);
+    const float c_area   = max(c_right - c_left, 0.0f) * max(c_bottom - c_top, 0.0f);
+
+    bool suppressed = false;
+#pragma unroll 4
     for (int i = 0; i < count; i++) {
-        pitem = data + 1 + i * numBoxElement;
-        if (i == position || pcurrent[5] != pitem[5]) {
+        if (i == position) {
             continue;
         }
 
+        const float * pitem = data + 1 + i * num_box_element;
+
         // NMS 抑制规则：同一类别中，置信度更高的框抑制低置信度框
-        // 置信度相同时按线程 ID 打破平局，避免双方互相抑制
-        if (pitem[4] >= pcurrent[4]) {
-            if (pitem[4] == pcurrent[4] && i < position) {
-                continue;
-            }
-
-            float iou = box_iou(pcurrent[0], pcurrent[1], pcurrent[2], pcurrent[3], pitem[0],
-                                pitem[1], pitem[2], pitem[3]);
-
-            if (iou > kNmsThresh) {
-                pcurrent[6] = 0;  // 1 = keep, 0 = ignore
-                return;
-            }
+        // 置信度相同时按索引打破平局，避免双方互相抑制
+        if (__ldg(pitem + 5) != c_label) {
+            continue;
         }
+        const float o_conf = __ldg(pitem + 4);
+        if (o_conf < c_conf || (o_conf == c_conf && i < position)) {
+            continue;
+        }
+
+        const float i_left   = __ldg(pitem);
+        const float i_top    = __ldg(pitem + 1);
+        const float i_right  = __ldg(pitem + 2);
+        const float i_bottom = __ldg(pitem + 3);
+
+        // 单轴快速排除
+        const float ox = min(c_right, i_right) - max(c_left, i_left);
+        if (ox <= 0.0f) {
+            continue;
+        }
+        const float oy = min(c_bottom, i_bottom) - max(c_top, i_top);
+        if (oy <= 0.0f) {
+            continue;
+        }
+
+        const float overlap = ox * oy;
+        const float i_area  = max(i_right - i_left, 0.0f) * max(i_bottom - i_top, 0.0f);
+        const float iou     = overlap / (c_area + i_area - overlap);
+        if (iou > kNmsThresh) {
+            suppressed = true;
+            break;
+        }
+    }
+
+    if (suppressed) {
+        pcurrent[6] = 0;  // 1 = keep, 0 = ignore
     }
 }
 
@@ -237,10 +236,10 @@ __global__ void resize_kernel(uchar *  src_depth,
                                        src_colormap[src_continue_idx + input_w + 1].z * fx1y1;
 }
 
-void nms(float * data, float kNmsThresh, int maxObjects, int numBoxElement, cudaStream_t stream) {
+void nms(float * data, float kNmsThresh, int maxObjects, int num_box_element, cudaStream_t stream) {
     int blockSize = maxObjects < 256 ? maxObjects : 256;
     int gridSize  = (maxObjects + blockSize - 1) / blockSize;
-    nms_kernel<<<gridSize, blockSize, 0, stream>>>(data, kNmsThresh, maxObjects, numBoxElement);
+    nms_kernel<<<gridSize, blockSize, 0, stream>>>(data, kNmsThresh, maxObjects, num_box_element);
 }
 
 void normalize_colormap_resize(float *      src,

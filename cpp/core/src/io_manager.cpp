@@ -5,13 +5,17 @@
 #include "public.h"
 #include "scope_timer.h"
 
-#include <algorithm>  // std::all_of
-#include <cctype>     // std::isdigit
+#ifdef HAS_CUDA
+#    include "tensorrt/cuda_utils.h"
+#endif
+
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
-#include <cstdlib>    // For system()
+#include <cstdlib>
 #include <opencv2/imgcodecs.hpp>
-#include <sstream>    // std::ostringstream（结果视频文件名的时间戳格式化）
-#include <thread>     // std::this_thread::sleep_for（实时节奏模拟）
+#include <sstream>
+#include <thread>
 
 #ifdef __linux__
 #    include <pthread.h>
@@ -341,6 +345,7 @@ bool IOManager::openVideoSource(const std::string & video_path) {
             video_capture_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
             video_capture_.set(cv::CAP_PROP_FRAME_WIDTH, camera_width_);
             video_capture_.set(cv::CAP_PROP_FRAME_HEIGHT, camera_height_);
+            video_capture_.set(cv::CAP_PROP_BUFFERSIZE, 1);
             if (camera_fps_ > 0) {
                 video_capture_.set(cv::CAP_PROP_FPS, camera_fps_);
             }
@@ -438,6 +443,7 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
     // 读取当前帧并同步拷贝到 GPU，供 CUDA 预处理使用
     bool result = video_capture_.read(frame_input_context.raw_img);
 
+#ifdef HAS_CUDA
     int         device_count = 0;
     cudaError_t error        = cudaGetDeviceCount(&device_count);
     if (result && error == cudaSuccess && device_count > 0) {
@@ -451,12 +457,13 @@ bool IOManager::readNextFrame(FrameInputContext & frame_input_context, bool simu
                                   frame_input_context.raw_img.data, frame_input_context.img_size,
                                   cudaMemcpyHostToDevice));
         };
-#if defined(ENABLE_TIMER)
+#    if defined(ENABLE_TIMER)
         DEBUG_FUNCTION_RUNNING_TIME("IO H2D Copy", h2d_copy);
-#else
+#    else
         h2d_copy();
-#endif
+#    endif
     }
+#endif  // HAS_CUDA
     frame_input_context.timestamp =
         std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
 

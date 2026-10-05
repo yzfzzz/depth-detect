@@ -1,4 +1,4 @@
-#include "onnxruntime_backend.h"
+#include "onnx/onnxruntime_backend.h"
 
 #include "logger_manager.h"
 
@@ -167,7 +167,7 @@ bool OnnxRuntimeBackend::runInference(void * input_data, std::vector<void *> out
 // （查询结果、不可用原因与降级动作由 degradeToSyncInference 统一记录）。
 bool OnnxRuntimeBackend::runInferenceAsync(void *              input_data,
                                            std::vector<void *> output_data,
-                                           cudaStream_t /*stream*/) {
+                                           void * /*stream_handle*/) {
     return degradeToSyncInference(input_data, std::move(output_data));
 }
 

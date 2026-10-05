@@ -25,7 +25,7 @@ class OnnxRuntimeBackend : public InferenceBackend {
     bool runInference(void * input_data, std::vector<void *> output_data) override;
     bool runInferenceAsync(void *              input_data,
                            std::vector<void *> output_data,
-                           cudaStream_t        stream) override;
+                           void *              stream_handle) override;
 
     std::string asyncUnsupportedReason() const override {
         return "ONNX Runtime (CPU) exposes only the blocking Ort::Session::Run(), "
@@ -41,9 +41,12 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     std::string getBackendTypeName() const override { return "ONNX Runtime (CPU)"; };
 
+    TensorLocation getTensorLocation() const override { return TensorLocation::Host; }
+
     bool isAvailable() const override;
 
-    virtual int getOutputIndexFromName(const std::string & name) const override {
+    // 统一语义：0-based 输出序号
+    int getOutputIndexFromName(const std::string & name) const override {
         for (int i = 0; i < output_tensor_.size(); ++i) {
             if (output_tensor_[i].name == name) {
                 return i;

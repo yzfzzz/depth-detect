@@ -1,8 +1,12 @@
 #include "yolo_depth_model.h"
 
 #include "logger_manager.h"
-#include "postprocess.h"
-#include "preprocess.h"
+
+#ifdef HAS_CUDA
+#    include "postprocess.h"
+#    include "preprocess.h"
+#    include "tensorrt/cuda_utils.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -45,8 +49,9 @@ double percentileLinear(std::vector<float> & v, double p) {
 bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
                           int                                raw_img_w,
                           int                                raw_img_h,
-                          bool                               use_gpu) {
-    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
+                          bool                               use_gpu,
+                          const std::string &                preferred_backend) {
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend);
     if (!isBackendInitialized()) {
         APP_ERROR("YoloDepthModel init aborted: inference backend not initialized");
         return false;
@@ -64,36 +69,38 @@ bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
         return false;
     }
 
-    if (backend_->getBackendType() == BackendType::TensorRT) {
+#ifdef HAS_CUDA
+    if (backend_->getTensorLocation() == TensorLocation::CudaDevice) {
         d_infer_io_.resize(2);
-        d_infer_io_[0].reset(allocCuda(getInputByteSize()));
-        d_infer_io_[1].reset(allocCuda(getOutputByteSize(0)));
-        // 中间数据缓冲区（预处理后的图像数据）
-        d_mid_data_.reset(static_cast<uchar *>(allocCuda(sizeof(uchar) * getInputHxW() * 3)));
+        d_infer_io_[0].reset(allocDevice(getInputByteSize()));
+        d_infer_io_[1].reset(allocDevice(getOutputByteSize(0)));
 
         // CUDA 伪彩色输出缓冲（原始分辨率）
-        d_buffer_dst_depth_.reset(static_cast<uchar *>(allocCuda(getRawImgHxW() * sizeof(uchar))));
+        d_buffer_dst_depth_.reset(
+            static_cast<uchar *>(allocDevice(getRawImgHxW() * sizeof(uchar))));
         d_buffer_dst_colormap_.reset(
-            static_cast<uchar3 *>(allocCuda(getRawImgHxW() * sizeof(uchar3))));
+            static_cast<uchar3 *>(allocDevice(getRawImgHxW() * sizeof(uchar3))));
         host_pinned_depth_output_data_.reset(
-            static_cast<uchar *>(allocPinnedCuda(getRawImgHxW() * sizeof(uchar))));
+            static_cast<uchar *>(allocPinnedHost(getRawImgHxW() * sizeof(uchar))));
         host_pinned_depth_colormap_data_.reset(
-            static_cast<uchar3 *>(allocPinnedCuda(getRawImgHxW() * sizeof(uchar3))));
+            static_cast<uchar3 *>(allocPinnedHost(getRawImgHxW() * sizeof(uchar3))));
 
         // P1/P99 归一化中间缓冲（floatDepthColormapResize 每帧复用）
         const size_t stat_bytes = DEPTH_COLORMAP_STAT_BLOCKS * sizeof(float);
-        d_stage_float_.reset(static_cast<float *>(allocCuda(getRawImgHxW() * sizeof(float))));
-        d_stat_min_.reset(static_cast<float *>(allocCuda(stat_bytes)));
-        d_stat_max_.reset(static_cast<float *>(allocCuda(stat_bytes)));
+        d_stage_float_.reset(static_cast<float *>(allocDevice(getRawImgHxW() * sizeof(float))));
+        d_stat_min_.reset(static_cast<float *>(allocDevice(stat_bytes)));
+        d_stat_max_.reset(static_cast<float *>(allocDevice(stat_bytes)));
         d_stat_count_.reset(
-            static_cast<int *>(allocCuda(DEPTH_COLORMAP_STAT_BLOCKS * sizeof(int))));
-        d_range_.reset(static_cast<float *>(allocCuda(2 * sizeof(float))));
-        d_hist_.reset(static_cast<int *>(allocCuda(256 * sizeof(int))));
-        d_percentiles_.reset(static_cast<float *>(allocCuda(2 * sizeof(float))));
+            static_cast<int *>(allocDevice(DEPTH_COLORMAP_STAT_BLOCKS * sizeof(int))));
+        d_range_.reset(static_cast<float *>(allocDevice(2 * sizeof(float))));
+        d_hist_.reset(static_cast<int *>(allocDevice(256 * sizeof(int))));
+        d_percentiles_.reset(static_cast<float *>(allocDevice(2 * sizeof(float))));
 
         // TURBO 颜色表上传到 __constant__ 内存（cv::applyColorMap 生成，与 Python 一致）
         initTurboColorTable();
-    } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
+    } else
+#endif  // HAS_CUDA
+    {   // Host 路径：主机缓冲输出（ONNX Runtime / 未来的 QNN 等）
         h_infer_out_.resize(1);
         h_infer_out_[0].resize(getOutputByteSize(0) / sizeof(float));
     }
@@ -102,20 +109,25 @@ bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
 }
 
 void YoloDepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+#ifdef HAS_CUDA
     if (frame_input_context.d_raw_img_ == nullptr) {
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
     }
 
-    preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
-                  d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+    yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
+                   raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+#else
+    APP_ERROR("CUDA pre-process unavailable: built without CUDA");
+#endif
 }
 
 void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
+#ifdef HAS_CUDA
     // 在 stream 上依次执行 resize、P1/P99 分位数统计、归一化 + TURBO 查表，
     // 全程异步、无主机同步；结果异步 D2H 到 pinned 内存，由 getInferOutputResult 读取。
 
-    // letterbox 内容区（去掉灰边），几何与 preprocess_v2 一致（截断取整、居中）
+    // letterbox 内容区（去掉灰边），几何与 preprocess 一致（截断取整、居中）
     const float scale = std::min(static_cast<float>(input_w_) / raw_img_w_,
                                  static_cast<float>(input_h_) / raw_img_h_);
     const int   roi_w = static_cast<int>(raw_img_w_ * scale);
@@ -124,9 +136,9 @@ void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
     const int   roi_y = (input_h_ - roi_h) / 2;
 
     floatDepthColormapResize(
-        static_cast<float *>(d_infer_io_[getOutputIndexFromName("output0")].get()), input_w_, roi_x,
-        roi_y, roi_w, roi_h, static_cast<float *>(d_stage_float_.get()), raw_img_w_, raw_img_h_,
-        static_cast<uchar *>(d_buffer_dst_depth_.get()),
+        static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()), input_w_,
+        roi_x, roi_y, roi_w, roi_h, static_cast<float *>(d_stage_float_.get()), raw_img_w_,
+        raw_img_h_, static_cast<uchar *>(d_buffer_dst_depth_.get()),
         static_cast<uchar3 *>(d_buffer_dst_colormap_.get()), d_stat_min_.get(), d_stat_max_.get(),
         d_stat_count_.get(), d_range_.get(), d_hist_.get(), d_percentiles_.get(),
         DEPTH_COLORMAP_STAT_BLOCKS, stream_);
@@ -137,22 +149,29 @@ void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
                                getRawImgHxW() * sizeof(uchar), cudaMemcpyDeviceToHost, stream_));
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
                                getRawImgHxW() * sizeof(uchar3), cudaMemcpyDeviceToHost, stream_));
+#else
+    APP_ERROR("CUDA post-process unavailable: built without CUDA");
+#endif
 }
 
 void YoloDepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+#ifdef HAS_CUDA
     // 同步等待所有异步操作完成（预处理→推理→后处理→D2H拷贝），然后读取结果
     synchronizeStream();
 
     infer_output_context.depth_raw_infer_out.resize(getInputHxW());
     cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
-               d_infer_io_[getOutputIndexFromName("output0")].get(), getInputHxW() * sizeof(float),
-               cudaMemcpyDeviceToHost);
+               d_infer_io_[1 + getOutputIndexFromName("output0")].get(),
+               getInputHxW() * sizeof(float), cudaMemcpyDeviceToHost);
 
     // cudaPostProcess 已把归一化灰度 / TURBO 伪彩异步拷到 pinned 内存，
     infer_output_context.result_depth =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
     infer_output_context.depth_vis =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC3, host_pinned_depth_colormap_data_.get());
+#else
+    APP_ERROR("getInferOutputResult unavailable: built without CUDA");
+#endif
 }
 
 std::vector<float> YoloDepthModel::cvMatPreProcess(FrameInputContext & frame_input_context) {
@@ -208,7 +227,7 @@ void YoloDepthModel::postProcessDepth(const std::vector<float> & depth,
 void YoloDepthModel::buildDepthVisualization(const cv::Mat &      model_depth,
                                              InferOutputContext & infer_output_context) const {
     // 对应 Python 参考实现：model.infer() 内部的 remove_letterbox + depth_to_colormap
-    // 1) 去掉 letterbox 灰边：几何与 preprocess_v2/cvMatPreProcess 一致（截断取整、居中）
+    // 1) 去掉 letterbox 灰边：几何与 preprocess/cvMatPreProcess 一致（截断取整、居中）
     const float scale     = std::min(static_cast<float>(input_w_) / raw_img_w_,
                                      static_cast<float>(input_h_) / raw_img_h_);
     const int   resized_w = static_cast<int>(raw_img_w_ * scale);

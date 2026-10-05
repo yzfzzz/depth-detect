@@ -2,7 +2,6 @@
 
 #include "config_manager.h"
 
-#include <NvInfer.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -23,43 +22,6 @@ struct TrackRecord {
     float h;  // bbox 高
     float area;
     float raw_depth;
-};
-
-// TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog
-class Logger : public nvinfer1::ILogger {
-  public:
-    nvinfer1::ILogger::Severity reportable_severity_;
-
-    Logger(nvinfer1::ILogger::Severity severity = nvinfer1::ILogger::Severity::kINFO) :
-        reportable_severity_(severity) {}
-
-    void log(nvinfer1::ILogger::Severity severity, const char * msg) noexcept override {
-        if (severity > reportable_severity_) {
-            return;
-        }
-        auto logger = spdlog::get("app");
-        if (!logger) {
-            return;  // Logger not initialized yet
-        }
-
-        switch (severity) {
-            case nvinfer1::ILogger::Severity::kINTERNAL_ERROR:
-                logger->error("[TensorRT] {}", msg);
-                break;
-            case nvinfer1::ILogger::Severity::kERROR:
-                logger->error("[TensorRT] {}", msg);
-                break;
-            case nvinfer1::ILogger::Severity::kWARNING:
-                logger->warn("[TensorRT] {}", msg);
-                break;
-            case nvinfer1::ILogger::Severity::kINFO:
-                logger->info("[TensorRT] {}", msg);
-                break;
-            default:
-                logger->debug("[TensorRT] {}", msg);
-                break;
-        }
-    }
 };
 
 // 日志管理器 - 单例模式

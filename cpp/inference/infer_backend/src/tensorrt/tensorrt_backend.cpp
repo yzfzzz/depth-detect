@@ -1,7 +1,6 @@
-#include "tensorrt_backend.h"
+#include "tensorrt/tensorrt_backend.h"
 
 #include "logger_manager.h"
-#include "public.h"
 
 #include <cstdint>
 #include <fstream>
@@ -25,7 +24,12 @@ bool TensorRTBackend::loadModel(const std::string & model_path) {
         return false;
     }
 
-    return loadEngine(model_path);
+    if (!loadEngine(model_path)) {
+        return false;
+    }
+    // GPU 环境信息随加载一起打印，避免上层调用方依赖 TRT 特有方法
+    getCudaDeviceInfo();
+    return true;
 }
 
 bool TensorRTBackend::loadEngine(const std::string & engine_path) {
@@ -183,10 +187,11 @@ bool TensorRTBackend::runInference(void * input_data, std::vector<void *> output
 }
 
 // 真异步：TRT 10.x 用 enqueueV3、TRT 8.x 用 enqueueV2，都是提交即返回，
-// 输出就绪顺序由 stream 保证，因此这里不做降级（能力查询 asyncUnsupportedReason() 返回 nullptr）。
+// 输出就绪顺序由 stream 保证，因此这里不做降级（能力查询 asyncUnsupportedReason() 返回空串）。
+// stream_handle 是基类接口透传的原生流句柄，CUDA 后端按 cudaStream_t 解释
 bool TensorRTBackend::runInferenceAsync(void *              input_data,
                                         std::vector<void *> output_data,
-                                        cudaStream_t        stream) {
+                                        void *              stream_handle) {
     if (!context_) {
         APP_ERROR("TensorRT context not initialized");
         return false;
@@ -196,6 +201,7 @@ bool TensorRTBackend::runInferenceAsync(void *              input_data,
                   output_data.size());
         return false;
     }
+    cudaStream_t stream = static_cast<cudaStream_t>(stream_handle);
 #if NV_TENSORRT_MAJOR >= 10
     // TRT 10.x: Explicitly set tensor addresses before enqueueV3
     context_->setTensorAddress(input_tensor_name_.c_str(), input_data);
@@ -241,4 +247,32 @@ size_t TensorRTBackend::getOutputByteSize(int output_index) const {
         return 0;
     }
     return output_tensor_[output_index].byte_size;
+}
+
+void TensorRTBackend::getCudaDeviceInfo() {
+    int         device_count = 0;
+    cudaError_t error        = cudaGetDeviceCount(&device_count);
+    if (error != cudaSuccess || device_count <= 0) {
+        APP_ERROR("No CUDA-capable devices found");
+        return;
+    }
+
+    if (gpu_id_ < 0 || gpu_id_ >= device_count) {
+        APP_ERROR("Invalid GPU ID: {}. Available devices: 0 to {}", gpu_id_, device_count - 1);
+        return;
+    }
+
+    cudaDeviceProp device_prop;
+    error = cudaGetDeviceProperties(&device_prop, gpu_id_);
+    if (error != cudaSuccess) {
+        APP_ERROR("Failed to get properties for GPU ID {}: {}", gpu_id_, cudaGetErrorString(error));
+        return;
+    }
+
+    APP_INFO(
+        "Using GPU ID {}: {}, Compute Capability: {}.{}, {} SMs, {} threads per SM, {} threads per "
+        "block, {} registers per SM",
+        gpu_id_, device_prop.name, device_prop.major, device_prop.minor,
+        device_prop.multiProcessorCount, device_prop.maxThreadsPerMultiProcessor,
+        device_prop.maxThreadsPerBlock, device_prop.regsPerMultiprocessor);
 }

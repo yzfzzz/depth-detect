@@ -1,9 +1,13 @@
 #include "depth_model.h"
 
 #include "frame.h"
-#include "postprocess.h"
-#include "preprocess.h"
 #include "public.h"
+
+#ifdef HAS_CUDA
+#    include "postprocess.h"
+#    include "preprocess.h"
+#    include "tensorrt/cuda_utils.h"
+#endif
 
 #include <cstring>
 #include <map>
@@ -14,8 +18,9 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
                               int                                raw_img_w,
                               int                                raw_img_h,
                               bool                               is_normalize,
-                              bool                               use_gpu) {
-    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu);
+                              bool                               use_gpu,
+                              const std::string &                preferred_backend) {
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend);
     if (!isBackendInitialized()) {
         APP_ERROR("LiteMonoDepthModel init aborted: inference backend not initialized");
         return false;
@@ -31,24 +36,26 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
         h_std_  = { 0.229f, 0.224f, 0.225f };
     }
 
-    // 初始化 CUDA 资源（仅 TensorRT 后端）
-    if (backend_->getBackendType() == BackendType::TensorRT) {
-        // 封装 cudaMalloc 为返回裸指针的 lambda，配合 unique_ptr_cuda 自动管理显存生命周期
+    // 初始化 CUDA 资源
+#ifdef HAS_CUDA
+    if (backend_->getTensorLocation() == TensorLocation::CudaDevice) {
+        // 封装 cudaMalloc 为返回裸指针的 lambda，配合 unique_ptr_device 自动管理显存生命周期
 
         // 推理 I/O 缓冲区：d_infer_io_[0]=输入，d_infer_io_[1..N]=各输出，按索引对应 TRT binding
         d_infer_io_.resize(getNumOutputs() + 1);  // 输入 + 输出
-        d_infer_io_[0].reset(allocCuda(getInputByteSize()));
+        d_infer_io_[0].reset(allocDevice(getInputByteSize()));
         for (int i = 0; i < getNumOutputs(); ++i) {
-            d_infer_io_[i + 1].reset(allocCuda(getOutputByteSize(i)));
+            d_infer_io_[i + 1].reset(allocDevice(getOutputByteSize(i)));
         }
 
         // 后处理中间 buffer：模型分辨率下的归一化深度图和颜色映射图
-        d_buffer_norm_depth_.reset(static_cast<uchar *>(allocCuda(getInputHxW() * sizeof(uchar))));
+        d_buffer_norm_depth_.reset(
+            static_cast<uchar *>(allocDevice(getInputHxW() * sizeof(uchar))));
         d_buffer_norm_colormap_.reset(
-            static_cast<uchar3 *>(allocCuda(getInputHxW() * sizeof(uchar3))));
+            static_cast<uchar3 *>(allocDevice(getInputHxW() * sizeof(uchar3))));
 
         // 预处理参数：mean[3]+std[3] 合并为 float[6]，一次 H2D 拷贝到设备常量内存
-        d_normalize_params_.reset(static_cast<float *>(allocCuda(6 * sizeof(float))));
+        d_normalize_params_.reset(static_cast<float *>(allocDevice(6 * sizeof(float))));
         float h_params[6];
         std::memcpy(h_params, h_mean_.data(), 3 * sizeof(float));
         std::memcpy(h_params + 3, h_std_.data(), 3 * sizeof(float));
@@ -56,28 +63,31 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
                               cudaMemcpyHostToDevice));
 
         host_pinned_depth_output_data_.reset(
-            static_cast<uchar *>(allocPinnedCuda(getRawImgHxW() * sizeof(uchar))));
+            static_cast<uchar *>(allocPinnedHost(getRawImgHxW() * sizeof(uchar))));
         host_pinned_depth_colormap_data_.reset(
-            static_cast<uchar3 *>(allocPinnedCuda(getRawImgHxW() * sizeof(uchar3))));
+            static_cast<uchar3 *>(allocPinnedHost(getRawImgHxW() * sizeof(uchar3))));
 
         // 后处理输出 buffer（原始分辨率）
         // Jetson 统一内存架构下使用 cudaMallocManaged 避免显式拷贝；x86 平台用设备内存 + pinned memory D2H
-#if defined(__aarch64__) && defined(ENABLE_JESTON_MEM_MANAGED)
+#    if defined(__aarch64__) && defined(ENABLE_JESTON_MEM_MANAGED)
         void * dst_depth    = nullptr;
         void * dst_colormap = nullptr;
         CHECK_CUDA(cudaMallocManaged(&dst_depth, getRawImgHxW() * sizeof(uchar)));
         CHECK_CUDA(cudaMallocManaged(&dst_colormap, getRawImgHxW() * sizeof(uchar3)));
         d_buffer_dst_depth_.reset(static_cast<uchar *>(dst_depth));
         d_buffer_dst_colormap_.reset(static_cast<uchar3 *>(dst_colormap));
-#else
-        d_buffer_dst_depth_.reset(static_cast<uchar *>(allocCuda(getRawImgHxW() * sizeof(uchar))));
+#    else
+        d_buffer_dst_depth_.reset(
+            static_cast<uchar *>(allocDevice(getRawImgHxW() * sizeof(uchar))));
         d_buffer_dst_colormap_.reset(
-            static_cast<uchar3 *>(allocCuda(getRawImgHxW() * sizeof(uchar3))));
-#endif
+            static_cast<uchar3 *>(allocDevice(getRawImgHxW() * sizeof(uchar3))));
+#    endif
 
         // 初始化颜色映射表
         initColorMapTable();
-    } else if (backend_->getBackendType() == BackendType::OnnxRuntime) {
+    } else
+#endif
+    {  // Host 路径：主机缓冲输出（ONNX Runtime / 未来的 QNN 等）
         int output_num = getNumOutputs();
         h_infer_out_.resize(output_num);
         for (int i = 0; i < output_num; ++i) {
@@ -93,6 +103,7 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
 
 // GPU 推理链路 (TensorRT) - 预处理、后处理均在 GPU 侧执行
 void LiteMonoDepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
+#ifdef HAS_CUDA
     if (frame_input_context.d_raw_img_ == nullptr) {
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
@@ -103,12 +114,16 @@ void LiteMonoDepthModel::cudaPreProcess(FrameInputContext & frame_input_context)
                     d_normalize_params_.get(),      // mean
                     d_normalize_params_.get() + 3,  // std
                     stream_);
+#else
+    APP_ERROR("CUDA pre-process unavailable: built without CUDA");
+#endif
 }
 
 void LiteMonoDepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
+#ifdef HAS_CUDA
     // 深度归一化 + 颜色映射 + resize 到原始分辨率
     normalize_colormap_resize(
-        static_cast<float *>(d_infer_io_[getOutputIndexFromName("disp_output")].get()),
+        static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("disp_output")].get()),
         d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(), d_buffer_dst_depth_.get(),
         d_buffer_dst_colormap_.get(), input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
 
@@ -117,19 +132,26 @@ void LiteMonoDepthModel::cudaPostProcess(FrameInputContext & frame_input_context
                                getRawImgHxW() * sizeof(uchar), cudaMemcpyDeviceToHost, stream_));
     CHECK_CUDA(cudaMemcpyAsync(host_pinned_depth_colormap_data_.get(), d_buffer_dst_colormap_.get(),
                                getRawImgHxW() * sizeof(uchar3), cudaMemcpyDeviceToHost, stream_));
+#else
+    APP_ERROR("CUDA post-process unavailable: built without CUDA");
+#endif
 }
 
 void LiteMonoDepthModel::getInferOutputResult(InferOutputContext & infer_output_context) {
+#ifdef HAS_CUDA
     // 同步等待所有异步操作完成（预处理→推理→后处理→D2H拷贝），然后读取结果
     synchronizeStream();
     infer_output_context.depth_raw_infer_out.resize(getInputHxW());
     cudaMemcpy(infer_output_context.depth_raw_infer_out.data(),
-               d_infer_io_[getOutputIndexFromName("disp_output")].get(),
+               d_infer_io_[1 + getOutputIndexFromName("disp_output")].get(),
                getInputHxW() * sizeof(float), cudaMemcpyDeviceToHost);
     infer_output_context.result_depth =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC1, host_pinned_depth_output_data_.get());
     infer_output_context.depth_vis =
         cv::Mat(raw_img_h_, raw_img_w_, CV_8UC3, host_pinned_depth_colormap_data_.get());
+#else
+    APP_ERROR("getInferOutputResult unavailable: built without CUDA");
+#endif
 }
 
 std::vector<float> LiteMonoDepthModel::cvMatPreProcess(FrameInputContext & frame_input_context) {

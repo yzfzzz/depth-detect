@@ -1,9 +1,6 @@
 #ifndef PUBLIC_H
 #define PUBLIC_H
 
-#include <cuda_fp16.h>
-#include <cuda_runtime_api.h>
-#include <NvInfer.h>
 #include <spdlog/spdlog.h>
 #include <unistd.h>
 
@@ -15,21 +12,8 @@
 #    include <nvtx3/nvtx3.hpp>
 #endif
 
-#define CHECK_CUDA(call)                                                          \
-    do {                                                                          \
-        cudaError_t status = call;                                                \
-        if (status != cudaSuccess) {                                              \
-            auto logger = spdlog::get("app");                                     \
-            if (logger) {                                                         \
-                logger->error("CUDA error at {}:{} - {}", __FILE__, __LINE__,     \
-                              cudaGetErrorString(status));                        \
-            } else {                                                              \
-                fprintf(stderr, "CUDA error at %s:%d - %s\n", __FILE__, __LINE__, \
-                        cudaGetErrorString(status));                              \
-            }                                                                     \
-            exit(EXIT_FAILURE);                                                   \
-        }                                                                         \
-    } while (0)
+// CHECK_CUDA 宏已迁至 cpp/inference/infer_backend/include/tensorrt/cuda_utils.h，
+// 本头文件保持无 CUDA 依赖，CPU-only 构建不再被 CUDA 头文件阻断
 
 const std::vector<std::string> V_CLASS_NAMES{ "person",        "bicycle",      "car",
                                               "motorcycle",    "airplane",     "bus",
