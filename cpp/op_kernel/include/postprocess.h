@@ -6,28 +6,16 @@
 
 #include <opencv2/opencv.hpp>
 
-void transpose(float * src, float * dst, int numBboxes, int numElements, cudaStream_t stream);
-/*
-    transpose [1 84 8400] convert to [1 8400 84]
-src:          Tensor, dim is [1 84 8400]
-dst:          Tensor, dim is [1 8400 84]
-numBboxes:    number of bboxes
-numElements:  center_x, center_y, width, height, 80 or other classes
-*/
-
-void decode(float *      src,
-            float *      dst,
-            int          numBboxes,
-            int          numClasses,
-            float        confThresh,
-            int          maxObjects,
-            int          numBoxElement,
-            cudaStream_t stream);
-/*
-    convert [1 8400 84] to [1 7001](7001 = 1 + 1000 * 7, 1: number of valid
-   bboxes 1000: max bboxes, valid bboxes may less than 1000, 7: left, top,
-   right, bottom, confidence, class, keepflag)
-*/
+// 融合算子：直接从 YOLOv8 channel-first 输出 [numClasses+4, numBboxes] 解码, 过滤低置信度后写为 [1, 1 + maxObjects * numBoxElement]：
+// 1: number of valid bboxes; 7: left, top, right, bottom, confidence, class, keepflag
+void decode(const float * src,
+            float *       dst,
+            int           numBboxes,
+            int           numClasses,
+            float         confThresh,
+            int           maxObjects,
+            int           numBoxElement,
+            cudaStream_t  stream);
 
 void nms(float * data, float kNmsThresh, int maxObjects, int numBoxElement, cudaStream_t stream);
 
@@ -44,14 +32,10 @@ void normalize_colormap_resize(float *      src,
 
 void initColorMapTable();  // INFERNO 颜色映射表初始化，仅需调用一次
 
-// 用 cv::applyColorMap(COLORMAP_TURBO) 生成 256 色 TURBO 表并上传到 __constant__ 内存
+// 生成 256 色 TURBO 表并上传到 __constant__ 内存
 void initTurboColorTable();
 
-// float 深度转 TURBO 伪彩（YoloDepthModel 使用，全异步、无主机同步）。
-// 语义对齐 Python depth_to_colormap：去 letterbox 内容区 ROI → 双线性 resize 到原始分辨率
-// → 对有限值求 P1/P99 分位数 → clip 归一化 → 查 TURBO 表。
-// stage_float / stat_min / stat_max / stat_count / range_2f / hist / percentiles_2f
-// 均为调用方持有的设备端中间缓冲（每帧复用）。
+// float 深度转 TURBO 伪彩, 去 letterbox 内容区 ROI → 双线性 resize 到原始分辨率 → 对有限值求 P1/P99 分位数 → clip 归一化 → 查 TURBO 表。
 #define DEPTH_COLORMAP_STAT_BLOCKS 64
 void floatDepthColormapResize(const float * src,
                               int           in_w,
