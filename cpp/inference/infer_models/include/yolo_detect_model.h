@@ -42,10 +42,8 @@ class YoloDetectModel : public BaseModel {
     float conf_thresh_;
 
     // CUDA 资源（仅 TensorRT 后端使用）
-    unique_ptr_device<float>      d_transpose_;
     unique_ptr_device<float>      d_decode_;
     unique_ptr_device<uchar>      d_src_data_;
-    unique_ptr_device<uchar>      d_mid_data_;
     unique_ptr_pinned_host<float> h_infer_out_pinned_;
 
     int output_candidates_;

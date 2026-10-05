@@ -30,9 +30,6 @@ class YoloDepthModel : public BaseModel {
     void buildDepthVisualization(const cv::Mat &      model_depth,
                                  InferOutputContext & infer_output_context) const;
 
-    // 预处理中间缓冲（HWC 的 letterbox 结果，BGR）
-    unique_ptr_device<uchar> d_mid_data_;
-
     // CUDA 伪彩色输出缓冲（原始分辨率，cudaPostProcess 写入 / getInferOutputResult 读取）
     unique_ptr_device<uchar>       d_buffer_dst_depth_;     // 归一化灰度 8U
     unique_ptr_device<uchar3>      d_buffer_dst_colormap_;  // TURBO 伪彩 BGR

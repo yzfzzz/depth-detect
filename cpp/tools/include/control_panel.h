@@ -10,18 +10,6 @@
 #include <vector>
 
 // 运行时参数控制面板：纯滑动条（OpenCV createTrackbar），挂载在 DisplayManager 的主显示窗口上。
-//
-// 实现要点（避免踩坑）：
-//   - createTrackbar 的 value 指针必须传 NULL（OpenCV 4.9+ 已弃用非空 value 指针并告警），
-//     槽位改由回调的 pos 参数与 syncFromEngine 自行维护；
-//   - 部分后端创建 trackbar 时即回调一次（初始 pos 为 0），此时 Slider 未 ready，
-//     回调直接忽略，避免把引擎参数误重置为下限；创建完所有滑动条并完成首次同步后才置 ready；
-//   - Slider 由 std::vector<std::unique_ptr<Slider>> 持有，地址在面板生命周期内稳定，
-//     避免 std::vector<Slider> 扩容使回调 userdata 失效（use-after-free）；
-//   - 槽位 -> 实际值换算：value = value_min + pos * scale（pos 为 0 基槽位）；
-//   - 每帧 update() 用 cv::setTrackbarPos 把引擎当前生效值同步回滑动条（该函数不触发
-//     回调，不会形成"拖动 -> 写回 -> 再同步"的反馈环）。
-//
 // 注意：主窗口必须先于 ControlPanel 构造（main 中 DisplayManager 先行创建窗口）。
 // 面板无编辑状态，update() 返回 void，主循环无需再为面板转发按键。
 class ControlPanel {

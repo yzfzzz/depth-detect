@@ -74,8 +74,6 @@ bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
         d_infer_io_.resize(2);
         d_infer_io_[0].reset(allocDevice(getInputByteSize()));
         d_infer_io_[1].reset(allocDevice(getOutputByteSize(0)));
-        // 中间数据缓冲区（预处理后的图像数据）
-        d_mid_data_.reset(static_cast<uchar *>(allocDevice(sizeof(uchar) * getInputHxW() * 3)));
 
         // CUDA 伪彩色输出缓冲（原始分辨率）
         d_buffer_dst_depth_.reset(
@@ -117,8 +115,8 @@ void YoloDepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
         return;
     }
 
-    preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
-                  d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+    yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
+                   raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 #else
     APP_ERROR("CUDA pre-process unavailable: built without CUDA");
 #endif
@@ -129,7 +127,7 @@ void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
     // 在 stream 上依次执行 resize、P1/P99 分位数统计、归一化 + TURBO 查表，
     // 全程异步、无主机同步；结果异步 D2H 到 pinned 内存，由 getInferOutputResult 读取。
 
-    // letterbox 内容区（去掉灰边），几何与 preprocess_v2 一致（截断取整、居中）
+    // letterbox 内容区（去掉灰边），几何与 preprocess 一致（截断取整、居中）
     const float scale = std::min(static_cast<float>(input_w_) / raw_img_w_,
                                  static_cast<float>(input_h_) / raw_img_h_);
     const int   roi_w = static_cast<int>(raw_img_w_ * scale);
@@ -229,7 +227,7 @@ void YoloDepthModel::postProcessDepth(const std::vector<float> & depth,
 void YoloDepthModel::buildDepthVisualization(const cv::Mat &      model_depth,
                                              InferOutputContext & infer_output_context) const {
     // 对应 Python 参考实现：model.infer() 内部的 remove_letterbox + depth_to_colormap
-    // 1) 去掉 letterbox 灰边：几何与 preprocess_v2/cvMatPreProcess 一致（截断取整、居中）
+    // 1) 去掉 letterbox 灰边：几何与 preprocess/cvMatPreProcess 一致（截断取整、居中）
     const float scale     = std::min(static_cast<float>(input_w_) / raw_img_w_,
                                      static_cast<float>(input_h_) / raw_img_h_);
     const int   resized_w = static_cast<int>(raw_img_w_ * scale);
