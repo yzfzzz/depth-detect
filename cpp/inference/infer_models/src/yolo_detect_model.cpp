@@ -59,18 +59,12 @@ bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
         // d_infer_io_[1]: 输出缓冲区 [1, num_class+4, candidates]
         d_infer_io_[1].reset(allocDevice(output_size));
 
-        // 转置缓冲区（用于后处理）
-        d_transpose_.reset(static_cast<float *>(allocDevice(output_size)));
-
         // 解码缓冲区（用于 NMS）
         d_decode_.reset(static_cast<float *>(
             allocDevice((1 + MAX_NUM_OUTPUT_BBOX * NUM_BOX_ELEMENT) * sizeof(float))));
 
         // 源数据缓冲区（原始图像数据）
         d_src_data_.reset(static_cast<uchar *>(allocDevice(sizeof(uchar) * getRawImgHxW() * 3)));
-
-        // 中间数据缓冲区（预处理后的图像数据）
-        d_mid_data_.reset(static_cast<uchar *>(allocDevice(sizeof(uchar) * getInputHxW() * 3)));
 
     } else
 #endif  // HAS_CUDA
@@ -93,8 +87,8 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
     }
-    preprocess_v2(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
-                  d_mid_data_.get(), raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+    yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
+                   raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
 #else
     APP_ERROR("CUDA pre-process unavailable: built without CUDA");
 #endif
@@ -102,12 +96,10 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 #ifdef HAS_CUDA
-    // YOLO GPU 后处理流水线：转置 → 解码（提取类别/置信度） → NMS → 异步拷贝回主机
-    transpose(static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()),
-              d_transpose_.get(), output_candidates_, num_class_ + 4, stream_);
-
-    decode(d_transpose_.get(), d_decode_.get(), output_candidates_, num_class_, conf_thresh_,
-           MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
+    // YOLO GPU 后处理流水线：解码（已融合原转置算子，直读 channel-first 输出）→ NMS → 异步拷贝回主机
+    decode(static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()),
+           d_decode_.get(), output_candidates_, num_class_, conf_thresh_, MAX_NUM_OUTPUT_BBOX,
+           NUM_BOX_ELEMENT, stream_);
 
     nms(d_decode_.get(), nms_thresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 

@@ -1,34 +1,32 @@
 ﻿#include "preprocess.h"
 
-__global__ void letterbox(const uchar * srcData,
-                          const int     srcH,
-                          const int     srcW,
-                          uchar *       tgtData,
-                          const int     tgtH,
-                          const int     tgtW,
-                          const int     rszH,
-                          const int     rszW,
-                          const int     startY,
-                          const int     startX) {
-    int ix   = threadIdx.x + blockDim.x * blockIdx.x;
-    int iy   = threadIdx.y + blockDim.y * blockIdx.y;
-    int idx  = ix + iy * tgtW;
-    int idx3 = idx * 3;
+// 融合算子：letterbox + 双线性 resize + BGR→RGB + /255 归一化 + HWC→CHW
+// 直接从原始 BGR 图写出 float CHW 张量，省去中间 uchar 缓冲的一次显存往返
+__global__ void letterbox_norm_kernel(const uchar * src_data,
+                                      const int     srcH,
+                                      const int     srcW,
+                                      float *       tgt_data,
+                                      const int     tgtH,
+                                      const int     tgtW,
+                                      const int     rszH,
+                                      const int     rszW,
+                                      const int     startY,
+                                      const int     startX) {
+    int ix = threadIdx.x + blockDim.x * blockIdx.x;
+    int iy = threadIdx.y + blockDim.y * blockIdx.y;
+    if (ix >= tgtW || iy >= tgtH) {
+        return;
+    }
 
-    if (ix > tgtW || iy > tgtH) {
-        return;
-    }
-    // 灰边填充区域：实图像范围外的像素填充灰色 (128,128,128)
-    if (iy < startY || iy > (startY + rszH - 1)) {
-        tgtData[idx3]     = 128;
-        tgtData[idx3 + 1] = 128;
-        tgtData[idx3 + 2] = 128;
-        return;
-    }
-    if (ix < startX || ix > (startX + rszW - 1)) {
-        tgtData[idx3]     = 128;
-        tgtData[idx3 + 1] = 128;
-        tgtData[idx3 + 2] = 128;
+    int idx   = iy * tgtW + ix;
+    int plane = tgtH * tgtW;
+
+    // 灰边填充区域：实图像范围外的像素填充灰色 (128,128,128)，归一化后为 128/255
+    if (iy < startY || iy > (startY + rszH - 1) || ix < startX || ix > (startX + rszW - 1)) {
+        float gray                = 128.0f / 255.0f;
+        tgt_data[idx]             = gray;  // R
+        tgt_data[idx + plane]     = gray;  // G
+        tgt_data[idx + plane * 2] = gray;  // B
         return;
     }
 
@@ -38,126 +36,36 @@ __global__ void letterbox(const uchar * srcData,
     // 中心对齐反向映射：目标坐标 → 源坐标，+0.5 偏移避免边缘伪影
     float beforeX = float(ix - startX + 0.5) / scaleX - 0.5;
     float beforeY = float(iy - startY + 0.5) / scaleY - 0.5;
-    // 双线性插值：计算源坐标相邻四个整像素及小数偏移
-    int   topY    = static_cast<int>(beforeY);
-    int   bottomY = topY + 1;
-    int   leftX   = static_cast<int>(beforeX);
-    int   rightX  = leftX + 1;
-    //计算变换前坐标的小数部分
-    float u       = beforeX - leftX;
-    float v       = beforeY - topY;
+    // 双线性插值：计算源坐标左上整像素及小数偏移
+    int   srcX    = (int) floorf(beforeX);
+    int   srcY    = (int) floorf(beforeY);
+    float u       = beforeX - srcX;
+    float v       = beforeY - srcY;
+    float fx1y1   = u * v;
+    float fx0y0   = 1.0f - u - v + fx1y1;
+    float fx1y0   = u - fx1y1;
+    float fx0y1   = v - fx1y1;
 
-    if (topY >= srcH - 1 && leftX >= srcW - 1)  //右下角
-    {
-        for (int k = 0; k < 3; k++) {
-            tgtData[idx3 + k] = (1. - u) * (1. - v) * srcData[(leftX + topY * srcW) * 3 + k];
-        }
-    } else if (topY >= srcH - 1)  // 最后一行
-    {
-        for (int k = 0; k < 3; k++) {
-            tgtData[idx3 + k] = (1. - u) * (1. - v) * srcData[(leftX + topY * srcW) * 3 + k] +
-                                (u) * (1. - v) * srcData[(rightX + topY * srcW) * 3 + k];
-        }
-    } else if (leftX >= srcW - 1)  // 最后一列
-    {
-        for (int k = 0; k < 3; k++) {
-            tgtData[idx3 + k] = (1. - u) * (1. - v) * srcData[(leftX + topY * srcW) * 3 + k] +
-                                (1. - u) * (v) *srcData[(leftX + bottomY * srcW) * 3 + k];
-        }
-    } else  // 非最后一行或最后一列情况
-    {
-        for (int k = 0; k < 3; k++) {
-            tgtData[idx3 + k] = (1. - u) * (1. - v) * srcData[(leftX + topY * srcW) * 3 + k] +
-                                (u) * (1. - v) * srcData[(rightX + topY * srcW) * 3 + k] +
-                                (1. - u) * (v) *srcData[(leftX + bottomY * srcW) * 3 + k] +
-                                u * v * srcData[(rightX + bottomY * srcW) * 3 + k];
-        }
+    // 合并 resize + BGR→RGB + 归一化 + HWC→CHW，遍历三个通道
+#pragma unroll
+    for (int c = 0; c < 3; ++c) {
+        // 边界 clamp 防止越界
+        int sx0 = min(max(srcX, 0), srcW - 1);
+        int sy0 = min(max(srcY, 0), srcH - 1);
+        int sx1 = min(sx0 + 1, srcW - 1);
+        int sy1 = min(sy0 + 1, srcH - 1);
+
+        // BGR→RGB 通道重映射：c=0→R(读src channel 2), c=1→G(读src channel 1), c=2→B(读src channel 0)
+        float p00 = src_data[(sy0 * srcW + sx0) * 3 + (2 - c)];
+        float p10 = src_data[(sy0 * srcW + sx1) * 3 + (2 - c)];
+        float p01 = src_data[(sy1 * srcW + sx0) * 3 + (2 - c)];
+        float p11 = src_data[(sy1 * srcW + sx1) * 3 + (2 - c)];
+
+        float val = p00 * fx0y0 + p10 * fx1y0 + p01 * fx0y1 + p11 * fx1y1;
+
+        // 归一化后写入 CHW 布局：out[c * H * W + y * W + x]
+        tgt_data[c * plane + idx] = val / 255.0f;
     }
-}
-
-__global__ void process(const uchar * srcData, float * tgtData, const int h, const int w) {
-    int ix   = threadIdx.x + blockIdx.x * blockDim.x;
-    int iy   = threadIdx.y + blockIdx.y * blockDim.y;
-    int idx  = ix + iy * w;
-    int idx3 = idx * 3;
-
-    if (ix < w && iy < h) {
-        tgtData[idx]             = (float) srcData[idx3 + 2] / 255.0;  // BGR→RGB: R=src[2]
-        tgtData[idx + h * w]     = (float) srcData[idx3 + 1] / 255.0;  // G=src[1]
-        tgtData[idx + h * w * 2] = (float) srcData[idx3] / 255.0;      // B=src[0]
-    }
-}
-
-void preprocess(const cv::Mat & srcImg,
-                float *         dstDevData,
-                uchar *         srcDevData,
-                uchar *         midDevData,
-                int             raw_img_h,
-                int             raw_img_w,
-                int             input_h,
-                int             input_w,
-                cudaStream_t    stream) {
-    // Letterbox 计算：选择较小缩放比例保持宽高比，不足部分居中填充灰边
-    int   w, h, x, y;
-    float r_w = input_w / (raw_img_w * 1.0);
-    float r_h = input_h / (raw_img_h * 1.0);
-    if (r_h > r_w) {
-        w = input_w;
-        h = r_w * raw_img_h;
-        x = 0;
-        y = (input_h - h) / 2;
-    } else {
-        w = r_h * raw_img_w;
-        h = input_h;
-        x = (input_w - w) / 2;
-        y = 0;
-    }
-
-    cudaMemcpyAsync(srcDevData, srcImg.data, sizeof(uchar) * raw_img_h * raw_img_w * 3,
-                    cudaMemcpyHostToDevice, stream);
-
-    dim3 blockSize(32, 32);
-    dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
-                  (input_h + blockSize.y - 1) / blockSize.y);
-
-    // GPU 预处理流水线：letterbox→HWC2CHW/BGR2RGB/归一化，同一 stream 顺序执行
-    letterbox<<<gridSize, blockSize, 0, stream>>>(srcDevData, raw_img_h, raw_img_w, midDevData,
-                                                  input_h, input_w, h, w, y, x);
-    process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
-}
-
-// preprocess_v2：与 preprocess 逻辑相同，但输入已是 GPU 端数据，省略 H2D 拷贝
-void preprocess_v2(float *      dstDevData,
-                   uchar *      srcDevData,
-                   uchar *      midDevData,
-                   int          raw_img_h,
-                   int          raw_img_w,
-                   int          input_h,
-                   int          input_w,
-                   cudaStream_t stream) {
-    // Letterbox 计算：选择较小缩放比例保持宽高比，不足部分居中填充灰边
-    int   w, h, x, y;
-    float r_w = input_w / (raw_img_w * 1.0);
-    float r_h = input_h / (raw_img_h * 1.0);
-    if (r_h > r_w) {
-        w = input_w;
-        h = r_w * raw_img_h;
-        x = 0;
-        y = (input_h - h) / 2;
-    } else {
-        w = r_h * raw_img_w;
-        h = input_h;
-        x = (input_w - w) / 2;
-        y = 0;
-    }
-
-    dim3 blockSize(32, 32);
-    dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
-                  (input_h + blockSize.y - 1) / blockSize.y);
-
-    letterbox<<<gridSize, blockSize, 0, stream>>>(srcDevData, raw_img_h, raw_img_w, midDevData,
-                                                  input_h, input_w, h, w, y, x);
-    process<<<gridSize, blockSize, 0, stream>>>(midDevData, dstDevData, input_h, input_w);
 }
 
 __global__ void resize_mat2tensor_norm_kernel(uchar * src,
@@ -216,6 +124,37 @@ __global__ void resize_mat2tensor_norm_kernel(uchar * src,
         int out_idx  = c * resized_h * resized_w + dst_idy * resized_w + dst_idx;
         dst[out_idx] = (val / 255.0f - mean[c]) / std[c];
     }
+}
+
+void yoloPreprocess(float *      dst_dev_data,
+                    uchar *      src_dev_data,
+                    int          raw_img_h,
+                    int          raw_img_w,
+                    int          input_h,
+                    int          input_w,
+                    cudaStream_t stream) {
+    // Letterbox 计算：选择较小缩放比例保持宽高比，不足部分居中填充灰边
+    int   w, h, x, y;
+    float r_w = input_w / (raw_img_w * 1.0);
+    float r_h = input_h / (raw_img_h * 1.0);
+    if (r_h > r_w) {
+        w = input_w;
+        h = r_w * raw_img_h;
+        x = 0;
+        y = (input_h - h) / 2;
+    } else {
+        w = r_h * raw_img_w;
+        h = input_h;
+        x = (input_w - w) / 2;
+        y = 0;
+    }
+
+    dim3 blockSize(32, 8);
+    dim3 gridSize((input_w + blockSize.x - 1) / blockSize.x,
+                  (input_h + blockSize.y - 1) / blockSize.y);
+
+    letterbox_norm_kernel<<<gridSize, blockSize, 0, stream>>>(
+        src_dev_data, raw_img_h, raw_img_w, dst_dev_data, input_h, input_w, h, w, y, x);
 }
 
 void depthPreprocess(uchar *      src,
