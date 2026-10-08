@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+namespace op_kernel {
+
 // decode kernel: 解析检测框坐标、类别置信度和标签，过滤低置信度结果。
 // 融合了原独立 transpose 算子：直接读取 YOLOv8 channel-first 输出 [4+num_classes, num_bboxes]，
 // warp 内相邻线程读相邻地址，每条 load 指令天然合并访存，无需 shared memory 转置搬运
@@ -699,3 +701,5 @@ void floatDepthColormapResize(const float * src,
     depth_colorize_kernel<<<(total + stat_threads - 1) / stat_threads, stat_threads, 0, stream>>>(
         stage_float, total, percentiles_2f, dst_gray, dst_color);
 }
+
+}  // namespace op_kernel

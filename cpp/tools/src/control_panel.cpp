@@ -9,6 +9,7 @@
 #include <opencv2/highgui.hpp>
 #include <utility>
 
+namespace tools {
 namespace {
 int toSlot(float value, float value_min, float scale, int max) {
     if (scale <= 0.0f || !std::isfinite(value)) {
@@ -35,9 +36,9 @@ void ControlPanel::onTrackbar(int pos, void * userdata) {
     APP_INFO("[ControlPanel] {} -> {:.2f}", slider->label, value);
 }
 
-ControlPanel::ControlPanel(MotionStateEngine &   motion_engine,
-                           const ConfigManager & config,
-                           const std::string &   window_name) :
+ControlPanel::ControlPanel(core::MotionStateEngine &    motion_engine,
+                           const utils::ConfigManager & config,
+                           const std::string &          window_name) :
     enabled_(config.isDisplayEnabled() && config.isControlPanelEnabled()),
     window_name_(window_name),
     motion_engine_(motion_engine) {
@@ -139,3 +140,5 @@ void ControlPanel::update() {
     }
     syncFromEngine();
 }
+
+}  // namespace tools

@@ -16,6 +16,7 @@
 #    include "qnn_backend.h"  // QNN 后端落地时提供（USE_QNN 开关 + QNN SDK）
 #endif
 
+namespace inference {
 std::string backendPathKeyForBackend(const std::string & backend_type) {
     if (backend_type == "tensorrt") {
         return "engine";
@@ -73,3 +74,5 @@ std::vector<std::string> backendCandidateChain(
     }
     return candidates;
 }
+
+}  // namespace inference

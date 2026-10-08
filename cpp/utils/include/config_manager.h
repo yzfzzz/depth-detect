@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+namespace utils {
+
 // 框架读取配置文件类 - 单例模式
 class ConfigManager {
   public:
@@ -368,3 +370,5 @@ inline float ConfigManager::getNewTrackThresh() const {
 inline float ConfigManager::getMatchThresh() const {
     return config_["bytetrack"]["match_thresh"].as<float>(0.8f);
 }
+
+}  // namespace utils

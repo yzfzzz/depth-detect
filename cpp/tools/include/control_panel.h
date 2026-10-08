@@ -12,15 +12,17 @@
 // 运行时参数控制面板：纯滑动条（OpenCV createTrackbar），挂载在 DisplayManager 的主显示窗口上。
 // 注意：主窗口必须先于 ControlPanel 构造（main 中 DisplayManager 先行创建窗口）。
 // 面板无编辑状态，update() 返回 void，主循环无需再为面板转发按键。
+
+namespace tools {
 class ControlPanel {
   public:
     using ReadFunc  = std::function<float()>;      // 读引擎当前生效值（每帧同步用）
     using ApplyFunc = std::function<void(float)>;  // 写回引擎 setter（拖动实时生效）
 
     // window_name: 挂载滑动条的主显示窗口名（即 DisplayManager 的窗口名）
-    ControlPanel(MotionStateEngine &   motion_engine,
-                 const ConfigManager & config,
-                 const std::string &   window_name);
+    ControlPanel(core::MotionStateEngine &    motion_engine,
+                 const utils::ConfigManager & config,
+                 const std::string &          window_name);
     ~ControlPanel();
 
     bool isEnabled() const { return enabled_; }
@@ -49,5 +51,7 @@ class ControlPanel {
     bool        enabled_;
     std::string window_name_;  // 挂载滑动条的主窗口名（DisplayManager 所有）
     std::vector<std::unique_ptr<Slider>> sliders_;
-    MotionStateEngine &                  motion_engine_;
+    core::MotionStateEngine &            motion_engine_;
 };
+
+}  // namespace tools

@@ -14,6 +14,7 @@
 #include <memory>
 #include <string>
 
+namespace inference {
 bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
                               int                                raw_img_w,
                               int                                raw_img_h,
@@ -85,7 +86,7 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
 #    endif
 
         // 初始化颜色映射表
-        initColorMapTable();
+        op_kernel::initColorMapTable();
     } else
 #endif
     {  // Host 路径：主机缓冲输出（ONNX Runtime / 未来的 QNN 等）
@@ -109,12 +110,12 @@ void LiteMonoDepthModel::cudaPreProcess(FrameInputContext & frame_input_context)
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
     }
-    depthPreprocess(frame_input_context.d_raw_img_.get(),
-                    static_cast<float *>(d_infer_io_[0].get()), raw_img_w_, raw_img_h_, input_w_,
-                    input_h_,
-                    d_normalize_params_.get(),      // mean
-                    d_normalize_params_.get() + 3,  // std
-                    stream_);
+    op_kernel::depthPreprocess(frame_input_context.d_raw_img_.get(),
+                               static_cast<float *>(d_infer_io_[0].get()), raw_img_w_, raw_img_h_,
+                               input_w_, input_h_,
+                               d_normalize_params_.get(),      // mean
+                               d_normalize_params_.get() + 3,  // std
+                               stream_);
 #else
     APP_ERROR("CUDA pre-process unavailable: built without CUDA");
 #endif
@@ -123,7 +124,7 @@ void LiteMonoDepthModel::cudaPreProcess(FrameInputContext & frame_input_context)
 void LiteMonoDepthModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 #ifdef HAS_CUDA
     // 深度归一化 + 颜色映射 + resize 到原始分辨率
-    normalize_colormap_resize(
+    op_kernel::normalize_colormap_resize(
         static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("disp_output")].get()),
         d_buffer_norm_depth_.get(), d_buffer_norm_colormap_.get(), d_buffer_dst_depth_.get(),
         d_buffer_dst_colormap_.get(), input_w_, input_h_, raw_img_w_, raw_img_h_, stream_);
@@ -185,3 +186,5 @@ void LiteMonoDepthModel::cvMatPostProcess(InferOutputContext & infer_output_cont
     infer_output_context.result_depth = depth_mat;
     infer_output_context.depth_vis    = colormap;
 }
+
+}  // namespace inference

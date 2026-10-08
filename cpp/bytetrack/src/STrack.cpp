@@ -1,5 +1,7 @@
 #include "STrack.h"
 
+namespace bytetrack {
+
 STrack::STrack(std::vector<float> tlwh_, float score) {
     _tlwh.resize(4);
     _tlwh.assign(tlwh_.begin(), tlwh_.end());
@@ -181,3 +183,5 @@ cv::Scalar STrack::get_color() const {
     int idx = track_id + 3;
     return cv::Scalar(37 * idx % 255, 17 * idx % 255, 29 * idx % 255);
 }
+
+}  // namespace bytetrack

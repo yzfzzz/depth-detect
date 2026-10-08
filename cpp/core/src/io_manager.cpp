@@ -25,6 +25,7 @@
 #    include <unistd.h>
 #endif
 
+namespace core {
 namespace {
 // GB -> 字节；下限钳到 0.1 GB（约 100 MB），防止配 0 导致缓冲永远为满
 size_t gbToBytes(double gb) {
@@ -33,7 +34,7 @@ size_t gbToBytes(double gb) {
 }
 }  // namespace
 
-IOManager::IOManager(const ConfigManager & config_manager) :
+IOManager::IOManager(const utils::ConfigManager & config_manager) :
     IOManager(config_manager.getSaveMode(),
               config_manager.getOutDir(),
               config_manager.getSendTcpIp(),
@@ -485,3 +486,5 @@ bool IOManager::sendAlert(const AlertMessage & alert) const {
     APP_INFO("Send JSON message: {}", j.dump());
     return true;
 }
+
+}  // namespace core

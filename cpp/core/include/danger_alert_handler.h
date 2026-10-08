@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <vector>
 
+namespace core {
 struct AlertObjectData {
     int x;
     int y;
@@ -46,7 +47,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlertMessage, timestamp, frame_id, img_w, img
 // 小目标过滤与报警消息组装：快速靠近的目标即 is_danger=true 上报。
 class DangerAlertHandler {
   public:
-    explicit DangerAlertHandler(const ConfigManager & config);
+    explicit DangerAlertHandler(const utils::ConfigManager & config);
 
     AlertMessage buildAlert(const FrameInputContext &  frame_input,
                             const InferOutputContext & infer_output) const;
@@ -57,3 +58,5 @@ class DangerAlertHandler {
     bool  filter_small_objects_;  // 是否过滤小目标
     float min_object_area_;       // 最小目标面积阈值
 };
+
+}  // namespace core

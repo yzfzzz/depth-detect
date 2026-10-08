@@ -9,6 +9,8 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 
+namespace inference {
+
 // 深度估计模型，继承自 BaseModel，支持 TensorRT 和 ONNX Runtime 后端
 class LiteMonoDepthModel : public BaseModel {
   public:
@@ -54,3 +56,5 @@ class LiteMonoDepthModel : public BaseModel {
     // CPU 端资源
     cv::Mat colormap_table_;
 };
+
+}  // namespace inference

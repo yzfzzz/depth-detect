@@ -5,6 +5,8 @@
 
 // OpenCV 全局鼠标回调：将点击事件转发给对应窗口的 DisplayManager 实例
 // userdata 必须是 DisplayManager 指针，由 cv::setMouseCallback 设置
+
+namespace tools {
 void onMouse(int event, int x, int y, int flags, void * userdata) {
     DisplayManager * dm = static_cast<DisplayManager *>(userdata);
     if (!dm || !dm->isEnabled()) {
@@ -16,9 +18,9 @@ void onMouse(int event, int x, int y, int flags, void * userdata) {
     }
 }
 
-DisplayManager::DisplayManager(const ConfigManager & config,
-                               const std::string &   window_name,
-                               cv::Size              display_size) :
+DisplayManager::DisplayManager(const utils::ConfigManager & config,
+                               const std::string &          window_name,
+                               cv::Size                     display_size) :
     enabled_(config.isDisplayEnabled()),
     window_name_(window_name),
     display_size_(display_size) {
@@ -105,7 +107,7 @@ float DisplayManager::computeMeanDepth(const std::vector<float> & tlwh) const {
     return (valid_count > 0) ? (sum_depth / valid_count) : 0.0f;
 }
 
-void DisplayManager::printTargetInfo(const STrack & track) const {
+void DisplayManager::printTargetInfo(const bytetrack::STrack & track) const {
     int                        class_id = track.class_id;
     int                        track_id = track.track_id;
     const std::vector<float> & tlwh     = track.tlwh;
@@ -137,7 +139,8 @@ void DisplayManager::handleMouseClick(int x, int y) {
     APP_WARN("No target clicked");
 }
 
-void DisplayManager::updateData(const std::vector<STrack> & tracks, const cv::Mat & depth_map) {
+void DisplayManager::updateData(const std::vector<bytetrack::STrack> & tracks,
+                                const cv::Mat &                        depth_map) {
     if (enabled_) {
         tracks_ = tracks;
         if (!depth_map.empty()) {
@@ -189,7 +192,7 @@ DrawingManager::DrawingManager(const std::vector<std::string> & class_names) :
     vClassNames_(class_names) {}
 
 void DrawingManager::drawTrackedObject(cv::Mat &                     img,
-                                       const STrack &                track,
+                                       const bytetrack::STrack &     track,
                                        const MotionStateInfoRecord & motion,
                                        cv::Scalar                    color) {
     const std::vector<float> & tlwh     = track.tlwh;
@@ -290,3 +293,5 @@ cv::Mat DrawingManager::concatenateFrames(const cv::Mat & rgb_img, const cv::Mat
 
     return out_frame;
 }
+
+}  // namespace tools

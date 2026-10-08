@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+namespace inference {
+
 class InferenceBackend;
 // 后端类型名与 yaml 中模型路径条目 key 的对应关系：
 //   tensorrt    -> "engine"
@@ -26,3 +28,5 @@ std::vector<std::string> backendCandidateChain(
     const std::map<std::string, std::string> & model_paths,
     bool                                       use_gpu,
     const std::string &                        preferred = "auto");
+
+}  // namespace inference

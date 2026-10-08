@@ -61,6 +61,8 @@
 #    define PRINT_INDEX_ARRAY(a, n)
 #endif
 
+namespace bytetrack {
+
 typedef signed int   int_t;
 typedef unsigned int uint_t;
 typedef double       cost_t;
@@ -69,5 +71,7 @@ typedef char         boolean;
 typedef enum fp_t { FP_1 = 1, FP_2 = 2, FP_DYNAMIC = 3 } fp_t;
 
 extern int_t lapjv_internal(const uint_t n, cost_t * cost[], int_t * x, int_t * y);
+
+}  // namespace bytetrack
 
 #endif  // LAPJV_H

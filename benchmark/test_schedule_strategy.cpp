@@ -30,7 +30,7 @@ constexpr int kWarmupFrames = 20;
 constexpr int kFramesPerRun = 100;
 
 // ------------------------------- 配置与全局对象 -------------------------------
-LoggerManager & logger_manager = LoggerManager::getInstance(false, true, "err");
+utils::LoggerManager & logger_manager = utils::LoggerManager::getInstance(false, true, "err");
 
 std::string config_path = "benchmark.yaml";
 YAML::Node  root        = YAML::LoadFile(config_path);
@@ -58,16 +58,16 @@ std::string yolo_model_path  = task_node["yolo_model_path"].as<std::string>();
 std::string depth_model_path = task_node["depth_model_path"].as<std::string>();
 bool        use_gpu          = task_node["use_gpu"].as<bool>(true);
 
-IOManager io_manager("none");
-FrameMeta frame_meta = io_manager.Init(video_path);
-Pipeline  pipeline(depth_model_path, yolo_model_path, frame_meta, use_gpu);
+core::IOManager io_manager("none");
+FrameMeta       frame_meta = io_manager.Init(video_path);
+core::Pipeline  pipeline(depth_model_path, yolo_model_path, frame_meta, use_gpu);
 
 // ------------------------------- 策略与统计 ----------------------------------
 struct StrategySpec {
-    std::string  label;            // benchmark 名 / 统计表 key
-    ScheduleMode mode;             // 调度策略
-    int          detect_interval;  // 仅 STAGGER 生效：N = 每 N 帧推一次检测
-    int          depth_interval;   // 仅 STAGGER 生效：N = 每 N 帧推一次深度
+    std::string        label;            // benchmark 名 / 统计表 key
+    core::ScheduleMode mode;             // 调度策略
+    int                detect_interval;  // 仅 STAGGER 生效：N = 每 N 帧推一次检测
+    int                depth_interval;   // 仅 STAGGER 生效：N = 每 N 帧推一次深度
 };
 
 struct StrategyStats {
@@ -81,14 +81,14 @@ struct StrategyStats {
 
 std::map<std::string, StrategyStats> schedule_stats;
 
-// 与 Pipeline::shouldRunDetect / shouldRunDepth 同一套判据（frame_id % interval == 0），
+// 与 core::Pipeline::shouldRunDetect / shouldRunDepth 同一套判据（frame_id % interval == 0），
 // 记下来是为了在表里解释"这个策略为什么快"：错峰的均摊耗时被单路帧拉下来了
 void recordFrameSample(const StrategySpec & spec, long frame_id, double elapsed_us) {
     StrategyStats & stats = schedule_stats[spec.label];
     stats.spec            = spec;
     stats.frame_us.push_back(elapsed_us);
 
-    const bool is_stagger   = spec.mode == ScheduleMode::STAGGER;
+    const bool is_stagger   = spec.mode == core::ScheduleMode::STAGGER;
     const bool detect_frame = !is_stagger || (frame_id % spec.detect_interval == 0);
     const bool depth_frame  = !is_stagger || (frame_id % spec.depth_interval == 0);
 
@@ -152,32 +152,32 @@ class ScheduleBenchmark : public benchmark::Fixture {};
 
 // 串行：两路依次同步执行，作为降幅基线
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Sync)(benchmark::State & state) {
-    runStrategy(state, { "sync", ScheduleMode::SYNC, 1, 1 });
+    runStrategy(state, { "sync", core::ScheduleMode::SYNC, 1, 1 });
 }
 
 // 重叠：本帧检测与深度异步提交到各自 stream 重叠执行
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Overlap)(benchmark::State & state) {
-    runStrategy(state, { "overlap", ScheduleMode::OVERLAP, 1, 1 });
+    runStrategy(state, { "overlap", core::ScheduleMode::OVERLAP, 1, 1 });
 }
 
 // 错峰 1×1：每帧都是双路帧 -> 应退化为重叠路径，用来验证"错峰只是调度，不是另一套推理"
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Stagger_Detect1_Depth1)(benchmark::State & state) {
-    runStrategy(state, { "stagger(1x1)", ScheduleMode::STAGGER, 1, 1 });
+    runStrategy(state, { "stagger(1x1)", core::ScheduleMode::STAGGER, 1, 1 });
 }
 
 // 错峰 1×3：实机 config_jetson.yaml 的配置（检测每帧、深度每 3 帧）
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Stagger_Detect1_Depth3)(benchmark::State & state) {
-    runStrategy(state, { "stagger(1x3)", ScheduleMode::STAGGER, 1, 3 });
+    runStrategy(state, { "stagger(1x3)", core::ScheduleMode::STAGGER, 1, 3 });
 }
 
 // 错峰 2×3：碰撞帧只在 6 的倍数帧出现，单路帧占比最高
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Stagger_Detect2_Depth3)(benchmark::State & state) {
-    runStrategy(state, { "stagger(2x3)", ScheduleMode::STAGGER, 2, 3 });
+    runStrategy(state, { "stagger(2x3)", core::ScheduleMode::STAGGER, 2, 3 });
 }
 
 // 错峰 3×3：检测与深度同频，除双路帧外全部是空帧（只跑收尾的运动状态判定），最省算力
 BENCHMARK_DEFINE_F(ScheduleBenchmark, Stagger_Detect3_Depth3)(benchmark::State & state) {
-    runStrategy(state, { "stagger(3x3)", ScheduleMode::STAGGER, 3, 3 });
+    runStrategy(state, { "stagger(3x3)", core::ScheduleMode::STAGGER, 3, 3 });
 }
 
 BENCHMARK_REGISTER_F(ScheduleBenchmark, Sync)
@@ -254,7 +254,8 @@ std::string centeredTitle(const std::string & text) {
 void printSummary() {
     auto         baseline_it  = schedule_stats.find("sync");
     const bool   has_baseline = baseline_it != schedule_stats.end();
-    const double baseline_ms  = has_baseline ? calculateAverage(baseline_it->second.frame_us) : 0.0;
+    const double baseline_ms =
+        has_baseline ? tools::calculateAverage(baseline_it->second.frame_us) : 0.0;
 
     // 表头用纯 ASCII：中文字符在 std::setw 下按字节计宽，和 ASCII 数据行会错位
     const std::string divider(kTableWidth, '-');
@@ -273,11 +274,11 @@ void printSummary() {
             continue;
         }
         const StrategyStats & stats     = it->second;
-        const double          mean      = calculateAverage(stats.frame_us);
-        const double          p50       = calculatePercentile(stats.frame_us, 50.0);
-        const double          p95       = calculatePercentile(stats.frame_us, 95.0);
-        const double          p99       = calculatePercentile(stats.frame_us, 99.0);
-        const double          dual_mean = calculateAverage(stats.dual_path_us);
+        const double          mean      = tools::calculateAverage(stats.frame_us);
+        const double          p50       = tools::calculatePercentile(stats.frame_us, 50.0);
+        const double          p95       = tools::calculatePercentile(stats.frame_us, 95.0);
+        const double          p99       = tools::calculatePercentile(stats.frame_us, 99.0);
+        const double          dual_mean = tools::calculateAverage(stats.dual_path_us);
 
         std::ostringstream delta;
         if (!has_baseline || label == "sync") {
@@ -312,7 +313,7 @@ void printSummary() {
             if (it == schedule_stats.end() || label == "sync") {
                 continue;
             }
-            const double mean  = calculateAverage(it->second.frame_us);
+            const double mean  = tools::calculateAverage(it->second.frame_us);
             const double saved = mean - baseline_ms;
             std::cout << "  " << std::left << std::setw(14) << label << std::right << "saves "
                       << -saved << " ms/frame (" << std::setprecision(1)

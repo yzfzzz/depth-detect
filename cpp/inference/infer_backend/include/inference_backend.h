@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+namespace inference {
+
 enum class BackendType {
     TensorRT,     // TensorRT(GPU)
     OnnxRuntime,  // ONNX Runtime(CPU)
@@ -108,3 +110,5 @@ class InferenceBackend {
 
     int num_outputs_ = 1;
 };
+
+}  // namespace inference

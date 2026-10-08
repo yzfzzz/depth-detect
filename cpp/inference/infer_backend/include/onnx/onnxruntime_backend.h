@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace inference {
+
 // ONNX Runtime CPU 推理后端
 class OnnxRuntimeBackend : public InferenceBackend {
   public:
@@ -67,3 +69,5 @@ class OnnxRuntimeBackend : public InferenceBackend {
 
     std::string input_name_;
 };
+
+}  // namespace inference

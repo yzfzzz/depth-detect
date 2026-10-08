@@ -2,6 +2,8 @@
 
 #include <fstream>
 
+namespace bytetrack {
+
 BYTETracker::BYTETracker(int   max_time_lost,
                          float track_high_thresh,
                          float track_low_thresh,
@@ -215,3 +217,5 @@ void BYTETracker::update(const std::vector<Object> & objects,
         lost_stracks.push_back(this->lost_stracks[i]);
     }
 }
+
+}  // namespace bytetrack

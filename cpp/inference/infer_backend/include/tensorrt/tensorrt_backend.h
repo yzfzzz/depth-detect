@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+namespace inference {
+
 // TensorRT 推理后端（GPU 加速）
 class TensorRTBackend : public InferenceBackend {
   public:
@@ -104,3 +106,5 @@ class TensorRTBackend : public InferenceBackend {
     std::vector<const void *> graph_bindings_;        // 捕获时绑定的输入 + 输出地址
 #endif
 };
+
+}  // namespace inference

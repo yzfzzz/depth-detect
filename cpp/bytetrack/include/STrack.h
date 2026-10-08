@@ -4,6 +4,8 @@
 
 #include <opencv2/opencv.hpp>
 
+namespace bytetrack {
+
 enum TrackState { New = 0, Tracked, Lost, Removed };
 
 class STrack {
@@ -49,3 +51,5 @@ class STrack {
   private:
     byte_kalman::KalmanFilter kalman_filter;
 };
+
+}  // namespace bytetrack

@@ -15,10 +15,10 @@ YAML::Node  task_node        = root["task"][task_name];
 std::string yolo_model_path  = task_node["yolo_model_path"].as<std::string>();
 std::string depth_model_path = task_node["depth_model_path"].as<std::string>();
 
-LoggerManager & logger_manager = LoggerManager::getInstance(false, true, "err");
-IOManager       io_manager("none");
-FrameMeta       frame_meta = io_manager.Init(video_path);
-Pipeline        pipeline(depth_model_path, yolo_model_path, frame_meta, false);
+utils::LoggerManager & logger_manager = utils::LoggerManager::getInstance(false, true, "err");
+core::IOManager        io_manager("none");
+FrameMeta              frame_meta = io_manager.Init(video_path);
+core::Pipeline         pipeline(depth_model_path, yolo_model_path, frame_meta, false);
 
 // 对比同步串行 (process) 与 CPU/GPU 重叠 (processOverlap) 的性能
 class PipelineBenchmark : public benchmark::Fixture {

@@ -8,6 +8,8 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 
+namespace inference {
+
 struct Detection {
     std::array<float, 4> bbox;  // x1, y1, x2, y2
     float                conf;
@@ -54,3 +56,5 @@ class YoloDetectModel : public BaseModel {
     static constexpr int MAX_NUM_OUTPUT_BBOX = 1000;
     static constexpr int NUM_BOX_ELEMENT     = 7;
 };
+
+}  // namespace inference

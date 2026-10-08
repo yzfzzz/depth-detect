@@ -6,6 +6,8 @@
 #include <fstream>
 #include <utility>
 
+namespace inference {
+
 OnnxRuntimeBackend::OnnxRuntimeBackend() : session_(nullptr), input_byte_size_(0) {}
 
 OnnxRuntimeBackend::~OnnxRuntimeBackend() = default;
@@ -196,3 +198,5 @@ size_t OnnxRuntimeBackend::getOutputByteSize(int output_index) const {
     }
     return output_tensor_[output_index].byte_size;
 }
+
+}  // namespace inference

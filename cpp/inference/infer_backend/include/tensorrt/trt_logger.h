@@ -3,6 +3,8 @@
 #include <NvInfer.h>
 #include <spdlog/spdlog.h>
 
+namespace inference {
+
 // TensorRT 日志适配器 - 将 TensorRT 日志写入 spdlog
 // 仅 TensorRT 后端使用，避免 TRT 头文件经 logger_manager.h 扩散到全工程
 class Logger : public nvinfer1::ILogger {
@@ -40,3 +42,5 @@ class Logger : public nvinfer1::ILogger {
         }
     }
 };
+
+}  // namespace inference

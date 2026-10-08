@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cmath>
 
+namespace core {
 namespace approach {
 
 namespace {
@@ -488,3 +489,5 @@ float MotionStateEngine::computeMeanDepth(cv::Mat                    depth,
 
     return count > 0 ? (sum / count) : 0.0f;
 }
+
+}  // namespace core

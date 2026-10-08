@@ -7,6 +7,8 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 
+namespace inference {
+
 // YOLO 深度估计模型，输出单通道 dense depth map。
 class YoloDepthModel : public BaseModel {
   public:
@@ -46,3 +48,5 @@ class YoloDepthModel : public BaseModel {
     unique_ptr_device<int>   d_hist_;         // [256]
     unique_ptr_device<float> d_percentiles_;  // [2] {P1, P99}
 };
+
+}  // namespace inference

@@ -13,6 +13,7 @@
 #include <opencv2/dnn.hpp>
 #include <unordered_set>
 
+namespace inference {
 bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            int                                raw_img_w,
                            int                                raw_img_h,
@@ -88,8 +89,9 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
         APP_ERROR("Input image buffer is not allocated on GPU");
         return;
     }
-    yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
-                   raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+    op_kernel::yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()),
+                              frame_input_context.d_raw_img_.get(), raw_img_h_, raw_img_w_,
+                              input_h_, input_w_, stream_);
 #else
     APP_ERROR("CUDA pre-process unavailable: built without CUDA");
 #endif
@@ -98,11 +100,12 @@ void YoloDetectModel::cudaPreProcess(FrameInputContext & frame_input_context) {
 void YoloDetectModel::cudaPostProcess(FrameInputContext & frame_input_context) {
 #ifdef HAS_CUDA
     // YOLO GPU 后处理流水线：解码（已融合原转置算子，直读 channel-first 输出）→ NMS → 异步拷贝回主机
-    decode(static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()),
-           d_decode_.get(), output_candidates_, num_class_, conf_thresh_, MAX_NUM_OUTPUT_BBOX,
-           NUM_BOX_ELEMENT, stream_);
+    op_kernel::decode(
+        static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()),
+        d_decode_.get(), output_candidates_, num_class_, conf_thresh_, MAX_NUM_OUTPUT_BBOX,
+        NUM_BOX_ELEMENT, stream_);
 
-    nms(d_decode_.get(), nms_thresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
+    op_kernel::nms(d_decode_.get(), nms_thresh_, MAX_NUM_OUTPUT_BBOX, NUM_BOX_ELEMENT, stream_);
 
     // 拷贝到主机
     CHECK_CUDA(cudaMemcpyAsync(h_infer_out_pinned_.get(), d_decode_.get(),
@@ -258,3 +261,5 @@ void YoloDetectModel::cvMatPostProcess(InferOutputContext & infer_output_context
 
     infer_output_context.detections = vDetections;
 }
+
+}  // namespace inference

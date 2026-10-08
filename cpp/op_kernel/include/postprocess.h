@@ -1,10 +1,12 @@
 #ifndef POSTPROCESS_H
-#define POSTPROCESS_H
+#    define POSTPROCESS_H
 
-#include <cuda_runtime.h>
-#include <opencv2/core/hal/interface.h>
+#    include <cuda_runtime.h>
+#    include <opencv2/core/hal/interface.h>
 
-#include <opencv2/opencv.hpp>
+#    include <opencv2/opencv.hpp>
+
+namespace op_kernel {
 
 // 融合算子：直接从 YOLOv8 channel-first 输出 [numClasses+4, numBboxes] 解码, 过滤低置信度后写为 [1, 1 + maxObjects * numBoxElement]：
 // 1: number of valid bboxes; 7: left, top, right, bottom, confidence, class, keepflag
@@ -36,7 +38,7 @@ void initColorMapTable();  // INFERNO 颜色映射表初始化，仅需调用一
 void initTurboColorTable();
 
 // float 深度转 TURBO 伪彩, 去 letterbox 内容区 ROI → 双线性 resize 到原始分辨率 → 对有限值求 P1/P99 分位数 → clip 归一化 → 查 TURBO 表。
-#define DEPTH_COLORMAP_STAT_BLOCKS 64
+#    define DEPTH_COLORMAP_STAT_BLOCKS 64
 void floatDepthColormapResize(const float * src,
                               int           in_w,
                               int           roi_x,
@@ -71,3 +73,5 @@ __inline__ void scale_bbox(const cv::Mat & img, float bbox[4], int input_w, int 
 }
 
 #endif  // POSTPROCESS_H
+
+}  // namespace op_kernel

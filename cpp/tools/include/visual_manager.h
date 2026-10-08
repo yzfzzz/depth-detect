@@ -12,6 +12,8 @@
 #include <vector>
 
 // 前向声明
+
+namespace tools {
 class DisplayManager;
 
 enum Key_Input {
@@ -34,16 +36,16 @@ enum Key_Input {
 // 显示管理器类：负责窗口管理、显示、鼠标点击等事件
 class DisplayManager {
   private:
-    bool                enabled_;
-    std::vector<STrack> tracks_;
-    cv::Mat             depth_map_;
-    std::string         window_name_;
+    bool                           enabled_;
+    std::vector<bytetrack::STrack> tracks_;
+    cv::Mat                        depth_map_;
+    std::string                    window_name_;
 
     // 在 bounding box 内采样多个点并计算深度均值（鲁棒性更好）
     float computeMeanDepth(const std::vector<float> & tlwh) const;
 
     // 打印目标详细信息
-    void printTargetInfo(const STrack & track) const;
+    void printTargetInfo(const bytetrack::STrack & track) const;
 
     // 处理鼠标点击
     void handleMouseClick(int x, int y);
@@ -51,13 +53,13 @@ class DisplayManager {
     cv::Size display_size_;
 
   public:
-    DisplayManager(const ConfigManager & config,
-                   const std::string &   window_name  = "out_frame",
-                   cv::Size              display_size = cv::Size(1280, 720 * 2));
+    DisplayManager(const utils::ConfigManager & config,
+                   const std::string &          window_name  = "out_frame",
+                   cv::Size                     display_size = cv::Size(1280, 720 * 2));
     ~DisplayManager();
 
     // 更新跟踪数据供鼠标回调使用
-    void updateData(const std::vector<STrack> & tracks, const cv::Mat & depth_map);
+    void updateData(const std::vector<bytetrack::STrack> & tracks, const cv::Mat & depth_map);
 
     // 显示图像
     void show(const cv::Mat & frame);
@@ -83,7 +85,7 @@ class DrawingManager {
 
     // 核心绘制函数：画框、文字，以及“快速靠近”危险目标的红色半透明高亮
     void drawTrackedObject(cv::Mat &                     img,
-                           const STrack &                track,
+                           const bytetrack::STrack &     track,
                            const MotionStateInfoRecord & motion,
                            cv::Scalar                    color_to_use);
 
@@ -97,3 +99,5 @@ class DrawingManager {
   private:
     std::vector<std::string> vClassNames_;
 };
+
+}  // namespace tools

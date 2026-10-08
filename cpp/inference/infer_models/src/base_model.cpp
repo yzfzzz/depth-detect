@@ -5,6 +5,8 @@
 
 #include <fstream>
 
+namespace inference {
+
 BaseModel::~BaseModel() {
 #ifdef HAS_CUDA
     if (stream_ != 0) {
@@ -197,3 +199,5 @@ bool BaseModel::runInference(FrameInputContext &  frame_input_context,
     APP_ERROR("Unsupported tensor location for backend: {}", backendTypeName());
     return false;
 }
+
+}  // namespace inference

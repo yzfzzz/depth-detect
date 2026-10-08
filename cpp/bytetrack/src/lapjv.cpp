@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+namespace bytetrack {
+
 /** Column-reduction and reduction transfer for a dense cost matrix.
  */
 int_t _ccrrt_dense(const uint_t n,
@@ -336,3 +338,5 @@ int lapjv_internal(const uint_t n, cost_t * cost[], int_t * x, int_t * y) {
     FREE(free_rows);
     return ret;
 }
+
+}  // namespace bytetrack

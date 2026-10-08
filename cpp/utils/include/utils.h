@@ -1,5 +1,7 @@
 #pragma once
 
+namespace utils {
+
 // 通用小工具集合：header-only、不引入第三方依赖
 
 // 两个非负整数的最大公约数
@@ -17,3 +19,5 @@ inline int gcdInt(int a, int b) {
 inline int lcmInt(int a, int b) {
     return a / gcdInt(a, b) * b;
 }
+
+}  // namespace utils

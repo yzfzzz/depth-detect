@@ -15,6 +15,8 @@
 #include <vector>
 
 // 推理模型基类，提供统一的模型接口，支持多后端（TensorRT/ONNX Runtime），自动检测 GPU 可用性并选择合适的后端
+
+namespace inference {
 class BaseModel {
   public:
     virtual ~BaseModel();
@@ -153,3 +155,5 @@ class BaseModel {
 #endif
     std::vector<std::vector<float>> h_infer_out_;
 };
+
+}  // namespace inference

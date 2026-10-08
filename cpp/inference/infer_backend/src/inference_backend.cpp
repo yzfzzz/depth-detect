@@ -4,6 +4,8 @@
 
 #include <utility>
 
+namespace inference {
+
 bool InferenceBackend::degradeToSyncInference(void * input_data, std::vector<void *> output_data) {
     const std::string reason = asyncUnsupportedReason();  // 每次调用都重新查一次能力
     APP_WARN(
@@ -12,3 +14,5 @@ bool InferenceBackend::degradeToSyncInference(void * input_data, std::vector<voi
         getBackendTypeName(), reason.empty() ? std::string("unspecified") : reason);
     return runInference(input_data, std::move(output_data));
 }
+
+}  // namespace inference

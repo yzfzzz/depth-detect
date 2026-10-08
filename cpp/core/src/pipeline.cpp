@@ -14,6 +14,7 @@
 #include <chrono>
 #include <fstream>
 
+namespace core {
 double durationMs(const std::chrono::steady_clock::time_point & begin,
                   const std::chrono::steady_clock::time_point & end) {
     return std::chrono::duration<double, std::milli>(end - begin).count();
@@ -27,7 +28,7 @@ bool fileReadable(const std::string & path) {
     return file.good();
 }
 
-Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
+Pipeline::Pipeline(utils::ConfigManager & config_manager, FrameMeta frame_meta) :
     depth_enabled_(config_manager.isDepthEnabled()),
     stagger_infer_(config_manager.isStaggerInferEnabled()),
     detect_interval_(std::max(1, config_manager.getYoloDetectInterval())),
@@ -53,8 +54,8 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     approach_params.depth_recent_w  = config_manager.getApproachDepthRecentW();
     approach_params.score_thr       = config_manager.getApproachScoreThr();
     approach_params.confirm         = config_manager.getApproachConfirm();
-    approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
-    approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
+    approach_params.exit_score_thr  = config_manager.getApproachExitScoreThr();
+    approach_params.exit_confirm    = config_manager.getApproachExitConfirm();
 
     // 未识别的取值回落到 none 并告警
     const std::string    filter_name = config_manager.getApproachFilterMode();
@@ -66,7 +67,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
                                            config_manager.isApproachEnabled());
 
     // CUDA Graph 配置，模型层只透传给后端，由后端决定捕获与失败回退
-    BackendInitOptions backend_options;
+    inference::BackendInitOptions backend_options;
     backend_options.cuda_graph_enabled       = config_manager.isCudaGraphEnabled();
     backend_options.cuda_graph_warmup_frames = config_manager.getCudaGraphWarmupFrames();
     APP_INFO("[Pipeline] CUDA graph: {} (warmup {} invocation(s) per model before capture)",
@@ -151,7 +152,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
         if (stagger_infer_ && depth_enabled_) {
             detect_period = std::max(1, detect_interval_);
             depth_period  = std::max(1, depth_interval_);
-            light_period  = lcmInt(detect_period, depth_period);
+            light_period  = utils::lcmInt(detect_period, depth_period);
         }
         const int warmup_invocations = std::max(1, backend_options.cuda_graph_warmup_frames);
         cuda_graph_warmup_frames_ =
@@ -168,13 +169,13 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     resolveScheduleMode(config_manager.isOverlapEnabled());
 }
 
-Pipeline::Pipeline(std::string                depth_model_path,
-                   std::string                yolo_model_path,
-                   FrameMeta                  frame_meta,
-                   bool                       use_gpu,
-                   float                      yolo_nms_thresh,
-                   float                      yolo_conf_thresh,
-                   const BackendInitOptions & backend_options) {
+Pipeline::Pipeline(std::string                           depth_model_path,
+                   std::string                           yolo_model_path,
+                   FrameMeta                             frame_meta,
+                   bool                                  use_gpu,
+                   float                                 yolo_nms_thresh,
+                   float                                 yolo_conf_thresh,
+                   const inference::BackendInitOptions & backend_options) {
     bool        is_normalize = false;
     std::string backend_type = use_gpu ? "engine" : "onnx";
     depth_enabled_           = true;
@@ -200,7 +201,7 @@ Pipeline::Pipeline(std::string                depth_model_path,
 
 Pipeline::~Pipeline() {
     if (track_log_enabled_ && !track_log_data_.empty()) {
-        LoggerManager::saveTrackCsv(track_log_path_, track_log_data_);
+        utils::LoggerManager::saveTrackCsv(track_log_path_, track_log_data_);
     }
 }
 
@@ -387,7 +388,7 @@ void Pipeline::processStagger(FrameInputContext &  frame_input_context,
 void Pipeline::processOverlap(FrameInputContext &  frame_input_context,
                               InferOutputContext & infer_output_context) {
     // 重叠帧用轻量检测模型（yolo26n），降低与深度模型同帧抢占 GPU 的延迟
-    YoloDetectModel & detector = overlapDetector();
+    inference::YoloDetectModel & detector = overlapDetector();
 
     // 异步重叠只有支持真异步的后端才行（当前是 TensorRT，双 stream 并行提交）；其余后端退化为
     // 同步执行，降级到 onnx/lite_mono 时依然能正常出结果，只是失去重叠收益
@@ -491,8 +492,8 @@ void Pipeline::updateMotionStates(FrameInputContext &  frame_input_context,
 
 void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
     // 从检测结果中筛选需要跟踪的类别（bicycle/car/motorcycle/bus/truck）
-    std::vector<Detection> & res = infer_output_context.detections;
-    std::vector<Object>      objects;
+    std::vector<inference::Detection> & res = infer_output_context.detections;
+    std::vector<bytetrack::Object>      objects;
     for (size_t j = 0; j < res.size(); j++) {
         if (isTrackingClass(res[j].classId)) {
             cv::Rect_<float> rect(res[j].bbox[0], res[j].bbox[1], (res[j].bbox[2] - res[j].bbox[0]),
@@ -501,6 +502,8 @@ void Pipeline::updateTracker(InferOutputContext & infer_output_context) {
         }
     }
     infer_output_context.tracked_objects.clear();
-    std::vector<STrack> lost_stracks;  // 本帧丢失轨迹，暂时不使用，兼容接口
+    std::vector<bytetrack::STrack> lost_stracks;  // 本帧丢失轨迹，暂时不使用，兼容接口
     tracker_.update(objects, lost_stracks, infer_output_context.tracked_objects);
 }
+
+}  // namespace core

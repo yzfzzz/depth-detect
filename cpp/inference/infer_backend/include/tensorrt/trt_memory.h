@@ -4,6 +4,8 @@
 
 #include <memory>
 
+namespace inference {
+
 // TRT 对象删除器
 struct TrtDeleter {
     template <typename T> void operator()(T * p) const noexcept {
@@ -22,3 +24,5 @@ struct TrtDeleter {
 using TrtEnginePtr  = std::unique_ptr<nvinfer1::ICudaEngine, TrtDeleter>;
 using TrtRuntimePtr = std::unique_ptr<nvinfer1::IRuntime, TrtDeleter>;
 using TrtContextPtr = std::unique_ptr<nvinfer1::IExecutionContext, TrtDeleter>;
+
+}  // namespace inference

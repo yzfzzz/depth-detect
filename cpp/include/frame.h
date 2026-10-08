@@ -26,8 +26,13 @@ struct FrameMeta {
     FrameSource frame_source;
 };
 
+namespace bytetrack {
 class STrack;
-class Detection;
+}  // namespace bytetrack
+
+namespace inference {
+struct Detection;
+}  // namespace inference
 
 // 目标的运动/危险判定结果
 struct MotionStateInfoRecord {
@@ -38,8 +43,8 @@ struct MotionStateInfoRecord {
 };
 
 struct InferOutputContext {
-    std::vector<Detection>                         detections;
-    std::vector<STrack>                            tracked_objects;
+    std::vector<inference::Detection>              detections;
+    std::vector<bytetrack::STrack>                 tracked_objects;
     std::vector<float>                             depth_raw_infer_out;
     cv::Mat                                        result_depth;
     cv::Mat                                        depth_vis;

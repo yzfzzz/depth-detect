@@ -6,6 +6,8 @@
 #include <fstream>
 #include <iostream>
 
+namespace inference {
+
 TensorRTBackend::TensorRTBackend(int gpu_id) : gpu_id_(gpu_id) {
     CHECK_CUDA(cudaSetDevice(gpu_id_));
 }
@@ -467,3 +469,5 @@ void TensorRTBackend::getCudaDeviceInfo() {
         device_prop.multiProcessorCount, device_prop.maxThreadsPerMultiProcessor,
         device_prop.maxThreadsPerBlock, device_prop.regsPerMultiprocessor);
 }
+
+}  // namespace inference

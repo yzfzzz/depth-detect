@@ -22,7 +22,7 @@
 
 cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      InferOutputContext &           infer_output_context,
-                     DrawingManager &               drawing_manager,
+                     tools::DrawingManager &        drawing_manager,
                      std::function<cv::Scalar(int)> get_color_func,
                      int                            total_us,
                      int                            warmup_frames) {
@@ -65,35 +65,35 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 
 int run(char * video_path, char * config_path) {
     // 读取配置文件 - 使用单例模式
-    ConfigManager   config_manager(config_path);
+    utils::ConfigManager   config_manager(config_path);
     // 初始化日志系统
-    LoggerManager & logger_manager = LoggerManager::getInstance(config_manager);
-    LoggerManager::logConfig(config_manager);
+    utils::LoggerManager & logger_manager = utils::LoggerManager::getInstance(config_manager);
+    utils::LoggerManager::logConfig(config_manager);
     APP_INFO("Application started with video: {}", std::string(video_path));
     // 文件读写，落盘保存, 以及视频读取（包括模拟相机延迟）
-    IOManager          io_manager(config_manager);
-    FrameMeta          frame_meta = io_manager.Init(video_path);
+    core::IOManager          io_manager(config_manager);
+    FrameMeta                frame_meta = io_manager.Init(video_path);
     // 推理流水线（负责目标检测、深度估计、跟踪、运动状态判断等核心功能）
-    Pipeline           pipeline(config_manager, frame_meta);
+    core::Pipeline           pipeline(config_manager, frame_meta);
     // 绘制管理器（负责绘制结果）
-    DrawingManager     drawing_manager(V_CLASS_NAMES);
+    tools::DrawingManager    drawing_manager(V_CLASS_NAMES);
     // 显示管理器（负责窗口管理、显示、鼠标点击等）
-    DisplayManager     display_manager(config_manager, "Detection Result",
-                                       cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
+    tools::DisplayManager    display_manager(config_manager, "Detection Result",
+                                             cv::Size(frame_meta.img_w, frame_meta.img_h * 2));
     // 运行时参数控制面板：纯滑动条，挂载在主显示窗口上
-    ControlPanel       control_panel(pipeline.getMotionStateEngine(), config_manager,
-                                     display_manager.windowName());
+    tools::ControlPanel      control_panel(pipeline.getMotionStateEngine(), config_manager,
+                                           display_manager.windowName());
     // 报警管理器（负责报警信息生成）
-    DangerAlertHandler alert_handler(config_manager);
-    int                num_frames          = 0;
-    double             total_us            = 0;
+    core::DangerAlertHandler alert_handler(config_manager);
+    int                      num_frames          = 0;
+    double                   total_us            = 0;
     // CUDA Graph 预热期（模型尚未走图）的帧不计入端到端耗时与 FPS；未启用时为 0
-    const int          graph_warmup_frames = pipeline.getCudaGraphWarmupFrames();
-    long               timed_frames        = 0;
+    const int                graph_warmup_frames = pipeline.getCudaGraphWarmupFrames();
+    long                     timed_frames        = 0;
     // 是否按视频帧率模拟实时节奏（yaml: io_manager.simulate_delay）
-    const bool         simulate_delay      = config_manager.isSimulateDelayEnabled();
-    FrameInputContext  frame_input_context(num_frames, frame_meta);
-    InferOutputContext infer_output_context;
+    const bool               simulate_delay      = config_manager.isSimulateDelayEnabled();
+    FrameInputContext        frame_input_context(num_frames, frame_meta);
+    InferOutputContext       infer_output_context;
     if (graph_warmup_frames > 0) {
         APP_INFO("CUDA graph warmup: first {} frame(s) excluded from timing stats",
                  graph_warmup_frames);
@@ -106,14 +106,14 @@ int run(char * video_path, char * config_path) {
             frame_input_context.raw_img.empty()) {
             break;
         }
-        // 执行推理流水线：调度策略（串行/重叠/错峰）已由 Pipeline 构造期从配置解析，
+        // 执行推理流水线：调度策略（串行/重叠/错峰）已由 core::Pipeline 构造期从配置解析，
         // 调用方只需调唯一入口 process，不再在这里判断 overlap/stagger_infer
         std::string name = "Infer Pipeline";
         DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
                                                infer_output_context);
         // 预热帧只跑逐算子路径，不计入端到端耗时（其耗时仍留在定时器表里，汇总时统一丢弃）
         if (num_frames >= graph_warmup_frames) {
-            total_us += ScopedTimer::GetScopedTimers()[name].back();  // 刚刚这次推理的耗时
+            total_us += tools::ScopedTimer::GetScopedTimers()[name].back();  // 刚刚这次推理的耗时
             ++timed_frames;
         }
 #else
@@ -122,7 +122,7 @@ int run(char * video_path, char * config_path) {
             break;
         }
 
-        // 调度策略（串行/重叠/错峰）由 Pipeline 构造期从配置解析，这里只调唯一入口
+        // 调度策略（串行/重叠/错峰）由 core::Pipeline 构造期从配置解析，这里只调唯一入口
         pipeline.process(frame_input_context, infer_output_context);
 
 #endif
@@ -132,7 +132,7 @@ int run(char * video_path, char * config_path) {
                      (total_us > 0 ? (timed_frames * 1000000.0 / total_us) : 0));
         }
         // 发送报警信息
-        AlertMessage alert;
+        core::AlertMessage alert;
 #if defined(ENABLE_TIMER)
         alert = DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("Build Alert", alert_handler, buildAlert,
                                                        frame_input_context, infer_output_context);
@@ -159,7 +159,7 @@ int run(char * video_path, char * config_path) {
         io_manager.saveFrame(out_frame, num_frames);
 #endif
 
-        // 显示图像（通过 DisplayManager）
+        // 显示图像（通过 tools::DisplayManager）
         // display_manager.updateData(infer_output_context.tracked_objects,
         //                            infer_output_context.result_depth);
         if (display_manager.isEnabled()) {
@@ -168,7 +168,7 @@ int run(char * video_path, char * config_path) {
             control_panel.update();
             char c      = display_manager.waitKey(1);
             int  result = display_manager.handleKey(c);
-            if (result == Key_Input::ESC) {  // 用户按下 ESC 键退出
+            if (result == tools::Key_Input::ESC) {  // 用户按下 ESC 键退出
                 break;
             }
         }
@@ -180,12 +180,12 @@ int run(char * video_path, char * config_path) {
         APP_INFO("(CUDA graph warmup: first {} frame(s) excluded; timed frames: {})",
                  graph_warmup_frames, timed_frames);
     }
-    for (auto & kv : ScopedTimer::GetScopedTimers()) {
+    for (auto & kv : tools::ScopedTimer::GetScopedTimers()) {
         // 预热帧尚未走图，耗时不可比，连同端到端统计一起丢弃
-        const std::vector<double> samples = dropFirstSamples(kv.second, graph_warmup_frames);
-        double                    avg     = calculateAverage(samples);
-        double                    p95     = calculatePercentile(samples, 95.0);
-        double                    p99     = calculatePercentile(samples, 99.0);
+        const std::vector<double> samples = tools::dropFirstSamples(kv.second, graph_warmup_frames);
+        double                    avg     = tools::calculateAverage(samples);
+        double                    p95     = tools::calculatePercentile(samples, 95.0);
+        double                    p99     = tools::calculatePercentile(samples, 99.0);
         APP_INFO("[{}]: avg = {:.2f} ms, P95 = {:.2f} ms, P99 = {:.2f} ms (frame)", kv.first, avg,
                  p95, p99);
     }

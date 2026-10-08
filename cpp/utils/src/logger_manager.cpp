@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iomanip>
 
+namespace utils {
+
 std::string LoggerManager::getDateLogFilePath() {
     auto now  = std::chrono::system_clock::now();
     auto time = std::chrono::system_clock::to_time_t(now);
@@ -215,3 +217,5 @@ void LoggerManager::logConfig(const ConfigManager & config) {
 
     APP_INFO("==============================================");
 }
+
+}  // namespace utils

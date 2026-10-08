@@ -16,6 +16,7 @@
 #include <sstream>
 #include <vector>
 
+namespace inference {
 namespace {
 
 // 与 numpy.percentile(v, p*100, method='linear') 一致的线性插值分位数。
@@ -98,7 +99,7 @@ bool YoloDepthModel::init(std::map<std::string, std::string> model_path,
         d_percentiles_.reset(static_cast<float *>(allocDevice(2 * sizeof(float))));
 
         // TURBO 颜色表上传到 __constant__ 内存（cv::applyColorMap 生成，与 Python 一致）
-        initTurboColorTable();
+        op_kernel::initTurboColorTable();
     } else
 #endif  // HAS_CUDA
     {   // Host 路径：主机缓冲输出（ONNX Runtime / 未来的 QNN 等）
@@ -116,8 +117,9 @@ void YoloDepthModel::cudaPreProcess(FrameInputContext & frame_input_context) {
         return;
     }
 
-    yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()), frame_input_context.d_raw_img_.get(),
-                   raw_img_h_, raw_img_w_, input_h_, input_w_, stream_);
+    op_kernel::yoloPreprocess(static_cast<float *>(d_infer_io_[0].get()),
+                              frame_input_context.d_raw_img_.get(), raw_img_h_, raw_img_w_,
+                              input_h_, input_w_, stream_);
 #else
     APP_ERROR("CUDA pre-process unavailable: built without CUDA");
 #endif
@@ -136,7 +138,7 @@ void YoloDepthModel::cudaPostProcess(FrameInputContext &) {
     const int   roi_x = (input_w_ - roi_w) / 2;
     const int   roi_y = (input_h_ - roi_h) / 2;
 
-    floatDepthColormapResize(
+    op_kernel::floatDepthColormapResize(
         static_cast<float *>(d_infer_io_[1 + getOutputIndexFromName("output0")].get()), input_w_,
         roi_x, roi_y, roi_w, roi_h, static_cast<float *>(d_stage_float_.get()), raw_img_w_,
         raw_img_h_, static_cast<uchar *>(d_buffer_dst_depth_.get()),
@@ -279,3 +281,5 @@ void YoloDepthModel::buildDepthVisualization(const cv::Mat &      model_depth,
     cv::applyColorMap(gray, infer_output_context.depth_vis, cv::COLORMAP_JET);
 #endif
 }
+
+}  // namespace inference

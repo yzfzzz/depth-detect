@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
+namespace core {
 namespace approach {
 
 // 经验调优值，未随 config 暴露
@@ -223,3 +224,5 @@ class MotionStateEngine {
 
     void setApproachExitConfirm(int value) { approach_detector_.setExitConfirm(value); }
 };
+
+}  // namespace core

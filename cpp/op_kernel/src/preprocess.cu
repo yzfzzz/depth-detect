@@ -1,5 +1,7 @@
 ﻿#include "preprocess.h"
 
+namespace op_kernel {
+
 // 融合算子：letterbox + 双线性 resize + BGR→RGB + /255 归一化 + HWC→CHW
 // 直接从原始 BGR 图写出 float CHW 张量，省去中间 uchar 缓冲的一次显存往返
 __global__ void letterbox_norm_kernel(const uchar * src_data,
@@ -174,3 +176,5 @@ void depthPreprocess(uchar *      src,
         src, dst, input_w, input_h, resized_w, resized_h, (float) input_w / resized_w,
         (float) input_h / resized_h, mean, std);
 }
+
+}  // namespace op_kernel

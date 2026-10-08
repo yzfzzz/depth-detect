@@ -12,6 +12,8 @@
 #include <unordered_map>
 #include <vector>
 
+namespace utils {
+
 // 单个 track 单帧的记录（运行结束时统一写入 CSV）
 struct TrackRecord {
     int   frame_id;
@@ -81,3 +83,5 @@ class LoggerManager {
 #define APP_WARN(...)     SPDLOG_LOGGER_WARN(spdlog::get("app"), __VA_ARGS__)
 #define APP_ERROR(...)    SPDLOG_LOGGER_ERROR(spdlog::get("app"), __VA_ARGS__)
 #define APP_CRITICAL(...) SPDLOG_LOGGER_CRITICAL(spdlog::get("app"), __VA_ARGS__)
+
+}  // namespace utils

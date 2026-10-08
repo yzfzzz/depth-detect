@@ -77,8 +77,8 @@ struct YoloDetectionError {
     int    paired_count   = 0;    // 成功配对的检测框数
 };
 
-YoloDetectionError computeDetectionError(const std::vector<Detection> & dets_fp16,
-                                         const std::vector<Detection> & dets_fp32) {
+YoloDetectionError computeDetectionError(const std::vector<inference::Detection> & dets_fp16,
+                                         const std::vector<inference::Detection> & dets_fp32) {
     YoloDetectionError err;
     err.count_diff = std::abs((int) dets_fp16.size() - (int) dets_fp32.size());
 
@@ -183,16 +183,16 @@ int main() {
     std::string video_path  = root["video_path"].as<std::string>();  // 根层级读 video_path
     YAML::Node  task_node   = root["task"][task_name];
     // 初始化日志系统
-    LoggerManager::getInstance(false, true, "info");
+    utils::LoggerManager::getInstance(false, true, "info");
 
     APP_INFO("Application started with video: {}", std::string(video_path));
-    IOManager io_manager("video", "none");
-    FrameMeta frame_meta = io_manager.Init(video_path);
+    core::IOManager io_manager("video", "none");
+    FrameMeta       frame_meta = io_manager.Init(video_path);
 
 #ifndef __aarch64__
     std::string        yolo_int8_path  = task_node["yolo_int8_path"].as<std::string>();
     std::string        depth_int8_path = task_node["depth_int8_path"].as<std::string>();
-    Pipeline           pipeline_int8(depth_int8_path, yolo_int8_path, frame_meta, true);
+    core::Pipeline     pipeline_int8(depth_int8_path, yolo_int8_path, frame_meta, true);
     InferOutputContext infer_output_context_int8;
     DepthErrorMetrics  depth_err_sum_int8;
     YoloDetectionError yolo_err_sum_int8;
@@ -203,8 +203,8 @@ int main() {
     std::string yolo_fp32_path  = task_node["yolo_fp32_path"].as<std::string>();
     std::string depth_fp32_path = task_node["depth_fp32_path"].as<std::string>();
 
-    Pipeline pipeline_fp16(depth_fp16_path, yolo_fp16_path, frame_meta, true);
-    Pipeline pipeline_fp32(depth_fp32_path, yolo_fp32_path, frame_meta, true);
+    core::Pipeline pipeline_fp16(depth_fp16_path, yolo_fp16_path, frame_meta, true);
+    core::Pipeline pipeline_fp32(depth_fp32_path, yolo_fp32_path, frame_meta, true);
 
     int                num_frames = 0;
     FrameInputContext  frame_input_context(num_frames, frame_meta);

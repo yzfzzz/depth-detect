@@ -7,7 +7,8 @@
 
 // namespace
 
-DangerAlertHandler::DangerAlertHandler(const ConfigManager & config) {
+namespace core {
+DangerAlertHandler::DangerAlertHandler(const utils::ConfigManager & config) {
     filter_small_objects_ = config.isFilterSmallObjectsEnabled();
     min_object_area_      = config.getMinObjectArea();
 }
@@ -62,3 +63,5 @@ AlertMessage DangerAlertHandler::buildAlert(const FrameInputContext &  frame_inp
     return AlertMessage{ alert_ts, frame_input.frame_id, frame_input.meta.img_w,
                          frame_input.meta.img_h, std::move(dangerous_objects) };
 }
+
+}  // namespace core

@@ -1,9 +1,11 @@
 ﻿#ifndef PREPROCESS_H
-#define PREPROCESS_H
+#    define PREPROCESS_H
 
-#include <cuda_runtime.h>
+#    include <cuda_runtime.h>
 
-#include <opencv2/opencv.hpp>
+#    include <opencv2/opencv.hpp>
+
+namespace op_kernel {
 
 void yoloPreprocess(float *      dst_dev_data,
                     uchar *      src_dev_data,
@@ -24,3 +26,5 @@ void depthPreprocess(uchar *      src,
                      cudaStream_t stream);
 
 #endif  // PREPROCESS_H
+
+}  // namespace op_kernel
