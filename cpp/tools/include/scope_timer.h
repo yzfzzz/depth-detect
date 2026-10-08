@@ -52,6 +52,18 @@ inline double calculateAverage(const std::vector<double> data) {
     return (sum / data.size()) / 1000.0;
 }
 
+// 丢弃前 skip 个样本：用于把 CUDA Graph 预热期（模型尚未走图、逐算子提交）的样本
+// 排除在统计之外；样本数不足时返回空表（统计函数对空表返回 0）
+inline std::vector<double> dropFirstSamples(const std::vector<double> & samples, int skip) {
+    if (skip <= 0) {
+        return samples;
+    }
+    if (samples.size() <= static_cast<size_t>(skip)) {
+        return {};
+    }
+    return std::vector<double>(samples.begin() + skip, samples.end());
+}
+
 // 基础实现：接受任意可调用对象
 template <typename Func>
 auto DEBUG_FUNCTION_RUNNING_TIME_IMPL(const std::string & name, Func && func) -> decltype(func()) {

@@ -18,7 +18,8 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
                      int                                raw_img_w,
                      int                                raw_img_h,
                      bool                               use_gpu,
-                     const std::string &                preferred_backend) {
+                     const std::string &                preferred_backend,
+                     const BackendInitOptions &         backend_options) {
     initialized_ = false;
 #ifdef HAS_CUDA
     stream_ = 0;
@@ -30,7 +31,7 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
     raw_img_w_         = raw_img_w;
     raw_img_h_         = raw_img_h;
     preferred_backend_ = preferred_backend;
-    bool status        = initInferenceBackend(model_path, use_gpu, preferred_backend);
+    bool status = initInferenceBackend(model_path, use_gpu, preferred_backend, backend_options);
     if (!status) {
         APP_ERROR("Failed to initialize inference backend");
         return;
@@ -44,7 +45,8 @@ void BaseModel::init(std::map<std::string, std::string> model_path,
 
 std::unique_ptr<InferenceBackend> BaseModel::createBackend(
     std::map<std::string, std::string> model_path,
-    bool                               use_gpu) {
+    bool                               use_gpu,
+    const BackendInitOptions &         backend_options) {
     // 后端选择收拢在 backend_factory：显式配置只走指定后端；
     // auto 保持历史回退链「GPU 可用且配置了 .engine -> TensorRT 优先，.onnx 兜底」
     const std::vector<std::string> candidates =
@@ -66,7 +68,7 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
         if (!backend) {
             continue;  // 该后端未参与本次编译，尝试下一个候选
         }
-        if (!backend->loadModel(it->second)) {
+        if (!backend->loadModel(it->second, backend_options)) {
             APP_WARN("Backend '{}' failed to load model from {}, trying next candidate", type,
                      it->second);
             continue;
@@ -88,7 +90,8 @@ std::unique_ptr<InferenceBackend> BaseModel::createBackend(
 
 bool BaseModel::initInferenceBackend(std::map<std::string, std::string> model_path,
                                      bool                               use_gpu,
-                                     const std::string &                preferred_backend) {
+                                     const std::string &                preferred_backend,
+                                     const BackendInitOptions &         backend_options) {
     if (initialized_) {
         APP_WARN("Model already initialized");
         return true;
@@ -115,7 +118,7 @@ bool BaseModel::initInferenceBackend(std::map<std::string, std::string> model_pa
     }
 
     // 创建后端
-    backend_ = createBackend(model_path, use_gpu);
+    backend_ = createBackend(model_path, use_gpu, backend_options);
     if (!backend_) {
         APP_ERROR("Failed to create inference backend");
         return false;
@@ -140,7 +143,8 @@ bool BaseModel::runInferenceAsync(FrameInputContext & frame_input_context) {
         return false;
     }
 #ifdef HAS_CUDA
-    // 真异步路径（当前只有 TensorRT）：预处理→推理→后处理全在 GPU Stream 上排队，CPU 不等待
+    // 真异步路径（当前只有 TensorRT）：预处理→推理→后处理全在 GPU Stream 上排队，CPU 不等待。
+    // 开启 CUDA Graph 的后端（见 BackendInitOptions）在中间那次提交内部换成图发射，模型层不感知
     cudaPreProcess(frame_input_context);
     std::vector<void *> output_buffers;
     output_buffers.reserve(d_infer_io_.size() - 1);

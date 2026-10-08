@@ -19,8 +19,9 @@ bool LiteMonoDepthModel::init(std::map<std::string, std::string> model_path,
                               int                                raw_img_h,
                               bool                               is_normalize,
                               bool                               use_gpu,
-                              const std::string &                preferred_backend) {
-    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend);
+                              const std::string &                preferred_backend,
+                              const BackendInitOptions &         backend_options) {
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend, backend_options);
     if (!isBackendInitialized()) {
         APP_ERROR("LiteMonoDepthModel init aborted: inference backend not initialized");
         return false;

@@ -21,12 +21,13 @@ const char * scheduleModeName(ScheduleMode mode);
 class Pipeline {
   public:
     Pipeline(ConfigManager & config_manager, FrameMeta frame_meta);
-    Pipeline(std::string depth_model_path,
-             std::string yolo_model_path,
-             FrameMeta   frame_meta,
-             bool        use_gpu          = false,
-             float       yolo_nms_thresh  = 0.4f,
-             float       yolo_conf_thresh = 0.25f);
+    Pipeline(std::string                depth_model_path,
+             std::string                yolo_model_path,
+             FrameMeta                  frame_meta,
+             bool                       use_gpu          = false,
+             float                      yolo_nms_thresh  = 0.4f,
+             float                      yolo_conf_thresh = 0.25f,
+             const BackendInitOptions & backend_options  = BackendInitOptions());
     ~Pipeline();
     void init();
 
@@ -46,6 +47,11 @@ class Pipeline {
                         InferOutputContext & infer_output_context);
 
     ScheduleMode getScheduleMode() const { return schedule_mode_; }
+
+    // CUDA Graph 预热期换算成帧的长度：预热按「模型被提交推理的次数」计，错峰模式下要乘上
+    // 各自的调度间隔（轻量检测取两个间隔的最小公倍数）后取最大。这 N 帧内模型还没走图
+    // （逐算子提交），端到端与各模块计时统计都应排除；未启用 CUDA Graph 时为 0
+    int getCudaGraphWarmupFrames() const { return cuda_graph_warmup_frames_; }
 
     void setScheduleMode(ScheduleMode mode);
 
@@ -90,13 +96,19 @@ class Pipeline {
                (frame_input_context.frame_id % depth_interval_ == 0);
     }
 
-    // 串行分支共用的执行与收尾：processSync（两路都跑）与 processStagger 的单路帧共用。
+    // 串行分支：两路依次同步执行（executeV2），SYNC 模式专用。
     // 收尾顺序与 processOverlap 保持一致：检测 → 跟踪 → 深度 → 运动状态；
     // 跟踪放在深度前是为了让 CPU 侧的跟踪计算能与深度推理的等待重叠
     void runBranchesSerially(FrameInputContext &  frame_input_context,
                              InferOutputContext & infer_output_context,
                              bool                 run_detect,
                              bool                 run_depth);
+
+    // 单路异步分支,错峰模式的单路帧走这里；非异步后端就地回落同步执行
+    void runBranchesAsync(FrameInputContext &  frame_input_context,
+                          InferOutputContext & infer_output_context,
+                          bool                 run_detect,
+                          bool                 run_depth);
 
     // 异步能力只认后端的 capability 查询（TensorRT 支持；ONNX Runtime 没有异步接口，
     static bool isAsyncCapable(const BaseModel & model) {
@@ -119,7 +131,9 @@ class Pipeline {
     int                depth_interval_  = 1;      // 深度推理间隔：N = 每 N 帧推 1 次
     bool use_yolo_depth_ = true;  // 深度模型类型：true = yolo_depth，false = lite_mono
     // 本次运行的调度策略，构造期由 resolveScheduleMode 按配置解析（默认串行）
-    ScheduleMode schedule_mode_ = ScheduleMode::SYNC;
+    ScheduleMode schedule_mode_            = ScheduleMode::SYNC;
+    // CUDA Graph 前 N 帧尚未走图（逐算子提交），计时统计需排除，后续下沉到推理后端
+    int          cuda_graph_warmup_frames_ = 0;
 
     bool isTrackingClass(int class_id) {
         for (auto & c : track_classes_) {

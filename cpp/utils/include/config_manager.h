@@ -41,6 +41,8 @@ class ConfigManager {
     std::string                        getPreferredBackend() const;
     bool                               isOverlapEnabled() const;
     bool                               isStaggerInferEnabled() const;
+    bool                               isCudaGraphEnabled() const;
+    int                                getCudaGraphWarmupFrames() const;
     bool                               isLogFileSaveEnabled() const;
     bool                               isLogConsoleOutputEnabled() const;
     std::string                        getLogLevel() const;
@@ -261,6 +263,18 @@ inline bool ConfigManager::isOverlapEnabled() const {
 // 错峰推理：奇数帧只跑检测、偶数帧只跑深度（每帧峰值算力减半；开启后优先于 overlap 走串行错峰路径）
 inline bool ConfigManager::isStaggerInferEnabled() const {
     return config_["prefer"]["stagger_infer"].as<bool>(false);
+}
+
+// CUDA Graph：把「CUDA 预处理 → TRT 异步推理 → CUDA 后处理」合成一次 cudaGraphLaunch。
+// 只对走 enqueue 的异步路径（runInferenceAsync）生效；SYNC 的 executeV2 路径不涉及
+inline bool ConfigManager::isCudaGraphEnabled() const {
+    return config_["prefer"]["cuda_graph"].as<bool>(false);
+}
+
+// CUDA Graph 捕获前的预热帧数：TRT 要求捕获前先成功 enqueue 一次（首次 enqueue 的内部
+// 资源分配不能落在捕获窗口内），因此下限为 1；模型侧会再做一次钳制
+inline int ConfigManager::getCudaGraphWarmupFrames() const {
+    return config_["prefer"]["cuda_graph_warmup_frames"].as<int>(3);
 }
 
 inline void ConfigManager::setLogLevel(const std::string & log_level) {

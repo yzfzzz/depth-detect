@@ -20,9 +20,11 @@ class BaseModel {
     virtual ~BaseModel();
 
     // 初始化模型
-    virtual bool initInferenceBackend(std::map<std::string, std::string> model_path,
-                                      bool                               use_gpu,
-                                      const std::string & preferred_backend = "auto");
+    virtual bool initInferenceBackend(
+        std::map<std::string, std::string> model_path,
+        bool                               use_gpu,
+        const std::string &                preferred_backend = "auto",
+        const BackendInitOptions &         backend_options   = BackendInitOptions());
 
     // 获取后端类型
     BackendType getBackendType() const {
@@ -76,18 +78,22 @@ class BaseModel {
     }
 
   protected:
-    // 创建后端（子类可重写以自定义后端选择逻辑）
+    // 创建后端（子类可重写以自定义后端选择逻辑）；
+    // backend_options 原样透传给后端（当前承载 CUDA Graph 的启用与预热帧数）
     virtual std::unique_ptr<InferenceBackend> createBackend(
         std::map<std::string, std::string> model_path,
-        bool                               use_gpu);
+        bool                               use_gpu,
+        const BackendInitOptions &         backend_options);
 
     // 子类必须实现的部分
   public:
+    // backend_options 由各后端按需消费（当前承载 CUDA Graph 的启用与预热帧数）
     void init(std::map<std::string, std::string> model_path,
               int                                raw_img_w,
               int                                raw_img_h,
               bool                               use_gpu           = true,
-              const std::string &                preferred_backend = "auto");
+              const std::string &                preferred_backend = "auto",
+              const BackendInitOptions &         backend_options   = BackendInitOptions());
 
     virtual std::vector<float> cvMatPreProcess(FrameInputContext & frame_input_context) = 0;
 

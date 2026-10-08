@@ -15,7 +15,9 @@ bool OnnxRuntimeBackend::isAvailable() const {
     return true;
 }
 
-bool OnnxRuntimeBackend::loadModel(const std::string & model_path) {
+bool OnnxRuntimeBackend::loadModel(const std::string &        model_path,
+                                   const BackendInitOptions & options) {
+    (void) options;  // CPU 后端不支持 CUDA Graph 等加速选项
     // 检查文件是否存在
     std::ifstream file(model_path);
     if (!file.good()) {

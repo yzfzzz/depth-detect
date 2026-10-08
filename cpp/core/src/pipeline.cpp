@@ -7,6 +7,7 @@
 #include "logger_manager.h"
 #include "motion_state_engine.h"
 #include "STrack.h"
+#include "utils.h"
 
 #include <algorithm>
 #include <array>
@@ -52,8 +53,8 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     approach_params.depth_recent_w  = config_manager.getApproachDepthRecentW();
     approach_params.score_thr       = config_manager.getApproachScoreThr();
     approach_params.confirm         = config_manager.getApproachConfirm();
-    approach_params.exit_score_thr  = config_manager.getApproachExitScoreThr();
-    approach_params.exit_confirm    = config_manager.getApproachExitConfirm();
+    approach_params.exit_score_thr = config_manager.getApproachExitScoreThr();
+    approach_params.exit_confirm   = config_manager.getApproachExitConfirm();
 
     // 未识别的取值回落到 none 并告警
     const std::string    filter_name = config_manager.getApproachFilterMode();
@@ -64,17 +65,25 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     motion_state_engine_.configureApproach(approach_params, filter_mode,
                                            config_manager.isApproachEnabled());
 
+    // CUDA Graph 配置，模型层只透传给后端，由后端决定捕获与失败回退
+    BackendInitOptions backend_options;
+    backend_options.cuda_graph_enabled       = config_manager.isCudaGraphEnabled();
+    backend_options.cuda_graph_warmup_frames = config_manager.getCudaGraphWarmupFrames();
+    APP_INFO("[Pipeline] CUDA graph: {} (warmup {} invocation(s) per model before capture)",
+             backend_options.cuda_graph_enabled ? "enabled" : "disabled",
+             backend_options.cuda_graph_warmup_frames);
+
     // 是否加载深度模型由 config 的 depth.enabled 控制
     use_yolo_depth_ = (config_manager.getDepthModelType() == "yolo_depth");
     if (config_manager.isDepthEnabled()) {
         if (config_manager.getDepthModelType() == "lite_mono") {
             depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
                               frame_meta.img_h, is_normalize, config_manager.isUseGPU(),
-                              config_manager.getPreferredBackend());
+                              config_manager.getPreferredBackend(), backend_options);
         } else if (use_yolo_depth_) {
             yolo_depth_model_.init(config_manager.getDepthModelPath(), frame_meta.img_w,
                                    frame_meta.img_h, config_manager.isUseGPU(),
-                                   config_manager.getPreferredBackend());
+                                   config_manager.getPreferredBackend(), backend_options);
         } else {
             APP_ERROR("Unsupported depth model type: {}", config_manager.getDepthModelType());
         }
@@ -83,7 +92,8 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
     std::map<std::string, std::string> yolo_model_paths = config_manager.getYoloModelPath();
     detector_.init(yolo_model_paths, frame_meta.img_w, frame_meta.img_h,
                    config_manager.getYoloNmsThresh(), config_manager.getYoloConfThresh(), 80,
-                   config_manager.isUseGPU(), config_manager.getPreferredBackend());
+                   config_manager.isUseGPU(), config_manager.getPreferredBackend(),
+                   backend_options);
 
     // 错峰调度下碰撞帧（检测与深度同帧）走重叠推理，主模型与深度模型同帧抢占 GPU
     // 延迟过大 → 加载 yaml 配置的轻量模型（yolo26n）专用于碰撞帧；
@@ -106,7 +116,7 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
             detector_light_.init(light_paths, frame_meta.img_w, frame_meta.img_h,
                                  config_manager.getYoloNmsThresh(),
                                  config_manager.getYoloConfThresh(), 80, config_manager.isUseGPU(),
-                                 config_manager.getPreferredBackend());
+                                 config_manager.getPreferredBackend(), backend_options);
             has_light_detector_ = detector_light_.isBackendInitialized();
             if (has_light_detector_) {
                 APP_INFO(
@@ -133,16 +143,38 @@ Pipeline::Pipeline(ConfigManager & config_manager, FrameMeta frame_meta) :
         APP_INFO("Track log enabled: {}", track_log_path_);
     }
 
+    // CUDA Graph 的预热按，取三者最大作为「前 N 帧尚未走图」的帧数，后续下沉到推理后端
+    if (backend_options.cuda_graph_enabled) {
+        int detect_period = 1;
+        int depth_period  = 1;
+        int light_period  = 1;
+        if (stagger_infer_ && depth_enabled_) {
+            detect_period = std::max(1, detect_interval_);
+            depth_period  = std::max(1, depth_interval_);
+            light_period  = lcmInt(detect_period, depth_period);
+        }
+        const int warmup_invocations = std::max(1, backend_options.cuda_graph_warmup_frames);
+        cuda_graph_warmup_frames_ =
+            warmup_invocations * std::max({ detect_period, depth_period, light_period });
+        APP_INFO(
+            "[Pipeline] CUDA graph pre-graph frames: detect={} (period {}), depth={} (period {}), "
+            "light={} (period {}) -> exclude first {} frame(s) from timing stats",
+            warmup_invocations * detect_period, detect_period, warmup_invocations * depth_period,
+            depth_period, warmup_invocations * light_period, light_period,
+            cuda_graph_warmup_frames_);
+    }
+
     // 调度策略解析放在最后：需要模型的 backend 类型（TensorRT 才支持异步重叠）
     resolveScheduleMode(config_manager.isOverlapEnabled());
 }
 
-Pipeline::Pipeline(std::string depth_model_path,
-                   std::string yolo_model_path,
-                   FrameMeta   frame_meta,
-                   bool        use_gpu,
-                   float       yolo_nms_thresh,
-                   float       yolo_conf_thresh) {
+Pipeline::Pipeline(std::string                depth_model_path,
+                   std::string                yolo_model_path,
+                   FrameMeta                  frame_meta,
+                   bool                       use_gpu,
+                   float                      yolo_nms_thresh,
+                   float                      yolo_conf_thresh,
+                   const BackendInitOptions & backend_options) {
     bool        is_normalize = false;
     std::string backend_type = use_gpu ? "engine" : "onnx";
     depth_enabled_           = true;
@@ -150,14 +182,18 @@ Pipeline::Pipeline(std::string depth_model_path,
         {
             { backend_type, depth_model_path }
     },
-        frame_meta.img_w, frame_meta.img_h, use_gpu);
+        frame_meta.img_w, frame_meta.img_h, use_gpu, "auto", backend_options);
     detector_.init(
         {
             { backend_type, yolo_model_path }
     },
-        frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu);
+        frame_meta.img_w, frame_meta.img_h, yolo_nms_thresh, yolo_conf_thresh, 80, use_gpu, "auto",
+        backend_options);
 
     use_yolo_depth_ = true;
+    if (backend_options.cuda_graph_enabled) {
+        cuda_graph_warmup_frames_ = std::max(1, backend_options.cuda_graph_warmup_frames);
+    }
     // 调度策略保持默认的 SYNC：本入口没有配置文件，串行即基准
     // Benchmark 要跑重叠/错峰时用 setScheduleMode 显式指定（或直接调 processOverlap）
 }
@@ -271,7 +307,7 @@ void Pipeline::process(FrameInputContext &  frame_input_context,
     }
 }
 
-// 串行分支实际执行体：processSync（两路都跑）与 processStagger 的单路帧共用
+// 串行分支实际执行体：两路依次同步执行（executeV2），SYNC 模式专用
 void Pipeline::runBranchesSerially(FrameInputContext &  frame_input_context,
                                    InferOutputContext & infer_output_context,
                                    bool                 run_detect,
@@ -284,6 +320,42 @@ void Pipeline::runBranchesSerially(FrameInputContext &  frame_input_context,
     }
     if (run_depth) {
         runDepthInference(frame_input_context, infer_output_context);
+    }
+    updateMotionStates(frame_input_context, infer_output_context);
+}
+
+// 单路异步执行体
+// 「提交 → 取结果」两步（同 processOverlap），使单路帧也能走 CUDA Graph 的图发射
+void Pipeline::runBranchesAsync(FrameInputContext &  frame_input_context,
+                                InferOutputContext & infer_output_context,
+                                bool                 run_detect,
+                                bool                 run_depth) {
+    const bool detect_async = run_detect && isAsyncCapable(detector_);
+    const bool depth_async =
+        run_depth && depth_enabled_ && use_yolo_depth_ && isAsyncCapable(yolo_depth_model_);
+
+    if (depth_async) {
+        yolo_depth_model_.runInferenceAsync(frame_input_context);
+    }
+    if (detect_async) {
+        detector_.runInferenceAsync(frame_input_context);
+    } else if (run_detect) {
+        detector_.runInference(frame_input_context, infer_output_context);
+    }
+
+    if (detect_async) {
+        detector_.getInferOutputResult(infer_output_context);
+    }
+    if (run_detect) {
+        updateTracker(infer_output_context);
+    }
+
+    if (run_depth) {
+        if (depth_async) {
+            yolo_depth_model_.getInferOutputResult(infer_output_context);
+        } else {
+            runDepthInference(frame_input_context, infer_output_context);
+        }
     }
     updateMotionStates(frame_input_context, infer_output_context);
 }
@@ -307,8 +379,8 @@ void Pipeline::processStagger(FrameInputContext &  frame_input_context,
         return;
     }
 
-    // 单路帧/空帧：按需执行，收尾逻辑与串行分支共用
-    runBranchesSerially(frame_input_context, infer_output_context, detect_frame, depth_frame);
+    // 单路帧/空帧：走单路异步提交（能建图的模型因此走图发射），收尾逻辑与串行分支一致
+    runBranchesAsync(frame_input_context, infer_output_context, detect_frame, depth_frame);
 }
 
 // 重叠推理：本帧检测与深度都要跑，异步提交到各自 stream 上重叠执行

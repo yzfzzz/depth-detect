@@ -26,4 +26,10 @@
             }                                                                         \
         } while (0)
 
+// CUDA Graph需要 CUDA 10.0 起的 API：JetPack 4.x 的 CUDA 10.2 已满足，
+// 更低版本编译时自动关闭该功能
+#    if defined(CUDART_VERSION) && CUDART_VERSION >= 10000
+#        define HAS_CUDA_GRAPH 1
+#    endif
+
 #endif  // HAS_CUDA

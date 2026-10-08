@@ -18,7 +18,8 @@ class TensorRTBackend : public InferenceBackend {
     ~TensorRTBackend() override;
 
     // InferenceBackend 接口实现
-    bool loadModel(const std::string & model_path) override;
+    bool loadModel(const std::string &        model_path,
+                   const BackendInitOptions & options = BackendInitOptions()) override;
 
     // 单输出的便捷重载由基类提供
     using InferenceBackend::runInference;
@@ -64,6 +65,22 @@ class TensorRTBackend : public InferenceBackend {
     bool loadEngine(const std::string & engine_path);
     void setupInputOutputDims();
 
+    // 逐算子提交：TRT 10.x 设 tensor 地址后 enqueueV3，TRT 8.x 用 buffers 数组 enqueueV2
+    bool enqueue(cudaStream_t stream, void * input_data, const std::vector<void *> & output_data);
+
+#ifdef HAS_CUDA_GRAPH
+    // 把一次 enqueue 提交捕获成一张 CUDA Graph；失败返回 false 由调用方回退逐算子提交
+    bool captureCudaGraph(cudaStream_t                stream,
+                          void *                      input_data,
+                          const std::vector<void *> & output_data);
+
+    // 释放已捕获的图（先同步流，避免释放仍在执行的图）
+    void destroyCudaGraph(cudaStream_t stream);
+
+    // 当前调用的输入/输出地址是否与捕获时一致（地址漂移则图不可用）
+    bool bindingsMatch(void * input_data, const std::vector<void *> & output_data) const;
+#endif
+
   private:
     int    gpu_id_;
     Logger logger_;
@@ -76,4 +93,14 @@ class TensorRTBackend : public InferenceBackend {
     std::vector<int> input_dims_;
     size_t           input_byte_size_;
     std::string      input_tensor_name_;
+
+    // ── CUDA Graph：把「推理提交」合成一次 cudaGraphLaunch（只用于异步 enqueue 路径）──
+    bool use_cuda_graph_      = false;  // 配置开关（BackendInitOptions）
+    int  graph_warmup_frames_ = 3;      // 捕获前预热帧数（下限 1）
+    int  graph_warmup_count_  = 0;      // 已预热次数
+    bool graph_disabled_ = false;  // 捕获/发射失败或地址漂移后永久回退逐算子提交
+#ifdef HAS_CUDA_GRAPH
+    cudaGraphExec_t           graph_exec_ = nullptr;  // 已捕获并实例化的可执行图
+    std::vector<const void *> graph_bindings_;        // 捕获时绑定的输入 + 输出地址
+#endif
 };

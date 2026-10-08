@@ -24,7 +24,8 @@ class YoloDetectModel : public BaseModel {
               float                              conf_thresh,
               int                                num_class,
               bool                               use_gpu           = true,
-              const std::string &                preferred_backend = "auto");
+              const std::string &                preferred_backend = "auto",
+              const BackendInitOptions &         backend_options   = BackendInitOptions());
 
     void getInferOutputResult(InferOutputContext & infer_output_context) override;
 

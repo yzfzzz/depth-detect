@@ -15,8 +15,9 @@ class OnnxRuntimeBackend : public InferenceBackend {
     OnnxRuntimeBackend();
     ~OnnxRuntimeBackend() override;
 
-    // InferenceBackend 接口实现
-    bool loadModel(const std::string & model_path) override;
+    // InferenceBackend 接口实现（options 中的加速开关只有 TensorRT 后端支持，这里忽略）
+    bool loadModel(const std::string &        model_path,
+                   const BackendInitOptions & options = BackendInitOptions()) override;
 
     // 单输出的便捷重载由基类提供
     using InferenceBackend::runInference;

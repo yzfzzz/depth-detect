@@ -20,12 +20,13 @@ bool YoloDetectModel::init(std::map<std::string, std::string> model_path,
                            float                              conf_thresh,
                            int                                num_class,
                            bool                               use_gpu,
-                           const std::string &                preferred_backend) {
+                           const std::string &                preferred_backend,
+                           const BackendInitOptions &         backend_options) {
     APP_INFO(
         "YOLO model init: raw_img_w: {}, raw_img_h: {}, nms_thresh: {}, "
         "conf_thresh: {}, num_class: {}, use_gpu: {}",
         raw_img_w, raw_img_h, nms_thresh, conf_thresh, num_class, use_gpu);
-    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend);
+    BaseModel::init(model_path, raw_img_w, raw_img_h, use_gpu, preferred_backend, backend_options);
     if (!isBackendInitialized()) {
         APP_ERROR("YoloDetectModel init aborted: inference backend not initialized");
         return false;

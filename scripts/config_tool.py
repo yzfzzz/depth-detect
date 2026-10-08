@@ -243,6 +243,8 @@ prefer:
   use_gpu: {use_gpu}      # 是否使用 GPU 加速推理，若 false 则强制使用 CPU 后端
 {backend_hint}  overlap: {overlap}      # 使用TensorRT作为后端时，若为True，则使用流水线重叠推理，若 false 则强制使用串行推理
   stagger_infer: {stagger_infer} # 错峰推理总开关：按各自间隔调度检测/深度推理，两路同帧时走重叠推理（开启后优先于 overlap）
+  cuda_graph: {cuda_graph}   # 把「TRT 推理提交」捕获成 CUDA Graph，每次推理只发一次 cudaGraphLaunch（只对走 enqueue 的异步路径生效，串行 executeV2 不涉及；预热后懒捕获，失败自动回退）
+  cuda_graph_warmup_frames: {cuda_graph_warmup_frames}   # 捕获前的预热帧数：捕获要求一次性初始化（TRT 资源分配、CUDA 首次 module load）先行发生，下限 1
 
 yolo:
   detect_interval: 1   # 检测推理间隔：1=每帧，2=隔帧，3=隔2帧（错峰模式生效）
@@ -339,6 +341,8 @@ VARIANTS = {
         backend_hint=BACKEND_HINT,
         overlap="true",
         stagger_infer="true",
+        cuda_graph="true",
+        cuda_graph_warmup_frames="3",
         trt_ver="trt10.9",
         light_onnx=True,
         save_track_log="true",
@@ -352,6 +356,10 @@ VARIANTS = {
         backend_hint="",
         overlap="true",
         stagger_infer="true",
+        # TRT 8.2 支持 CUDA Graph（trtexec --useCudaGraph 即官方入口），但需上机实测确认
+        # 捕获成功率与收益；捕获失败会自动回退逐算子提交，不影响正确性
+        cuda_graph="true",
+        cuda_graph_warmup_frames="3",
         trt_ver="trt8.2",
         light_onnx=True,
         save_track_log="false",
@@ -365,6 +373,8 @@ VARIANTS = {
         backend_hint="",
         overlap="true",
         stagger_infer="false",
+        cuda_graph="false",
+        cuda_graph_warmup_frames="3",
         trt_ver="trt10.9",
         light_onnx=False,
         save_track_log="false",

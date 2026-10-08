@@ -24,7 +24,8 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
                      InferOutputContext &           infer_output_context,
                      DrawingManager &               drawing_manager,
                      std::function<cv::Scalar(int)> get_color_func,
-                     int                            total_us) {
+                     int                            total_us,
+                     int                            warmup_frames) {
     if (infer_output_context.tracked_objects.size() <= 0) {
         APP_WARN("tracked_objects size is 0, skip drawing!");
     }
@@ -49,7 +50,9 @@ cv::Mat drawOneFrame(FrameInputContext &            frame_input_context,
 #endif
     }
     // FPS
-    int show_fps = (total_us > 0) ? (frame_input_context.frame_id * 1000000LL / total_us) : 0;
+    int show_fps = (total_us > 0) ?
+                       ((frame_input_context.frame_id - warmup_frames) * 1000000LL / total_us) :
+                       0;
     // 全局信息
     drawing_manager.drawGlobalInfo(frame_input_context.raw_img, frame_input_context.frame_id,
                                    show_fps, infer_output_context.tracked_objects.size());
@@ -82,12 +85,19 @@ int run(char * video_path, char * config_path) {
                                      display_manager.windowName());
     // 报警管理器（负责报警信息生成）
     DangerAlertHandler alert_handler(config_manager);
-    int                num_frames     = 0;
-    double             total_us       = 0;
+    int                num_frames          = 0;
+    double             total_us            = 0;
+    // CUDA Graph 预热期（模型尚未走图）的帧不计入端到端耗时与 FPS；未启用时为 0
+    const int          graph_warmup_frames = pipeline.getCudaGraphWarmupFrames();
+    long               timed_frames        = 0;
     // 是否按视频帧率模拟实时节奏（yaml: io_manager.simulate_delay）
-    const bool         simulate_delay = config_manager.isSimulateDelayEnabled();
+    const bool         simulate_delay      = config_manager.isSimulateDelayEnabled();
     FrameInputContext  frame_input_context(num_frames, frame_meta);
     InferOutputContext infer_output_context;
+    if (graph_warmup_frames > 0) {
+        APP_INFO("CUDA graph warmup: first {} frame(s) excluded from timing stats",
+                 graph_warmup_frames);
+    }
     while (true) {
         frame_input_context.setFrameID(num_frames);
 #if defined(ENABLE_TIMER)
@@ -101,7 +111,11 @@ int run(char * video_path, char * config_path) {
         std::string name = "Infer Pipeline";
         DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF(name, pipeline, process, frame_input_context,
                                                infer_output_context);
-        total_us += ScopedTimer::GetScopedTimers()[name].back();  // 获取刚刚这次推理的耗时
+        // 预热帧只跑逐算子路径，不计入端到端耗时（其耗时仍留在定时器表里，汇总时统一丢弃）
+        if (num_frames >= graph_warmup_frames) {
+            total_us += ScopedTimer::GetScopedTimers()[name].back();  // 刚刚这次推理的耗时
+            ++timed_frames;
+        }
 #else
         if (!io_manager.readNextFrame(frame_input_context, simulate_delay) ||
             frame_input_context.raw_img.empty()) {
@@ -115,7 +129,7 @@ int run(char * video_path, char * config_path) {
         num_frames++;
         if (num_frames % 100 == 0) {
             APP_INFO("Processing frame {} ({:.2f} fps)", num_frames,
-                     (total_us > 0 ? (num_frames * 1000000LL / total_us) : 0));
+                     (total_us > 0 ? (timed_frames * 1000000.0 / total_us) : 0));
         }
         // 发送报警信息
         AlertMessage alert;
@@ -136,7 +150,7 @@ int run(char * video_path, char * config_path) {
         // 画图
         cv::Mat out_frame = drawOneFrame(
             frame_input_context, infer_output_context, drawing_manager,
-            [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us);
+            [&pipeline](int idx) { return pipeline.getColor(idx); }, total_us, graph_warmup_frames);
 // 保存结果
 #if defined(ENABLE_TIMER)
         DEBUG_FUNCTION_RUNNING_TIME_MEMBER_REF("IO Save Frame", io_manager, saveFrame, out_frame,
@@ -162,10 +176,16 @@ int run(char * video_path, char * config_path) {
 
 #if defined(ENABLE_TIMER)
     APP_INFO("==========Summary===========");
+    if (graph_warmup_frames > 0) {
+        APP_INFO("(CUDA graph warmup: first {} frame(s) excluded; timed frames: {})",
+                 graph_warmup_frames, timed_frames);
+    }
     for (auto & kv : ScopedTimer::GetScopedTimers()) {
-        double avg = calculateAverage(kv.second);
-        double p95 = calculatePercentile(kv.second, 95.0);
-        double p99 = calculatePercentile(kv.second, 99.0);
+        // 预热帧尚未走图，耗时不可比，连同端到端统计一起丢弃
+        const std::vector<double> samples = dropFirstSamples(kv.second, graph_warmup_frames);
+        double                    avg     = calculateAverage(samples);
+        double                    p95     = calculatePercentile(samples, 95.0);
+        double                    p99     = calculatePercentile(samples, 99.0);
         APP_INFO("[{}]: avg = {:.2f} ms, P95 = {:.2f} ms, P99 = {:.2f} ms (frame)", kv.first, avg,
                  p95, p99);
     }

@@ -20,6 +20,17 @@ enum class TensorLocation {
     CudaDevice,
 };
 
+// 后端初始化选项：与具体推理框架无关的通用开关，由调用方（模型层）原样透传，
+// 只有支持的后端会消费它，其余后端忽略（当前仅 TensorRT 消费 CUDA Graph）
+struct BackendInitOptions {
+    // 把推理提交（enqueue）捕获成 CUDA Graph、之后每帧只发一次 cudaGraphLaunch，
+    // 消除逐算子的 host 提交开销；捕获或发射失败自动回退逐算子提交
+    bool cuda_graph_enabled       = false;
+    // 捕获前的预热帧数：捕获要求一次性初始化（后端内部资源分配、CUDA 首次 module load）
+    // 先行发生，否则这些操作落在捕获窗口内会导致捕获失败。下限 1，由后端钳制
+    int  cuda_graph_warmup_frames = 3;
+};
+
 // 推理后端抽象接口，支持多种推理后端：TensorRT (GPU)、ONNX Runtime (CPU/GPU)、QNN (NPU)。
 // 本接口不包含任何 SDK 头文件（CUDA/TensorRT/ONNX Runtime/QNN），
 // 具体类型一律以 void* / 原生句柄透传，由各后端实现自行解释
@@ -27,8 +38,9 @@ class InferenceBackend {
   public:
     virtual ~InferenceBackend() = default;
 
-    // 加载模型
-    virtual bool loadModel(const std::string & model_path) = 0;
+    // 加载模型；options 由各后端按需消费（不支持的后端直接忽略）
+    virtual bool loadModel(const std::string &        model_path,
+                           const BackendInitOptions & options = BackendInitOptions()) = 0;
 
     // 同步：返回时输出已就绪
     virtual bool runInference(void * input_data, std::vector<void *> output_data) = 0;
